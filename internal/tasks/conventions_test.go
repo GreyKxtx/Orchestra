@@ -42,7 +42,7 @@ func TestLoadProjectConventions(t *testing.T) {
 	}
 
 	// Workers, scouts and the Docs Lead itself are exempt.
-	for _, m := range []agent.Mode{agent.ModeWorker, agent.ModeExplore, agent.ModeAsk, agent.ModeDocs, agent.ModeProduct, agent.ModeVerifier} {
+	for _, m := range []agent.Mode{agent.ModeWorker, agent.ModeExplore, agent.ModeAsk, agent.Mode("documentation"), agent.Mode("product"), agent.ModeVerifier} {
 		if got := loadProjectConventions(root, m); got != "" {
 			t.Fatalf("mode %s must not receive conventions, got %q", m, got)
 		}

@@ -86,7 +86,7 @@ func TestAgent_RefusesWebsearchWithoutWebConsent(t *testing.T) {
 // always, leaving consent to the call. The parallel batch had no consent
 // check, so two web calls in one step ran without it.
 func TestAgent_RefusesWebToolsInAParallelBatchWithoutConsent(t *testing.T) {
-	got := runCalls(t, Options{Mode: ModeProduct},
+	got := runCalls(t, Options{Mode: Mode("product")},
 		// Loopback: refused by the fetcher's SSRF dialer if the gate ever lets it
 		// through, so a regression fails here without touching the network.
 		toolCall("w1", "webfetch", `{"url":"http://127.0.0.1:1/"}`),

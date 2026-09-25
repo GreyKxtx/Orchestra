@@ -114,11 +114,10 @@ const parallelBatchWorkerLimit = 16
 // exactly one matching tool message reply, so we preserve ordering even when
 // individual calls finish out-of-order.
 //
-// Only ParallelSafe tools reach this path — see NormalizeLLMWithDefs. The
-// rich per-tool serial pipeline (exec consent, plan-mode write guard, todo
-// dispatcher, …) is therefore not exercised here; we go straight through
-// PreTool hook + audit log + a.tools.Call. A batch that needs one of those
-// gates never gets here: see batchNeedsSerialGates.
+// Only ParallelSafe tools reach this path — see allParallelSafeCalls. Every
+// call passes the gate chain (toolGates) first, as on the serial path, then
+// the PreTool hooks, the audit log and a.tools.Call. In-process tools never
+// get here.
 //
 // Hook safety: PreTool hooks run SERIALLY before the parallel fan-out. Most
 // real-world hooks aren't thread-safe (they append to log files, mutate
@@ -158,14 +157,15 @@ func (a *Agent) runParallelToolBatch(ctx context.Context, cb *CircuitBreaker, hi
 	// its input, so the model does not read the result as an answer to the
 	// arguments it actually sent.
 	rewrote := make([]string, len(calls))
-	// A backstop: Run sends a batch with any gated call — a permission rule, a
-	// web or browser tool without consent — to the serial path
-	// (batchNeedsSerialGates). A browser refusal here still holds for a caller
-	// that skips that check.
+	// The gate chain, one call at a time and in order: the same toolGates the
+	// serial path runs, so a permission rule, a consent the run lacks or a
+	// tool the mode was not given refuses a call here exactly as it would
+	// alone. A gate that asks the user asks before anything fans out.
 	for i, call := range calls {
-		if refusal := a.browserCallRefusal(normalizeToolName(call.Name)); refusal != nil {
+		gc := a.newGateCall(normalizeToolName(call.Name), call.Input)
+		if reason := a.runToolGates(ctx, gc, history); reason != "" {
 			denied[i] = true
-			results[i] = a.deniedToolResult(call.Name, call.Input, refusal.Error())
+			results[i] = a.deniedToolResult(gc.name, call.Input, reason)
 		}
 	}
 	if a.opts.HooksRunner != nil {

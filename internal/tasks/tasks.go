@@ -17,6 +17,7 @@ import (
 	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/orchestrastate"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/internal/roles"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
@@ -273,17 +274,7 @@ func New(llmClient llm.Client, validator *schema.Validator, toolRunner *tools.Ru
 }
 
 func childToolsForSubagent(subagentType string, caps tools.Capabilities) []llm.ToolDef {
-	var defs []llm.ToolDef
-	switch strings.ToLower(strings.TrimSpace(subagentType)) {
-	case "", "explore":
-		defs = tools.ListToolsForMode("explore", caps, false, false)
-	case "general":
-		defs = tools.ListToolsForMode("general", caps, false, false)
-	case "worker":
-		defs = tools.ListToolsForMode("worker", caps, false, false)
-	default:
-		defs = tools.ListToolsForMode(subagentType, caps, false, false)
-	}
+	defs := tools.ListToolsForMode(string(modeForSubagent(subagentType)), caps, false, false)
 	// debug and general reuse the top-level mode lists, which include the
 	// repo-mutating git tools. A child must not have them: it shares the
 	// parent's working tree.
@@ -299,31 +290,27 @@ func ensureTaskResult(defs []llm.ToolDef) []llm.ToolDef {
 	return append(defs, tools.ToolTaskResult())
 }
 
+// modeForSubagent is the mode a child of this type runs in: a built-in role
+// by its registry name (explore when none is given), anything else — a
+// custom agent — under its own name.
 func modeForSubagent(subagentType string) agent.Mode {
-	switch strings.ToLower(strings.TrimSpace(subagentType)) {
-	case "", "explore":
+	t := strings.ToLower(strings.TrimSpace(subagentType))
+	if t == "" {
 		return agent.ModeExplore
-	case "ask":
-		return agent.ModeAsk
-	case "debug":
-		return agent.ModeDebug
-	case "architecture":
-		return agent.ModeArchitecture
-	case "general":
-		return agent.ModeGeneral
-	case "worker":
-		return agent.ModeWorker
-	case "verifier":
-		return agent.ModeVerifier
-	case "product":
-		return agent.ModeProduct
-	case "documentation":
-		return agent.ModeDocs
-	case "scout":
-		return agent.ModeScout
-	default:
-		return agent.Mode(subagentType)
 	}
+	if _, ok := roles.Lookup(t); ok {
+		return agent.Mode(t)
+	}
+	return agent.Mode(subagentType)
+}
+
+// childTier is the model band a child of this type runs on (roles.Spec.Tier).
+func childTier(subagentType string) roles.Tier {
+	spec, ok := roles.Lookup(strings.ToLower(strings.TrimSpace(subagentType)))
+	if !ok {
+		return roles.TierParent
+	}
+	return spec.Tier
 }
 
 // DefaultChildMaxSteps is the hard cap on child agent loop iterations when
@@ -718,32 +705,22 @@ func (r *TaskRunner) applyTaskTypeRoute(req *agent.SubtaskSpawnRequest) {
 	if strings.TrimSpace(req.Tier) == "" && route.Tier != "" {
 		req.Tier = route.Tier
 	}
-	worker := strings.EqualFold(strings.TrimSpace(req.SubagentType), "worker")
-	if !worker && strings.TrimSpace(req.Provider) == "" && strings.TrimSpace(req.Model) == "" {
+	if childTier(req.SubagentType) != roles.TierWorker && strings.TrimSpace(req.Provider) == "" && strings.TrimSpace(req.Model) == "" {
 		req.Provider = route.Provider
 		req.Model = route.Model
 	}
-}
-
-// isLeadGradeSubagent reports whether subagentType is an L4 department lead
-// (spec §2.1): resolves the "lead" tier binding instead of worker bands.
-func isLeadGradeSubagent(subagentType string) bool {
-	switch strings.ToLower(strings.TrimSpace(subagentType)) {
-	case "product", "documentation":
-		return true
-	}
-	return false
 }
 
 func (r *TaskRunner) resolveChildLLM(req agent.SubtaskSpawnRequest, subagentType string) (llm.Client, string, string) {
 	provider := strings.TrimSpace(req.Provider)
 	model := strings.TrimSpace(req.Model)
 	if provider == "" && model == "" && r.child.ResolveTier != nil {
-		if strings.EqualFold(subagentType, "worker") {
+		switch childTier(subagentType) {
+		case roles.TierWorker:
 			if p, m, ok := r.child.ResolveTier(req.Tier); ok {
 				provider, model = p, m
 			}
-		} else if isLeadGradeSubagent(subagentType) {
+		case roles.TierLead:
 			// L4 leads: explicit tier from spawn wins, else the "lead" band.
 			// Unbound → fall through to the parent (orchestrator) client.
 			tier := strings.TrimSpace(req.Tier)
@@ -842,7 +819,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	}
 	if r.child.NotifyAgentEvent != nil {
 		eventTier := strings.TrimSpace(req.Tier)
-		if eventTier == "" && isLeadGradeSubagent(subagentType) {
+		if eventTier == "" && childTier(subagentType) == roles.TierLead {
 			eventTier = "lead" // L4 badge in UI even without explicit spawn tier
 		}
 		ev := map[string]any{

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/orchestra/orchestra/internal/roles"
 )
 
 //go:embed files/*.txt
@@ -13,10 +15,11 @@ var promptFiles embed.FS
 
 // BuildSystemPromptForMode returns a system prompt for the given agent mode and model family.
 //
-// mode: "build" (default), "plan", "explore", "general", "compaction", "title", "summary".
+// mode: a built-in mode (roles.Spec.Prompt names its file) or any other name,
+// which gets build's prompt.
 // family: "anthropic", "gpt", "gemini", "local", "" / "default" (see DetectPromptFamily).
 //
-// Lookup order: {mode}-{family}.txt → {mode}.txt (+ addendum-{family}.txt) → build.txt
+// Lookup order: {prompt}-{family}.txt → {prompt}.txt (+ addendum-{family}.txt) → build.txt
 //
 // The addendum exists because family tuning used to reach build mode only:
 // build-local.txt is the most detailed prompt in the set, and every bit of it
@@ -28,6 +31,11 @@ func BuildSystemPromptForMode(mode, family string) string {
 	if mode == "" {
 		mode = "build"
 	}
+	internal := false
+	if spec, ok := roles.Lookup(mode); ok {
+		mode = spec.Prompt
+		internal = spec.Kind == roles.Internal
+	}
 	family = NormalizePromptFamily(family)
 	if family != "" && family != "default" {
 		if s := loadPromptFile(mode + "-" + family + ".txt"); s != "" {
@@ -38,26 +46,21 @@ func BuildSystemPromptForMode(mode, family string) string {
 	if base == "" {
 		return mustLoadPromptFile("build.txt")
 	}
-	if add := familyAddendum(mode, family); add != "" {
+	if add := familyAddendum(internal, family); add != "" {
 		base += "\n\n" + add
 	}
 	return base
 }
 
-// modesWithoutFamilyAddendum are runtime-internal single-shot prompts with an
-// exact output contract (a markdown checkpoint, a title, a summary). Tool
-// discipline does not apply to them and the extra text would only contradict
-// the contract.
-var modesWithoutFamilyAddendum = map[string]bool{
-	"compaction": true,
-	"title":      true,
-	"summary":    true,
-}
-
 // familyAddendum returns the shared family-specific block for a mode that has
 // no {mode}-{family}.txt of its own, or "" when there is nothing to add.
-func familyAddendum(mode, family string) string {
-	if family == "" || family == "default" || modesWithoutFamilyAddendum[mode] {
+//
+// Internal modes (compaction, title, summary) get none: they are single-shot
+// prompts with an exact output contract (a markdown checkpoint, a title, a
+// summary). Tool discipline does not apply to them and the extra text would
+// only contradict the contract.
+func familyAddendum(internal bool, family string) string {
+	if family == "" || family == "default" || internal {
 		return ""
 	}
 	return loadPromptFile("addendum-" + family + ".txt")

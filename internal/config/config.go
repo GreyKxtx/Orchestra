@@ -3,7 +3,6 @@ package config
 import (
 	"context"
 	"fmt"
-	"github.com/orchestra/orchestra/internal/execpolicy"
 	"net"
 	neturl "net/url"
 	"os"
@@ -12,7 +11,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/execpolicy"
 	"github.com/orchestra/orchestra/internal/llmauth"
+	"github.com/orchestra/orchestra/internal/roles"
+	"github.com/orchestra/orchestra/internal/toolspec"
 	llmpkg "github.com/orchestra/orchestra/llm"
 	"gopkg.in/yaml.v3"
 )
@@ -382,92 +384,34 @@ func (a AgentDefinition) ResolvedBase() string {
 	return "general"
 }
 
-// ModeKind classifies how a built-in agent mode may be started.
-type ModeKind int
+// ModeKind classifies how a built-in agent mode may be started. The modes
+// themselves are internal/roles' registry; these names keep config's API.
+type ModeKind = roles.Kind
 
 const (
 	// ModeKindTopLevel can be requested by the user (CLI --mode, RPC agent.run)
 	// and can also be spawned as a subagent.
-	ModeKindTopLevel ModeKind = iota
+	ModeKindTopLevel = roles.TopLevel
 	// ModeKindChildOnly is a subagent role with its own protocol (task_result,
 	// WorkOrder, scoped writes). Starting one top-level skips the contract that
 	// gives it its input, so the CLI and RPC refuse it.
-	ModeKindChildOnly
+	ModeKindChildOnly = roles.ChildOnly
 	// ModeKindInternal is driven by the runtime itself (history compaction,
 	// title, summary) and never selected by a user.
-	ModeKindInternal
+	ModeKindInternal = roles.Internal
 )
 
-// builtInAgentModes is the single registry of reserved mode names.
-//
-// It backs three questions that used to be answered by separate hardcoded
-// lists: is this name reserved against custom agents / skills, may the user
-// start this mode, and does agent.IsKnownMode recognise it. `product` and
-// `documentation` were missing here while existing as real modes with their
-// own tool sets and write scopes — so a custom agent or skill could take
-// those names and shadow them.
-var builtInAgentModes = map[string]ModeKind{
-	"build":         ModeKindTopLevel,
-	"plan":          ModeKindTopLevel,
-	"explore":       ModeKindTopLevel,
-	"general":       ModeKindTopLevel,
-	"ask":           ModeKindTopLevel,
-	"debug":         ModeKindTopLevel,
-	"architecture":  ModeKindTopLevel,
-	"agent":         ModeKindTopLevel,
-	"orchestra":     ModeKindTopLevel,
-	"worker":        ModeKindChildOnly,
-	"verifier":      ModeKindChildOnly,
-	"product":       ModeKindChildOnly,
-	"documentation": ModeKindChildOnly,
-	"scout":         ModeKindChildOnly,
-	"compaction":    ModeKindInternal,
-	"title":         ModeKindInternal,
-	"summary":       ModeKindInternal,
-}
-
-// validAgentToolNames lists all short tool names that are valid in
-// AgentDefinition.Tools. Hardcoded here to avoid an import cycle between
-// config and tools (tools → llm → config).
-var validAgentToolNames = map[string]bool{
-	"ls": true, "read": true, "glob": true, "write": true, "edit": true, "fs.delete": true, "fs.rename": true,
-	"grep": true, "symbols": true, "explore": true, "bash": true,
-	"webfetch": true, "todowrite": true, "todoread": true,
-	"bash.output": true, "bash.kill": true,
-	"semantic_search": true, "repo_map": true, "ast_rename": true,
-	"memory_write": true, "memory_read": true, "memory_search": true, "runtime_query": true,
-	"lesson_promote": true, "playbook_promote": true,
-	"task": true, "task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true,
-	"plan_exit": true, "question": true,
-	"lsp.definition": true, "lsp.references": true, "lsp.hover": true,
-	"lsp.diagnostics": true, "lsp.rename": true,
-	"diff.preview": true,
-	"git.status":   true, "git.log": true, "git.diff": true,
-	"git.worktree.list": true, "git.worktree.add": true, "git.worktree.remove": true, "git.worktree.prune": true,
-	"git.commit": true, "git.branch": true, "git.checkout": true, "git.push": true,
-	"gh.pr.list": true, "gh.pr.create": true, "gh.pr.view": true,
-	"gh.issue.list": true, "gh.issue.view": true,
-	"browser.navigate": true, "browser.snapshot": true, "browser.screenshot": true,
-	"browser.click": true, "browser.type": true, "browser.fill": true,
-	"browser.select": true, "browser.eval": true, "browser.wait": true, "browser.close": true,
-	"websearch": true,
-}
-
 // ValidAgentTool reports whether name is a valid short tool name usable
-// in AgentDefinition.Tools or in a skill's tools: list. Exported so the
-// skills loader (outside this package) can validate without forking the
-// allow-list.
+// in AgentDefinition.Tools or in a skill's tools: list. The names come from
+// toolspec, the table the tool registry is built from.
 func ValidAgentTool(name string) bool {
-	return validAgentToolNames[name]
+	return toolspec.Nameable(name)
 }
 
 // ValidAgentToolNames returns every short tool name allowed in AgentDefinition.Tools,
 // sorted for stable UI / RPC catalogs.
 func ValidAgentToolNames() []string {
-	out := make([]string, 0, len(validAgentToolNames))
-	for name := range validAgentToolNames {
-		out = append(out, name)
-	}
+	out := toolspec.NameableNames()
 	sort.Strings(out)
 	return out
 }
@@ -1497,7 +1441,7 @@ func (c *ProjectConfig) validateAutoRouter() error {
 // Reserved means "a custom agent or skill may not take this name" — it covers
 // child-only and internal modes too.
 func IsBuiltInMode(name string) bool {
-	_, ok := builtInAgentModes[name]
+	_, ok := roles.Lookup(name)
 	return ok
 }
 
@@ -1523,22 +1467,22 @@ func (c *ProjectConfig) CheckSkillNameFree(name string) error {
 
 // BuiltInModeKind returns the mode's kind and whether it is built in at all.
 func BuiltInModeKind(name string) (ModeKind, bool) {
-	k, ok := builtInAgentModes[name]
-	return k, ok
+	spec, ok := roles.Lookup(name)
+	return spec.Kind, ok
 }
 
 // IsUserSelectableMode reports whether the user may start this mode directly
 // (CLI --mode, RPC agent.run). Child-only and internal modes are not.
 func IsUserSelectableMode(name string) bool {
-	k, ok := builtInAgentModes[name]
+	k, ok := BuiltInModeKind(name)
 	return ok && k == ModeKindTopLevel
 }
 
 // BuiltInModeNames returns reserved agent mode names (sorted).
 func BuiltInModeNames() []string {
-	out := make([]string, 0, len(builtInAgentModes))
-	for name := range builtInAgentModes {
-		out = append(out, name)
+	var out []string
+	for _, spec := range roles.All() {
+		out = append(out, spec.Name)
 	}
 	sort.Strings(out)
 	return out
@@ -1546,10 +1490,10 @@ func BuiltInModeNames() []string {
 
 // UserSelectableModeNames returns the modes a user may start directly (sorted).
 func UserSelectableModeNames() []string {
-	out := make([]string, 0, len(builtInAgentModes))
-	for name, k := range builtInAgentModes {
-		if k == ModeKindTopLevel {
-			out = append(out, name)
+	var out []string
+	for _, spec := range roles.All() {
+		if spec.Kind == ModeKindTopLevel {
+			out = append(out, spec.Name)
 		}
 	}
 	sort.Strings(out)
@@ -1584,7 +1528,7 @@ func (c *ProjectConfig) validateAgents() error {
 			return fmt.Errorf("agents[%d] (%q): tools list is empty; omit the field to inherit the build toolset", i, a.Name)
 		}
 		for _, t := range a.Tools {
-			if !validAgentToolNames[t] {
+			if !ValidAgentTool(t) {
 				return fmt.Errorf("agents[%d] (%q): unknown tool name %q", i, a.Name, t)
 			}
 		}

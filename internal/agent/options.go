@@ -134,25 +134,24 @@ type SubtaskResult struct {
 // IsKnownMode.
 type Mode string
 
-// Agent mode constants.
+// Agent mode constants, for the modes the agent has code of its own for. A
+// mode is defined in internal/roles; one that is only a Spec and a prompt
+// (product, documentation, scout) needs no constant here.
 const (
-	ModeBuild        Mode = "build"         // default: full tool access
-	ModePlan         Mode = "plan"          // read-only + plan tools
-	ModeExplore      Mode = "explore"       // grep/glob/read only (subagent)
-	ModeAsk          Mode = "ask"           // Q&A read-only
-	ModeDebug        Mode = "debug"         // root-cause + targeted fix
-	ModeArchitecture Mode = "architecture"  // design / plan md only
-	ModeGeneral      Mode = "general"       // multi-step execution subagent: full read+write tools, returns via task_result.
-	ModeAgent        Mode = "agent"         // auto-route to build|plan|explore before Run
-	ModeOrchestra    Mode = "orchestra"     // Lead planner; delegates to worker tiers
-	ModeWorker       Mode = "worker"        // atomic WorkOrder executor (child only)
-	ModeVerifier     Mode = "verifier"      // goal-backward read-only verification (child only)
-	ModeProduct      Mode = "product"       // Product Lead: PRD/user stories in .orchestra/product/ only (child only)
-	ModeDocs         Mode = "documentation" // Docs Lead: L1 conventions.md, MANIFEST, docs/ scaffold+content (child only)
-	ModeScout        Mode = "scout"         // Market Scout: competitor/market research on the web + repo reads (child only)
-	ModeCompaction   Mode = "compaction"    // internal: compresses history into a summary.
-	ModeTitle        Mode = "title"         // internal: generates a short task title from the user query.
-	ModeSummary      Mode = "summary"       // internal: produces a brief summary of completed work.
+	ModeBuild        Mode = "build"        // default: full tool access
+	ModePlan         Mode = "plan"         // read-only + plan tools
+	ModeExplore      Mode = "explore"      // grep/glob/read only (subagent)
+	ModeAsk          Mode = "ask"          // Q&A read-only
+	ModeDebug        Mode = "debug"        // root-cause + targeted fix
+	ModeArchitecture Mode = "architecture" // design / plan md only
+	ModeGeneral      Mode = "general"      // multi-step execution subagent: full read+write tools, returns via task_result.
+	ModeAgent        Mode = "agent"        // auto-route to build|plan|explore before Run
+	ModeOrchestra    Mode = "orchestra"    // Lead planner; delegates to worker tiers
+	ModeWorker       Mode = "worker"       // atomic WorkOrder executor (child only)
+	ModeVerifier     Mode = "verifier"     // goal-backward read-only verification (child only)
+	ModeCompaction   Mode = "compaction"   // internal: compresses history into a summary.
+	ModeTitle        Mode = "title"        // internal: generates a short task title from the user query.
+	ModeSummary      Mode = "summary"      // internal: produces a brief summary of completed work.
 )
 
 // IsKnownMode reports whether m is one of the built-in modes.

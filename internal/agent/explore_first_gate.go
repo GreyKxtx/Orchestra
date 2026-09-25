@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/roles"
 	"github.com/orchestra/orchestra/llm"
 )
 
@@ -19,8 +20,11 @@ func exploreNavTool(name string) bool {
 	}
 }
 
+// exploreFirstMode reports whether the mode refuses write and edit until the
+// agent has looked at the code (roles.Spec.ExploreFirst).
 func exploreFirstMode(mode Mode) bool {
-	return mode == ModeWorker || mode == ModeOrchestra || mode == ModeArchitecture
+	spec, ok := roles.Lookup(string(mode))
+	return ok && spec.ExploreFirst
 }
 
 func (a *Agent) resetExploreFirstGate() {

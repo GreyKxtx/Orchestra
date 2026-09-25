@@ -189,11 +189,16 @@ func TestAgent_AnMCPToolTheRunDidNotOfferNeedsConsent(t *testing.T) {
 }
 
 func TestAgent_ABatchWithAnMCPToolThatCanWriteRunsThroughTheGates(t *testing.T) {
-	ag := &Agent{opts: Options{Mode: ModeBuild, ExtraTools: mcpDefs()}}
-	if !ag.batchNeedsSerialGates([]ToolCall{{Name: "read"}, {Name: mcpWrite}}) {
-		t.Error("a batch holding an MCP tool that can write skipped the serial gates")
+	req := &scriptedRequester{approve: false}
+	got, mcp := runMCPCalls(t, Options{Mode: ModeBuild, PermissionRequester: req},
+		toolCall("r1", mcpRead, `{}`), toolCall("w1", mcpWrite, `{}`))
+	if len(req.asked) != 1 {
+		t.Errorf("the MCP tool that can write must be put to the user once, asked %d times", len(req.asked))
 	}
-	if ag.batchNeedsSerialGates([]ToolCall{{Name: "read"}, {Name: mcpRead}}) {
-		t.Error("a read-only MCP tool alone should not force the batch serial")
+	if len(mcp.ran) != 1 || mcp.ran[0] != mcpRead {
+		t.Errorf("only the read-only tool may run: ran %v", mcp.ran)
+	}
+	if !strings.Contains(got["w1"], "denied") {
+		t.Errorf("the refused call must say so:\n%s", got["w1"])
 	}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/internal/roles"
 	"github.com/orchestra/orchestra/internal/tools"
 	tasktools "github.com/orchestra/orchestra/internal/tools/task"
 	"github.com/orchestra/orchestra/llm"
@@ -86,23 +87,11 @@ func AgencyFromConfig(cfg *config.ProjectConfig, mode string) (AgencySettings, [
 	return out, profiles
 }
 
-// builtInRoleCards describe the spawnable built-in roles for
-// <available_agents>. Short on purpose: the Orchestrator pays for them on
-// every step.
-var builtInRoleCards = map[string]string{
-	"explore":       "read-only code search; returns files, symbols, lines",
-	"ask":           "read-only Q&A about the code",
-	"scout":         "web research: competitors, market, prices — with sources",
-	"architecture":  "Dept Lead: brief, spec, L2 playbook, WorkOrders (batch_workorders[])",
-	"debug":         "root-cause a failure and fix it",
-	"general":       "multi-step read+write execution",
-	"worker":        "one atomic change from a WorkOrder JSON",
-	"verifier":      "goal-backward read-only check of finished work",
-	"product":       "Product Lead: PRD and user stories from an idea",
-	"documentation": "Docs Lead: conventions.md, MANIFEST, docs/",
+// builtInRoleCard is a spawnable role's card for <available_agents>
+// (roles.Spec.Summary); roles.Spawnable() gives them in card order.
+func builtInRoleCard(spec roles.Spec) agent.AgentCard {
+	return agent.AgentCard{Name: spec.Name, Role: spec.Name, Description: spec.Summary, BuiltIn: true}
 }
-
-var builtInRoleOrder = []string{"explore", "scout", "ask", "product", "documentation", "architecture", "worker", "verifier", "debug", "general"}
 
 // agentScope is where an agent sits in the agency: its address, the role it
 // runs as, how deep it is and who is waiting on it.
@@ -279,8 +268,8 @@ func (r *TaskRunner) agencyInfo(s agentScope) agent.AgencyInfo {
 		// Off, the root still delegates to custom agents by name (agents:
 		// in a build-mode turn); only its subagent_type enum needs them.
 		if s.depth == 0 && len(r.child.Agents) > 0 {
-			for _, role := range builtInRoleOrder {
-				info.Delegates = append(info.Delegates, agent.AgentCard{Name: role, Role: role, Description: builtInRoleCards[role], BuiltIn: true})
+			for _, spec := range roles.Spawnable() {
+				info.Delegates = append(info.Delegates, builtInRoleCard(spec))
 			}
 			for _, p := range r.child.Agents {
 				info.Delegates = append(info.Delegates, agent.AgentCard{Name: p.Name, Role: p.Base, Description: p.Description})
@@ -291,12 +280,13 @@ func (r *TaskRunner) agencyInfo(s agentScope) agent.AgencyInfo {
 	if s.depth > 0 && s.depth+1 > r.child.Agency.MaxDepth {
 		return info
 	}
-	for _, role := range builtInRoleOrder {
+	for _, spec := range roles.Spawnable() {
+		role := spec.Name
 		t := spawnTarget{role: role, name: role, address: role}
 		if !r.flowAllows(s, t) {
 			continue
 		}
-		card := agent.AgentCard{Name: role, Role: role, Description: builtInRoleCards[role], BuiltIn: true}
+		card := builtInRoleCard(spec)
 		info.Delegates = append(info.Delegates, card)
 		if s.depth == 0 && isLeadRole(role) {
 			info.Contacts = append(info.Contacts, card)
@@ -339,13 +329,10 @@ func appendCard(cards []agent.AgentCard, c agent.AgentCard) []agent.AgentCard {
 }
 
 // isLeadRole reports whether role is a lead that holds a conversation well —
-// the roles send_message defaults a department to.
+// the roles send_message defaults a department to (roles.Spec.Lead).
 func isLeadRole(role string) bool {
-	switch role {
-	case "architecture", "product", "documentation", "debug":
-		return true
-	}
-	return false
+	spec, ok := roles.Lookup(role)
+	return ok && spec.Lead
 }
 
 // delegationTools are the spawn tools a child gets when the flows let it

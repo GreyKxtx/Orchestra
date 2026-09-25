@@ -66,7 +66,7 @@
 Режим не добавляет детям ничего. Он отнимает у родителя право делать работу
 самому и даёт ему бухгалтерию.
 
-- **16 инструментов** (`orchestraLeadToolNames`): чтение, поиск, `repo_map`,
+- **16 инструментов** (`Lead: true` в `internal/toolspec`): чтение, поиск, `repo_map`,
   делегирование, `question`, память на чтение, `write`,
   `update_working_state`, `contract_freeze`, `lesson_promote`,
   `playbook_promote`. Нет `edit`, `bash`, LSP, `todowrite`. Скиллы Lead не

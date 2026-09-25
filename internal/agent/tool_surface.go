@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/plan"
+	"github.com/orchestra/orchestra/internal/roles"
 	"github.com/orchestra/orchestra/internal/tools"
 )
 
@@ -60,10 +61,10 @@ func (a *Agent) modeLabel() string {
 // leadWritablePath is the write scope of the planning modes (plan,
 // orchestra, architecture), shared by write/edit and final.patches.
 func (a *Agent) leadWritablePath(path string) bool {
-	switch a.opts.Mode {
-	case ModeOrchestra:
+	switch a.modeSpec().Write {
+	case roles.WriteOrchestraLead:
 		return plan.IsOrchestraLeadWritablePath(path, a.effectivePlanPath())
-	case ModeArchitecture:
+	case roles.WriteDeptLead:
 		// Dept Lead surface (spec §6.1): plans + L2 playbook + specs.
 		return plan.IsDeptLeadWritablePath(path, a.effectivePlanPath())
 	default:
@@ -80,12 +81,13 @@ func (a *Agent) finalPatchRefusal(path string) error {
 	if !a.offersTool("write") && !a.offersTool("edit") {
 		return fmt.Errorf("%s mode does not change files; report what should change in your answer instead of returning patches", a.modeLabel())
 	}
-	switch a.opts.Mode {
-	case ModePlan, ModeOrchestra, ModeArchitecture:
+	spec := a.modeSpec()
+	switch spec.Write {
+	case roles.WritePlan, roles.WriteOrchestraLead, roles.WriteDeptLead:
 		if !a.leadWritablePath(path) {
 			return fmt.Errorf("%s mode: %s is outside the files this mode may write", a.modeLabel(), path)
 		}
-	case ModeAsk, ModeVerifier:
+	case roles.WriteNone:
 		return fmt.Errorf("%s mode is read-only", a.modeLabel())
 	}
 	input, _ := json.Marshal(map[string]string{"path": path})
@@ -104,21 +106,11 @@ func (a *Agent) finalPatchRefusal(path string) error {
 // must not change them either. A Dept Lead (architecture as a child) hands out
 // WorkOrders by design; its reach is governed by agency.flows instead.
 func (a *Agent) readOnlyChildren() bool {
-	if a.opts.IsChild {
-		return false
-	}
-	switch a.opts.Mode {
-	case ModePlan, ModeArchitecture, ModeAsk:
-		return true
-	}
-	return false
+	return !a.opts.IsChild && a.modeSpec().ReadOnlyChildren
 }
 
 // ReadOnlyRole reports whether a child of this role leaves files alone.
 func ReadOnlyRole(role string) bool {
-	switch role {
-	case "explore", "ask", "scout", "verifier":
-		return true
-	}
-	return false
+	spec, ok := roles.Lookup(role)
+	return ok && spec.ReadOnly()
 }

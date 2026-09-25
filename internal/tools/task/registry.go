@@ -2,20 +2,39 @@ package task
 
 import (
 	"encoding/json"
+	"strings"
 
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/internal/roles"
 	"github.com/orchestra/orchestra/internal/tools/toolschema"
 	"github.com/orchestra/orchestra/llm"
 )
 
+// spawnableRoles are the built-in roles a task may start, in the order of
+// their cards.
+func spawnableRoles() []string {
+	var out []string
+	for _, spec := range roles.Spawnable() {
+		out = append(out, spec.Name)
+	}
+	return out
+}
+
+// withSubagentTypes puts the subagent_type enum, from the roles registry, into
+// a task schema.
+func withSubagentTypes(schema string) string {
+	enum, _ := json.Marshal(spawnableRoles())
+	return strings.Replace(schema, "__SUBAGENT_TYPES__", string(enum), 1)
+}
+
 func ToolTask() llm.ToolDef {
-	fallback := "Child agent (sync spawn+wait) for HEAVY/parallel work only. Prefer edit/write yourself for quick fixes. subagent_type: explore|ask|debug|architecture|verifier|general|worker|product|documentation|scout. Do NOT use for 1–3 known-file edits."
+	fallback := "Child agent (sync spawn+wait) for HEAVY/parallel work only. Prefer edit/write yourself for quick fixes. subagent_type: " + strings.Join(spawnableRoles(), "|") + ". Do NOT use for 1–3 known-file edits."
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
 			Name:        "task",
 			Description: promptpkg.BuildToolDescription("task", fallback),
-			Parameters: toolschema.MustSchema(`{
+			Parameters: toolschema.MustSchema(withSubagentTypes(`{
   "type": "object",
   "additionalProperties": false,
   "anyOf": [
@@ -28,7 +47,7 @@ func ToolTask() llm.ToolDef {
     "goal": { "type": "string", "minLength": 1, "description": "Alias for prompt — provide exactly one of prompt/goal" },
     "subagent_type": {
       "type": "string",
-      "enum": ["explore", "ask", "debug", "architecture", "verifier", "general", "worker", "product", "documentation", "scout"],
+      "enum": __SUBAGENT_TYPES__,
       "description": "Child agent mode (default: explore)"
     },
     "task_type": { "type": "string", "description": "Orchestra routing key (orchestra_routing.yaml); defaults subagent_type/tier/model from the routing rule" },
@@ -40,7 +59,7 @@ func ToolTask() llm.ToolDef {
     "dept": { "type": "string", "description": "Department instance the child works for (backend, frontend@web): its scratchpad, playbook and inbox" },
     "depends_on": { "type": "array", "items": { "type": "string" }, "description": "task_ids or keys of this turn that must succeed first; their results are handed to the child" }
   }
-}`),
+}`)),
 		},
 	}
 }
@@ -51,7 +70,7 @@ func ToolTaskSpawn() llm.ToolDef {
 		Function: llm.ToolFunctionDef{
 			Name:        "task_spawn",
 			Description: "Spawn a child asynchronously (rare). Prefer doing quick/concrete edits yourself with edit/write. Use only for parallel independent work; then task_wait. Batch: pass workorders[] (worker-only) to spawn one worker per WorkOrder in a single call; the runtime serializes WorkOrders with overlapping target_files and holds a WorkOrder until its depends_on[] (other WorkOrders' task_id) succeed.",
-			Parameters: toolschema.MustSchema(`{
+			Parameters: toolschema.MustSchema(withSubagentTypes(`{
   "type": "object",
   "additionalProperties": false,
   "anyOf": [
@@ -71,7 +90,7 @@ func ToolTaskSpawn() llm.ToolDef {
     },
     "subagent_type": {
       "type": "string",
-      "enum": ["explore", "ask", "debug", "architecture", "verifier", "general", "worker", "product", "documentation", "scout"],
+      "enum": __SUBAGENT_TYPES__,
       "description": "Child agent mode (default: explore)"
     },
     "task_type": { "type": "string", "description": "Orchestra routing key (orchestra_routing.yaml); defaults subagent_type/tier/model from the routing rule" },
@@ -84,7 +103,7 @@ func ToolTaskSpawn() llm.ToolDef {
     "key": { "type": "string", "description": "Name for depends_on of later spawns (a WorkOrder's task_id is its key)" },
     "depends_on": { "type": "array", "items": { "type": "string" }, "description": "task_ids or keys that must succeed before this child starts; a WorkOrder may carry its own depends_on" }
   }
-}`),
+}`)),
 		},
 	}
 }

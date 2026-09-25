@@ -169,7 +169,7 @@ Authoritative описание каждого режима — [`modes.md`](./mo
 Режим задаётся `--mode` в `apply`, `mode` в `agent.run` / `session.message`, или
 именем кастомного agent из `agents:` в `.orchestra.yml` (+ RPC `agents.*`).
 
-Реализация: `internal/agent/` (`Mode*`), `internal/tools/registry.go::ListToolsForMode`.
+Реализация: реестр `internal/roles` (`roles.Spec`), `internal/tools/registry.go::ListToolsForMode` строит список инструментов из записи режима.
 
 ### 2.1. Top-level режимы (Tab / `--mode`)
 

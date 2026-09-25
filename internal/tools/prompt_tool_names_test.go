@@ -7,13 +7,52 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/prompt"
+	"github.com/orchestra/orchestra/internal/roles"
+	"github.com/orchestra/orchestra/internal/toolspec"
 )
 
-// promptModes are the agent modes a user turn can actually run in. Each has a
-// system prompt and a tool list, and the two have to agree.
-var promptModes = []string{
-	"build", "plan", "explore", "ask", "architecture", "debug",
-	"general", "orchestra", "verifier", "product", "documentation", "worker",
+// promptModes are the agent modes a turn can actually run in — every mode in
+// the registry but the runtime's internal ones. Each has a system prompt and a
+// tool list, and the two have to agree.
+func promptModes() []string {
+	var out []string
+	for _, spec := range roles.All() {
+		if spec.Kind != roles.Internal {
+			out = append(out, spec.Name)
+		}
+	}
+	return out
+}
+
+// checkableToolNames are every built-in tool name, the agency tools and
+// skill_invoke included, less those that are also ordinary English words.
+func checkableToolNames() []string {
+	var out []string
+	for _, spec := range toolspec.All() {
+		if !ambiguousToolNames[spec.Name] && spec.Offer != toolspec.Legacy {
+			out = append(out, spec.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// offeredInMode is everything a turn in mode can be given: its list with every
+// capability, plus what the runtime adds — the agency tools whenever the
+// agency is on (any mode can have flows), and skill_invoke in a mode that may
+// change files.
+func offeredInMode(mode string, caps Capabilities) map[string]bool {
+	offered := map[string]bool{}
+	for _, d := range ListToolsForMode(mode, caps, true, true) {
+		offered[d.Function.Name] = true
+	}
+	for _, name := range []string{"send_message", "agent_post", "task_board"} {
+		offered[name] = true
+	}
+	if spec, _ := roles.Lookup(mode); !spec.ReadOnly() && !spec.Tools.Lead {
+		offered["skill_invoke"] = true
+	}
+	return offered
 }
 
 var promptFamilies = []string{"", "local", "gpt", "anthropic", "gemini", "kimi"}
@@ -39,26 +78,14 @@ var ambiguousToolNames = map[string]bool{
 // caught build-local.txt advertising semantic_search, which is only ever
 // offered when an embedding model is configured.
 func TestPromptsOnlyNameToolsTheModeActuallyOffers(t *testing.T) {
-	registry := allToolDefsMap()
-
-	checkable := make([]string, 0, len(registry))
-	for name := range registry {
-		if ambiguousToolNames[name] {
-			continue
-		}
-		checkable = append(checkable, name)
-	}
-	sort.Strings(checkable)
+	checkable := checkableToolNames()
 
 	// Every capability on, and both optional surfaces present: the check is
 	// about names the mode can never produce, not about gated ones.
 	caps := Capabilities{Exec: true, Web: true, Browser: true}
 
-	for _, mode := range promptModes {
-		offered := map[string]bool{}
-		for _, d := range ListToolsForMode(mode, caps, true, true) {
-			offered[d.Function.Name] = true
-		}
+	for _, mode := range promptModes() {
+		offered := offeredInMode(mode, caps)
 		for _, family := range promptFamilies {
 			text := prompt.BuildSystemPromptForMode(mode, family)
 			for _, name := range checkable {
@@ -75,22 +102,13 @@ func TestPromptsOnlyNameToolsTheModeActuallyOffers(t *testing.T) {
 // Tool descriptions are part of the same prompt and have the same problem:
 // one tool telling the model to reach for another that is not in the schema.
 func TestToolDescriptionsOnlyNameToolsTheModeAlsoOffers(t *testing.T) {
-	registry := allToolDefsMap()
-	checkable := make([]string, 0, len(registry))
-	for name := range registry {
-		if !ambiguousToolNames[name] {
-			checkable = append(checkable, name)
-		}
-	}
-	sort.Strings(checkable)
+	checkable := checkableToolNames()
 
 	caps := Capabilities{Exec: true, Web: true, Browser: true}
-	for _, mode := range promptModes {
+	for _, mode := range promptModes() {
 		defs := ListToolsForMode(mode, caps, true, true)
-		offered := map[string]bool{}
-		for _, d := range defs {
-			offered[d.Function.Name] = true
-		}
+		defs = append(defs, ToolSendMessage(), ToolAgentPost(), ToolTaskBoard())
+		offered := offeredInMode(mode, caps)
 		for _, d := range defs {
 			for _, name := range checkable {
 				if offered[name] || !mentionsTool(d.Function.Description, name) {

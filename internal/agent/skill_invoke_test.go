@@ -113,3 +113,25 @@ func TestSkillsAdvertisement_EmptyWhenNoRunner(t *testing.T) {
 		t.Errorf("expected empty, got %q", got)
 	}
 }
+
+// A skill may change files, so a read-only mode is neither offered one nor
+// able to run one by name. ask and verifier refused skill_invoke in a guard
+// that sat after the in-process dispatch and so never ran: the skill did.
+func TestSkillInvoke_ReadOnlyModesCannotRunSkills(t *testing.T) {
+	call := toolCall("c1", "skill_invoke", `{"skill":"refactor","task":"rewrite a.txt"}`)
+	for _, mode := range []Mode{ModeAsk, ModeVerifier, ModeExplore} {
+		fake := &fakeSkillRunner{result: "rewrote it"}
+		got := runCalls(t, Options{Mode: mode, SkillRunner: fake, Skills: []SkillSpec{{Name: "refactor"}}}, call)
+		if fake.lastName != "" {
+			t.Errorf("%s: the skill ran", mode)
+		}
+		if !strings.Contains(got["c1"], "denied") {
+			t.Errorf("%s: skill_invoke must be refused, got %q", mode, got["c1"])
+		}
+	}
+	fake := &fakeSkillRunner{result: "rewrote it"}
+	runCalls(t, Options{Mode: ModeBuild, SkillRunner: fake, Skills: []SkillSpec{{Name: "refactor"}}}, call)
+	if fake.lastName != "refactor" {
+		t.Error("build mode runs skills")
+	}
+}
