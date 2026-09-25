@@ -564,19 +564,6 @@ func IsTransientLLMError(err error) bool {
 	return false
 }
 
-// sleepBackoff waits attempt*llmRetryBackoff or until ctx is done.
-func sleepBackoff(ctx context.Context, attempt int) error {
-	d := time.Duration(attempt) * llmRetryBackoff
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.C:
-		return nil
-	}
-}
-
 // fixMaxTokensFromError adjusts max_tokens after a context-overflow 400 using
 // the server-reported prompt size. Returns the corrected value and ok=true
 // when a retry makes sense; ok=false when the prompt alone doesn't fit.
@@ -950,14 +937,18 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req CompleteRequest) 
 				continue
 			}
 		}
-		if !IsTransientLLMError(err) || attempt == llmRetryAttempts {
+		if !IsTransientLLMError(err) {
 			return nil, lastErr
 		}
-		if serr := sleepBackoff(ctx, attempt); serr != nil {
+		delay, ok := retryDelay(err, attempt)
+		if !ok || attempt == llmRetryAttempts {
+			return nil, markRetried(lastErr, attempt)
+		}
+		if serr := waitRetry(ctx, delay); serr != nil {
 			return nil, lastErr
 		}
 	}
-	return nil, lastErr
+	return nil, markRetried(lastErr, llmRetryAttempts)
 }
 
 // streamOnce performs one streaming POST and wires the SSE parser with a
@@ -1013,76 +1004,43 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 		if logger != nil {
 			logger.LogError(resp.StatusCode, string(body), time.Since(startTime).Milliseconds())
 		}
-		return nil, formatAPIError(resp.StatusCode, string(body))
+		return nil, newStatusError(resp.StatusCode, resp.Header, formatAPIError(resp.StatusCode, string(body)).Error())
 	}
 
-	// ParseSSEStream owns reading; we wrap its output to close the body on
-	// finish and to detect stalls (no SSE data for stall duration).
+	// ParseSSEStream owns reading; the relay closes the body on finish and
+	// aborts a stream that stalls (no SSE data for the stall duration).
 	raw := ParseSSEStream(streamCtx, resp.Body)
 	// Mirror of the rename done in buildChatBody: the model calls tools by
 	// their wire names; the agent expects canonical registry names.
 	nameMapper := newToolNameMapper(req.Tools)
-	out := make(chan StreamEvent, 16)
-	go func() {
-		defer cancelStream()
-		defer resp.Body.Close()
-		defer close(out)
-		stall := c.effectiveStreamStallTimeout()
-		timer := time.NewTimer(stall)
-		defer timer.Stop()
-		for {
-			select {
-			case ev, ok := <-raw:
-				if !ok {
-					return
-				}
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				timer.Reset(stall)
-				if nameMapper != nil {
-					if ev.Kind == StreamEventToolCallStart {
-						ev.ToolCallName = nameMapper.Restore(ev.ToolCallName)
-					}
-					if ev.Kind == StreamEventDone {
-						nameMapper.RestoreResponse(ev.Response)
-					}
-				}
-				if logger != nil {
-					switch ev.Kind {
-					case StreamEventDone:
-						// The assembled answer, as the agent will see it: text
-						// and tool calls with their arguments. Usage rides along
-						// so a step's cost can be read next to its words.
-						preview := streamResponsePreview(ev.Response)
-						logger.LogResponse(len(preview), time.Since(startTime).Milliseconds(), preview)
-					case StreamEventError:
-						if ev.Err != nil {
-							logger.LogError(0, ev.Err.Error(), time.Since(startTime).Milliseconds())
-						}
-					}
-				}
-				out <- ev
-			case <-timer.C:
-				// Force the transport to close the connection, then drain the
-				// parser goroutine before reporting the stall.
-				cancelStream()
-				for range raw {
-				}
-				stallErr := fmt.Errorf(
-					"stream stalled: no data from server for %s (connection to vLLM/tunnel lost?)", stall)
-				if logger != nil {
-					logger.LogError(0, stallErr.Error(), time.Since(startTime).Milliseconds())
-				}
-				out <- StreamEvent{Kind: StreamEventError, Err: stallErr}
-				return
+	done := func() {
+		cancelStream()
+		resp.Body.Close()
+	}
+	return relayStream(raw, stallTimeoutFor(c.requestTimeout), cancelStream, done, func(ev *StreamEvent) {
+		if nameMapper != nil {
+			if ev.Kind == StreamEventToolCallStart {
+				ev.ToolCallName = nameMapper.Restore(ev.ToolCallName)
+			}
+			if ev.Kind == StreamEventDone {
+				nameMapper.RestoreResponse(ev.Response)
 			}
 		}
-	}()
-	return out, nil
+		if logger != nil {
+			switch ev.Kind {
+			case StreamEventDone:
+				// The assembled answer, as the agent will see it: text
+				// and tool calls with their arguments. Usage rides along
+				// so a step's cost can be read next to its words.
+				preview := streamResponsePreview(ev.Response)
+				logger.LogResponse(len(preview), time.Since(startTime).Milliseconds(), preview)
+			case StreamEventError:
+				if ev.Err != nil {
+					logger.LogError(0, ev.Err.Error(), time.Since(startTime).Milliseconds())
+				}
+			}
+		}
+	}), nil
 }
 
 // streamResponsePreview renders a streamed answer for the log: the message
@@ -1104,21 +1062,4 @@ func streamResponsePreview(resp *CompleteResponse) string {
 		return resp.Message.Content
 	}
 	return string(b)
-}
-
-// effectiveStreamStallTimeout scales the idle-SSE watchdog with llm.timeout_s.
-// Fixed 120s was too aggressive for large local models behind ngrok (long
-// quiet gaps while the server is still generating). Cap at 5 minutes.
-func (c *OpenAIClient) effectiveStreamStallTimeout() time.Duration {
-	stall := streamStallTimeout
-	if c == nil || c.requestTimeout <= 0 {
-		return stall
-	}
-	if scaled := c.requestTimeout / 5; scaled > stall {
-		stall = scaled
-	}
-	if stall > 5*time.Minute {
-		stall = 5 * time.Minute
-	}
-	return stall
 }

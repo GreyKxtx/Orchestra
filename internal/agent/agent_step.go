@@ -328,7 +328,10 @@ func (a *Agent) streamStep(ctx context.Context, req llm.CompleteRequest, s llm.S
 			}
 			return nil, err
 		}
-		if ctx.Err() != nil || !llm.IsTransientLLMError(err) || attempt == maxStreamAttempts {
+		// A client that retried err itself (waiting out Retry-After) has
+		// done what a retry here would: doing it again made up to nine
+		// requests of one step (LLM-14).
+		if ctx.Err() != nil || !llm.IsTransientLLMError(err) || llm.AlreadyRetried(err) || attempt == maxStreamAttempts {
 			// Context overflow is handled by the Run loop (compact + replay);
 			// emitting a hard error here would show the user a failure for a
 			// step that is about to be retried successfully.

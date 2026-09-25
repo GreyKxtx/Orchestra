@@ -81,7 +81,7 @@ func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm
 	if a.opts.CompactionClient != nil {
 		client = a.opts.CompactionClient
 	}
-	resp, err := client.Complete(ctx, req)
+	resp, err := a.completeWithStepTimeout(ctx, client, req)
 	// A dedicated (cheap) compaction provider is an optimisation, not a
 	// dependency. When it is not listening — the usual state of a "fast"
 	// endpoint on a machine that is off — summarise with the model that is
@@ -89,7 +89,7 @@ func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm
 	if err != nil && client != a.llm && a.llm != nil && llm.IsUnreachableError(err) {
 		a.logf("compaction provider unreachable (%v) — summarising with the main model", err)
 		client = a.llm
-		resp, err = client.Complete(ctx, req)
+		resp, err = a.completeWithStepTimeout(ctx, client, req)
 	}
 	if err != nil {
 		err = fmt.Errorf("compaction LLM call: %w", err)
@@ -449,4 +449,16 @@ func splitHistoryForCompaction(msgs []llm.Message, tailBudget, minToolAtoms int)
 		tail = append(tail, history.AtomMessages(atoms[i])...)
 	}
 	return older, tail
+}
+
+// completeWithStepTimeout is one LLM call bounded by LLMStepTimeout, as every
+// agent step is. Compaction ran without it (LLM-14): a compaction model that
+// stopped answering held the turn with no limit but the turn's own.
+func (a *Agent) completeWithStepTimeout(ctx context.Context, client llm.Client, req llm.CompleteRequest) (*llm.CompleteResponse, error) {
+	if a.opts.LLMStepTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, a.opts.LLMStepTimeout)
+		defer cancel()
+	}
+	return client.Complete(ctx, req)
 }
