@@ -338,8 +338,12 @@ func (a *Agent) handleTaskWaitMany(ctx context.Context, ids []string, timeoutMS 
 	if !ok {
 		// A runner without the agency extension: wait one by one.
 		out := &WaitManyResult{}
+		wait := a.opts.SubtaskRunner.Wait
+		if p, ok := a.opts.SubtaskRunner.(SubtaskPoller); ok {
+			wait = p.Poll
+		}
 		for _, id := range ids {
-			res, err := a.opts.SubtaskRunner.Wait(ctx, strings.TrimSpace(id), timeoutMS)
+			res, err := wait(ctx, strings.TrimSpace(id), timeoutMS)
 			if err != nil {
 				res = &SubtaskResult{TaskID: id, Status: "error", Error: err.Error()}
 			}

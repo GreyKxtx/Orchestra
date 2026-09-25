@@ -643,6 +643,7 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		cliQuestionAsker := buildQuestionAsker(agentMode, len(cfg.Orchestra.RequiredGates()) > 0)
 		agency, agencyProfiles := tasks.AgencyFromConfig(cfg, agentMode)
 		taskRunner := tasks.New(llmClient, validator, runner, tasks.ChildAgentConfig{
+			Budget:                        tasks.BudgetFromConfig(cfg.Agent.TurnBudget),
 			Agency:                        agency,
 			Agents:                        agencyProfiles,
 			MaxPromptBytes:                cfg.EffectiveMaxPromptBytes(),

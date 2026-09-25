@@ -29,6 +29,8 @@ var (
 	_ agent.SubtaskRunner = (*scopedRunner)(nil)
 	_ agent.AgencyRunner  = (*scopedRunner)(nil)
 	_ agent.AgencyRunner  = (*TaskRunner)(nil)
+	_ agent.SubtaskPoller = (*TaskRunner)(nil)
+	_ agent.SubtaskPoller = (*scopedRunner)(nil)
 )
 
 func (sr *scopedRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (string, error) {
@@ -40,6 +42,13 @@ func (sr *scopedRunner) Wait(ctx context.Context, taskID string, timeoutMS int) 
 		return nil, err
 	}
 	return sr.r.Wait(ctx, taskID, timeoutMS)
+}
+
+func (sr *scopedRunner) Poll(ctx context.Context, taskID string, timeoutMS int) (*agent.SubtaskResult, error) {
+	if err := sr.r.checkOwner(sr.s, taskID); err != nil {
+		return nil, err
+	}
+	return sr.r.Poll(ctx, taskID, timeoutMS)
 }
 
 func (sr *scopedRunner) Cancel(ctx context.Context, taskID string) error {
@@ -370,30 +379,25 @@ func (r *TaskRunner) waitMany(ctx context.Context, ids []string, timeoutMS int) 
 		}
 	}
 	r.mu.Unlock()
+	// One deadline for the whole set. A task still running when it passes is
+	// reported still_running and keeps running, like a single task_wait: the
+	// deadline used to cancel every task it caught (audit ORC-11).
+	var deadline time.Time
 	if timeoutMS > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
-		defer cancel()
+		deadline = time.Now().Add(time.Duration(timeoutMS) * time.Millisecond)
 	}
 	out := &agent.WaitManyResult{Results: make([]*agent.SubtaskResult, len(ids))}
+	var finished []*taskEntry
 	for i, e := range entries {
-		r.mu.Lock()
-		_, registered := r.tasks[e.id]
-		r.mu.Unlock()
-		if !registered {
-			// Already collected by an earlier wait: its result is kept.
-			r.mu.Lock()
-			res := e.result
-			r.mu.Unlock()
-			if res == nil {
-				res = &agent.SubtaskResult{TaskID: e.id, Status: "error", Error: "task produced no result"}
-			}
-			out.Results[i] = res
-			continue
+		wait := 0
+		if !deadline.IsZero() {
+			// At least a millisecond: a task that is already done is
+			// collected even when the deadline has passed.
+			wait = max(int(time.Until(deadline).Milliseconds()), 1)
 		}
-		res, err := r.Wait(ctx, e.id, 0)
+		res, err := r.wait(ctx, e.id, wait, false)
 		if err != nil {
-			// Collected by a concurrent wait between the check above and
+			// Collected by a concurrent wait between the lookup above and
 			// this one: the stored result is still the answer.
 			r.mu.Lock()
 			stored := e.result
@@ -405,8 +409,15 @@ func (r *TaskRunner) waitMany(ctx context.Context, ids []string, timeoutMS int) 
 			}
 		}
 		out.Results[i] = res
+		if res.Status != "still_running" {
+			finished = append(finished, e)
+		}
 	}
-	out.Integration = r.integrationVerify(ctx, entries)
+	// Built and tested together only when every task of the set is done:
+	// half a set's edits prove nothing about the whole.
+	if len(finished) == len(entries) {
+		out.Integration = r.integrationVerify(ctx, entries)
+	}
 	return out, nil
 }
 

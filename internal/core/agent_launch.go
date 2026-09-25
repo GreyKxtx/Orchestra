@@ -331,6 +331,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	childCfg := c.buildChildAgentConfig(maxPromptBytes, usageTracker, allowExec, agentLogger)
 	childCfg.Agency, childCfg.Agents = tasks.AgencyFromConfig(c.cfg, effectiveMode)
 	childCfg.RunID = env.TurnID
+	childCfg.Budget = tasks.BudgetFromConfig(c.cfg.Agent.TurnBudget)
 	// Subagents get the browser when the turn has it; the agent refuses
 	// browser.* to any run without it, children included.
 	childCfg.Caps.Browser = allowBrowser

@@ -138,6 +138,8 @@ type ChildAgentConfig struct {
 	LLMStepTimeout time.Duration
 	// MaxStepsCap clamps child MaxSteps (default 12). Parent may request less.
 	MaxStepsCap int
+	// Budget caps the turn's tree of tasks (agent.turn_budget).
+	Budget TurnBudget
 	// RunID is the turn the tasks belong to (its turn_id). With each task's
 	// identity it attributes the children's llm_log lines; when empty the
 	// run id is taken from the spawner's ctx.
@@ -196,6 +198,10 @@ type TaskRunner struct {
 	// map Close left behind, was never cancelled, and edited the workspace
 	// during the next turn.
 	closed bool
+	// firstSpawn starts the tree's wall clock (TurnBudget.MaxWall); wallTimer
+	// cancels what is still running when it runs out.
+	firstSpawn time.Time
+	wallTimer  *time.Timer
 	// storeMu serialises the inbox and thread files under .orchestra/agency.
 	storeMu sync.Mutex
 }
@@ -248,6 +254,7 @@ type taskEntry struct {
 	started      time.Time
 	finished     time.Time
 	worker       bool
+	fingerprint  string               // role + goal, to spot a task started twice (budget.go)
 	edited       []string             // files a successful worker changed
 	inbox        []agent.InboxMessage // live notes for the running child
 }
@@ -485,6 +492,7 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		status:       "queued",
 		started:      time.Now(),
 		worker:       isWorker,
+		fingerprint:  taskFingerprint(target.address, req.Goal),
 	}
 	if extra.owner != nil {
 		entry.parent = extra.owner.address
@@ -516,6 +524,11 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		cancel(nil)
 		return "", ErrRunnerClosed
 	}
+	if err := r.admitLocked(entry.fingerprint); err != nil {
+		r.mu.Unlock()
+		cancel(nil)
+		return "", err
+	}
 	deps, depErr := r.resolveDepsLocked(dependsOn)
 	if depErr != nil {
 		r.mu.Unlock()
@@ -523,6 +536,7 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		return "", depErr
 	}
 	entry.deps = deps
+	r.startWallClockLocked()
 	conflicts := r.conflictingTasksLocked(editPaths)
 	r.tasks[taskID] = entry
 	r.all = append(r.all, entry)
@@ -1012,7 +1026,8 @@ func classifyChildRunErr(ctx context.Context, runErr error) (status, errMsg stri
 	case errors.Is(cause, ErrCauseStaleContract),
 		errors.Is(cause, ErrCauseUserCancel),
 		errors.Is(cause, ErrCauseWaitAbandoned),
-		errors.Is(cause, ErrCauseShutdown):
+		errors.Is(cause, ErrCauseShutdown),
+		errors.Is(cause, ErrCauseTurnBudget):
 		return "cancelled", cause.Error()
 	default:
 		// Plain deadline (task timeout / lead brief cap) or parent turn end.
@@ -1026,64 +1041,116 @@ func (r *TaskRunner) removeTask(taskID string) {
 	r.mu.Unlock()
 }
 
-// Wait blocks until the task completes, or the timeout/ctx expires.
+// Wait blocks until the task completes. When its timeout or ctx runs out
+// first, it gives up on the task and cancels it — the synchronous task tool,
+// whose wait is the child's lifetime.
 func (r *TaskRunner) Wait(ctx context.Context, taskID string, timeoutMS int) (*agent.SubtaskResult, error) {
+	return r.wait(ctx, taskID, timeoutMS, true)
+}
+
+// Poll is task_wait: it waits up to timeoutMS for the task and, when the
+// task is still running then, says so (status still_running) and leaves it
+// running. The model can wait again, do other work, or task_cancel it. Before
+// this, a task_wait timeout cancelled the child, and a model that polled a
+// long worker with a short timeout killed it without knowing (audit ORC-11).
+// A cancelled ctx — the turn ending — still cancels the task.
+func (r *TaskRunner) Poll(ctx context.Context, taskID string, timeoutMS int) (*agent.SubtaskResult, error) {
+	return r.wait(ctx, taskID, timeoutMS, false)
+}
+
+// stillRunning is Poll's answer for a task that did not finish in time.
+func stillRunning(taskID string, waited time.Duration) *agent.SubtaskResult {
+	return &agent.SubtaskResult{
+		TaskID: taskID,
+		Status: "still_running",
+		Error:  fmt.Sprintf("still running after %s; it keeps running — task_wait again later, or task_cancel it if you no longer need it", waited.Round(time.Millisecond)),
+	}
+}
+
+func (r *TaskRunner) wait(ctx context.Context, taskID string, timeoutMS int, giveUp bool) (*agent.SubtaskResult, error) {
 	r.mu.Lock()
 	entry, ok := r.tasks[taskID]
-	r.mu.Unlock()
 	if !ok {
+		// Collected by an earlier wait: task_board still lists it, so
+		// answering "not found" contradicted the board. Its result stands.
+		if e := r.findEntryLocked(taskID); e != nil && !e.finished.IsZero() {
+			res := e.result
+			r.mu.Unlock()
+			if res == nil {
+				res = &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: "task produced no result"}
+			}
+			return res, nil
+		}
+		r.mu.Unlock()
 		return nil, fmt.Errorf("task %q not found", taskID)
 	}
+	r.mu.Unlock()
 
-	waitCtx := ctx
-	var cancel context.CancelFunc
+	var timeout <-chan time.Time
 	if timeoutMS > 0 {
-		waitCtx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
-		defer cancel()
+		t := time.NewTimer(time.Duration(timeoutMS) * time.Millisecond)
+		defer t.Stop()
+		timeout = t.C
 	}
 
 	select {
 	case <-entry.done:
-		r.mu.Lock()
-		result := entry.result
-		r.mu.Unlock()
-		r.removeTask(taskID)
-		if result == nil {
-			return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: "task produced no result"}, nil
+		return r.collect(entry), nil
+	case <-timeout:
+		if !giveUp {
+			return stillRunning(taskID, time.Duration(timeoutMS)*time.Millisecond), nil
 		}
-		return result, nil
-	case <-waitCtx.Done():
-		entry.cancel(ErrCauseWaitAbandoned)
-		// Wait for the child goroutine to exit before returning so callers
-		// (and t.TempDir cleanup on Windows) do not race with late writes
-		// under .orchestra/. Bounded (resilience audit P5): a tool stuck in
-		// a syscall that ignores ctx must not freeze the parent turn forever.
-		reap := time.NewTimer(childReapTimeout)
-		defer reap.Stop()
-		select {
-		case <-entry.done:
-		case <-reap.C:
-			// Leave the entry registered so Close() can still observe it;
-			// report a zombie instead of blocking the orchestrator.
-			fmt.Fprintf(os.Stderr, "tasks: child %s did not exit %s after cancel — reporting zombie\n", taskID, childReapTimeout)
-			return &agent.SubtaskResult{
-				TaskID: taskID,
-				Status: "error",
-				Error:  fmt.Sprintf("child did not exit %s after cancellation (stuck tool call?); it was left to terminate in the background", childReapTimeout),
-			}, nil
-		}
-		r.mu.Lock()
-		result := entry.result
-		r.mu.Unlock()
-		r.removeTask(taskID)
-		if result != nil {
-			return result, nil
-		}
-		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-			return &agent.SubtaskResult{TaskID: taskID, Status: "timeout", Error: "wait timeout"}, nil
-		}
-		return &agent.SubtaskResult{TaskID: taskID, Status: "cancelled", Error: waitCtx.Err().Error()}, nil
+		return r.abandon(entry, context.DeadlineExceeded), nil
+	case <-ctx.Done():
+		return r.abandon(entry, ctx.Err()), nil
 	}
+}
+
+// collect returns a finished task's result and unregisters it.
+func (r *TaskRunner) collect(entry *taskEntry) *agent.SubtaskResult {
+	r.mu.Lock()
+	result := entry.result
+	r.mu.Unlock()
+	r.removeTask(entry.id)
+	if result == nil {
+		return &agent.SubtaskResult{TaskID: entry.id, Status: "error", Error: "task produced no result"}
+	}
+	return result
+}
+
+// abandon cancels a task its waiter gave up on and returns what it ended with.
+func (r *TaskRunner) abandon(entry *taskEntry, why error) *agent.SubtaskResult {
+	taskID := entry.id
+	entry.cancel(ErrCauseWaitAbandoned)
+	// Wait for the child goroutine to exit before returning so callers
+	// (and t.TempDir cleanup on Windows) do not race with late writes
+	// under .orchestra/. Bounded (resilience audit P5): a tool stuck in
+	// a syscall that ignores ctx must not freeze the parent turn forever.
+	reap := time.NewTimer(childReapTimeout)
+	defer reap.Stop()
+	select {
+	case <-entry.done:
+	case <-reap.C:
+		// Leave the entry registered so Close() can still observe it;
+		// report a zombie instead of blocking the orchestrator.
+		fmt.Fprintf(os.Stderr, "tasks: child %s did not exit %s after cancel — reporting zombie\n", taskID, childReapTimeout)
+		return &agent.SubtaskResult{
+			TaskID: taskID,
+			Status: "error",
+			Error:  fmt.Sprintf("child did not exit %s after cancellation (stuck tool call?); it was left to terminate in the background", childReapTimeout),
+		}
+	}
+	r.mu.Lock()
+	result := entry.result
+	r.mu.Unlock()
+	r.removeTask(taskID)
+	if result != nil {
+		return result
+	}
+	if errors.Is(why, context.DeadlineExceeded) {
+		return &agent.SubtaskResult{TaskID: taskID, Status: "timeout", Error: "wait timeout"}
+	}
+	return &agent.SubtaskResult{TaskID: taskID, Status: "cancelled", Error: why.Error()}
 }
 
 // Cancel aborts a running task.
@@ -1148,6 +1215,9 @@ func (r *TaskRunner) Close() {
 	}
 	r.mu.Lock()
 	r.closed = true
+	if r.wallTimer != nil {
+		r.wallTimer.Stop()
+	}
 	entries := make([]*taskEntry, 0, len(r.tasks))
 	for _, e := range r.tasks {
 		entries = append(entries, e)

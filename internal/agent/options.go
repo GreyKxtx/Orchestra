@@ -58,6 +58,14 @@ type SubtaskRunner interface {
 	Cancel(ctx context.Context, taskID string) error
 }
 
+// SubtaskPoller is a SubtaskRunner whose waits can time out without giving up
+// on the task. task_wait uses it: a task still running at the timeout comes
+// back as status still_running and keeps running. Wait, which the
+// synchronous task tool uses, cancels a task it stops waiting for.
+type SubtaskPoller interface {
+	Poll(ctx context.Context, taskID string, timeoutMS int) (*SubtaskResult, error)
+}
+
 // SubtaskSpawnRequest is the request for spawning a child agent task.
 type SubtaskSpawnRequest struct {
 	Goal         string
