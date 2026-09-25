@@ -58,9 +58,24 @@ func (o *Orchestrator) UpdateGraph(ctx context.Context) error {
 	if o == nil || o.store == nil {
 		return nil
 	}
-	o.store.refreshMu.Lock()
-	defer o.store.refreshMu.Unlock()
-	return o.updateGraph(ctx, false)
+	err := func() error {
+		o.store.refreshMu.Lock()
+		defer o.store.refreshMu.Unlock()
+		return o.updateGraph(ctx, false)
+	}()
+	o.afterPass(err)
+	return err
+}
+
+// afterPass runs the store's refresh hooks once a pass that changed the
+// graph has released its locks.
+func (o *Orchestrator) afterPass(err error) {
+	if err != nil {
+		return
+	}
+	if st := o.store.LastRefresh(); st.Parsed > 0 || st.Deleted > 0 {
+		o.store.fireRefresh(st)
+	}
 }
 
 // UpdateGraphAsync reserves the store's locks before returning, then runs
@@ -76,10 +91,14 @@ func (o *Orchestrator) UpdateGraphAsync(ctx context.Context) <-chan error {
 	o.store.refreshMu.Lock()
 	o.store.indexMu.Lock()
 	go func() {
-		defer o.store.refreshMu.Unlock()
-		defer o.store.indexMu.Unlock()
 		defer close(done)
-		done <- o.updateGraph(ctx, true)
+		err := func() error {
+			defer o.store.refreshMu.Unlock()
+			defer o.store.indexMu.Unlock()
+			return o.updateGraph(ctx, true)
+		}()
+		o.afterPass(err)
+		done <- err
 	}()
 	return done
 }

@@ -29,6 +29,39 @@ type Store struct {
 
 	statsMu     sync.Mutex
 	lastRefresh RefreshStats
+	// refreshHooks run after a pass that changed the graph, outside its
+	// locks: the embeddings pass re-indexes what changed (DATA-5).
+	hooksMu      sync.Mutex
+	refreshHooks []func(RefreshStats)
+
+	// The semantic index: the model's vectors in memory, normalized, rebuilt
+	// when embedGen moves (a vector saved or cleared, a file's nodes
+	// rewritten). embedLoads counts the rebuilds, for tests.
+	embedGen   atomic.Uint64
+	embedMu    sync.Mutex
+	embedIdx   *embedIndex
+	embedLoads atomic.Int64
+}
+
+// OnRefresh registers fn to run after every pass that changed the graph
+// (parsed or deleted a file), once the pass has released its locks.
+func (s *Store) OnRefresh(fn func(RefreshStats)) {
+	if s == nil || fn == nil {
+		return
+	}
+	s.hooksMu.Lock()
+	s.refreshHooks = append(s.refreshHooks, fn)
+	s.hooksMu.Unlock()
+}
+
+func (s *Store) fireRefresh(st RefreshStats) {
+	s.hooksMu.Lock()
+	hooks := make([]func(RefreshStats), len(s.refreshHooks))
+	copy(hooks, s.refreshHooks)
+	s.hooksMu.Unlock()
+	for _, fn := range hooks {
+		fn(st)
+	}
 }
 
 // RefreshStats describes the last UpdateGraph pass.
@@ -150,8 +183,18 @@ func (s *Store) migrate() error {
 		return err
 	}
 
+	// The embedding cache is keyed by content, not by node id, so it is
+	// created beside the versioned schema and never dropped by it: a graph
+	// rebuild renumbers every node, and the vectors cost real calls.
+	if err := s.ensureEmbeddingCache(); err != nil {
+		return err
+	}
+
 	if version >= targetVersion {
-		return s.ensureFileStamps()
+		if err := s.ensureFileStamps(); err != nil {
+			return err
+		}
+		return s.ensureEmbeddingHashColumn()
 	}
 
 	// Local cache: any older user_version (including v4 without package /
@@ -247,10 +290,11 @@ func (s *Store) migrate() error {
     CREATE INDEX idx_spans_code_file   ON spans(code_file);
 
     CREATE TABLE node_embeddings (
-        node_id INTEGER PRIMARY KEY,
-        model   TEXT NOT NULL,
-        dim     INTEGER NOT NULL,
-        vector  BLOB NOT NULL,
+        node_id      INTEGER PRIMARY KEY,
+        model        TEXT NOT NULL,
+        dim          INTEGER NOT NULL,
+        vector       BLOB NOT NULL,
+        content_hash TEXT NOT NULL DEFAULT '',
         FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
     );
     CREATE INDEX idx_node_embeddings_model ON node_embeddings(model);
@@ -317,6 +361,35 @@ func (s *Store) columnExists(table, column string) (bool, error) {
 		}
 	}
 	return false, rows.Err()
+}
+
+// ensureEmbeddingCache creates the content-hash vector cache if absent.
+func (s *Store) ensureEmbeddingCache() error {
+	_, err := s.db.Exec(`
+        CREATE TABLE IF NOT EXISTS embedding_cache (
+            model        TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            dim          INTEGER NOT NULL,
+            vector       BLOB NOT NULL,
+            PRIMARY KEY (model, content_hash)
+        )`)
+	if err != nil {
+		return fmt.Errorf("ckg store: embedding_cache: %w", err)
+	}
+	return nil
+}
+
+// ensureEmbeddingHashColumn adds content_hash to a node_embeddings table from
+// before it existed; those rows keep their vectors and carry no hash.
+func (s *Store) ensureEmbeddingHashColumn() error {
+	has, err := s.columnExists("node_embeddings", "content_hash")
+	if err != nil || has {
+		return err
+	}
+	if _, err := s.db.Exec("ALTER TABLE node_embeddings ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("ckg store: add node_embeddings.content_hash: %w", err)
+	}
+	return nil
 }
 
 // ensureMemoryEmbeddings creates the memory vector table if it is absent.
@@ -698,12 +771,20 @@ func (s *Store) SaveFileNodesStamped(ctx context.Context, path string, stamp Fil
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// The file's old nodes took their vectors with them (ON DELETE CASCADE).
+	s.embedGen.Add(1)
+	return nil
 }
 
 // DeleteFile deletes a file and cascades its deletion to nodes and edges.
 func (s *Store) DeleteFile(ctx context.Context, path string) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM files WHERE path = ?", path)
+	if err == nil {
+		s.embedGen.Add(1)
+	}
 	return err
 }
 

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/orchestra/orchestra/internal/browser"
@@ -48,6 +49,13 @@ type Runner struct {
 	ckgMu       sync.RWMutex
 	ckgStore    *ckg.Store
 	ckgProvider *ckg.Provider
+
+	// The embedding passes a graph refresh starts (WarmupEmbeddings): one
+	// at a time, cancelled and waited for by Close.
+	embedMu     sync.Mutex
+	embedCancel context.CancelFunc
+	embedWG     sync.WaitGroup
+	embedding   atomic.Bool
 
 	// seenInstructionDirs tracks, per agent of a run, which directories have
 	// already had their ORCHESTRA.md injected into a tool result (lazy
@@ -452,19 +460,63 @@ func (r *Runner) WarmupEmbeddings(ctx context.Context, after <-chan error) <-cha
 		if store == nil {
 			return
 		}
-		res, err := embedindex.Run(ctx, embedindex.Options{
-			ProjectRoot: r.workspaceRoot,
-			Store:       store,
-			Embed:       r.embedCfg,
+		r.embedPass(ctx, store)
+		// From here on, every refresh that changes the graph re-indexes what
+		// it changed (the content cache keeps the rest from being sent again),
+		// so semantic_search follows the tree instead of the last warmup.
+		embedCtx, cancel := context.WithCancel(ctx)
+		r.embedMu.Lock()
+		r.embedCancel = cancel
+		r.embedMu.Unlock()
+		store.OnRefresh(func(st ckg.RefreshStats) {
+			if st.Parsed > 0 || st.Deleted > 0 {
+				r.embedChangedInBackground(embedCtx)
+			}
 		})
-		switch {
-		case err != nil && ctx.Err() == nil:
-			fmt.Fprintf(os.Stderr, "orchestra: semantic_search index failed: %v\n", err)
-		case res.Indexed > 0:
-			fmt.Fprintf(os.Stderr, "orchestra: indexed %d node(s) for semantic_search (model %s)\n", res.Indexed, res.Model)
-		}
 	}()
 	return done
+}
+
+// embedPass runs one incremental embedding pass over the graph.
+func (r *Runner) embedPass(ctx context.Context, store *ckg.Store) {
+	res, err := embedindex.Run(ctx, embedindex.Options{
+		ProjectRoot: r.workspaceRoot,
+		Store:       store,
+		Embed:       r.embedCfg,
+	})
+	switch {
+	case err != nil && ctx.Err() == nil:
+		fmt.Fprintf(os.Stderr, "orchestra: semantic_search index failed: %v\n", err)
+	case res.Indexed > 0:
+		fmt.Fprintf(os.Stderr, "orchestra: indexed %d node(s) for semantic_search (model %s, %d from cache)\n", res.Indexed, res.Model, res.Reused)
+	}
+}
+
+// embedChangedInBackground starts an embedding pass unless one is running.
+// Close cancels the pass and waits for it before the store goes.
+func (r *Runner) embedChangedInBackground(ctx context.Context) {
+	if !r.embedding.CompareAndSwap(false, true) {
+		return
+	}
+	r.embedMu.Lock()
+	if ctx.Err() != nil {
+		r.embedMu.Unlock()
+		r.embedding.Store(false)
+		return
+	}
+	r.embedWG.Add(1)
+	r.embedMu.Unlock()
+	go func() {
+		defer r.embedWG.Done()
+		defer r.embedding.Store(false)
+		r.ckgMu.RLock()
+		store := r.ckgStore
+		r.ckgMu.RUnlock()
+		if store == nil {
+			return
+		}
+		r.embedPass(ctx, store)
+	}()
 }
 
 // Close releases resources held by the Runner (LSP manager, CKG store, etc).
@@ -485,6 +537,14 @@ func (r *Runner) Close() error {
 	// delegates read it without a lock, so Close makes the manager inert
 	// rather than nil-ing the field (lsp.Manager.Close is idempotent).
 	r.lspManager.Close()
+	// An embedding pass started by a refresh must finish before the store
+	// closes under it.
+	r.embedMu.Lock()
+	if r.embedCancel != nil {
+		r.embedCancel()
+	}
+	r.embedMu.Unlock()
+	r.embedWG.Wait()
 	r.ckgMu.Lock()
 	store := r.ckgStore
 	r.ckgStore = nil

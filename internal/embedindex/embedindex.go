@@ -7,6 +7,8 @@ package embedindex
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +22,11 @@ import (
 // DefaultBatchSize is used when embed.batch_size is unset.
 const DefaultBatchSize = 32
 
+// DefaultMaxInputBytes caps the text one symbol is embedded from. A symbol
+// that spans a generated file used to exceed the endpoint's input limit
+// and fail its whole batch, and the pass with it (DATA-5).
+const DefaultMaxInputBytes = 8 << 10
+
 // Options configures one indexing pass.
 type Options struct {
 	ProjectRoot string
@@ -28,8 +35,12 @@ type Options struct {
 
 	// Limit caps how many nodes one pass embeds (0 = all pending).
 	Limit int
-	// Rebuild drops existing vectors for the model before indexing.
+	// Rebuild drops existing vectors for the model before indexing. The
+	// content cache is kept: symbols whose text did not change are not sent
+	// again.
 	Rebuild bool
+	// MaxInputBytes caps the text per symbol (0 = DefaultMaxInputBytes).
+	MaxInputBytes int
 	// Progress, when set, is called after each batch with the running count.
 	Progress func(done, total int, fqn string)
 }
@@ -43,6 +54,9 @@ type Result struct {
 	Indexed int
 	// Skipped counts nodes whose source could not be read or was empty.
 	Skipped int
+	// Reused counts vectors taken from the content cache instead of the
+	// endpoint: symbols whose text is what it was when they were embedded.
+	Reused int
 }
 
 // Run embeds every CKG node that lacks a vector for the configured model.
@@ -62,9 +76,8 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	res.Model = model
 
 	if opts.Rebuild {
-		if _, err := opts.Store.DB().ExecContext(ctx,
-			`DELETE FROM node_embeddings WHERE model = ?`, model); err != nil {
-			return res, fmt.Errorf("rebuild: clear embeddings: %w", err)
+		if err := opts.Store.ClearEmbeddings(ctx, model); err != nil {
+			return res, fmt.Errorf("rebuild: %w", err)
 		}
 	}
 
@@ -81,6 +94,10 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if batch <= 0 {
 		batch = DefaultBatchSize
 	}
+	maxInput := opts.MaxInputBytes
+	if maxInput <= 0 {
+		maxInput = DefaultMaxInputBytes
+	}
 
 	for i := 0; i < len(pending); i += batch {
 		if err := ctx.Err(); err != nil {
@@ -92,43 +109,97 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		}
 		chunk := pending[i:end]
 
-		inputs := make([]string, 0, len(chunk))
-		valid := make([]ckg.MissingEmbedding, 0, len(chunk))
+		type input struct {
+			node ckg.MissingEmbedding
+			text string
+			hash string
+		}
+		texts := make([]input, 0, len(chunk))
+		hashes := make([]string, 0, len(chunk))
 		for _, m := range chunk {
 			text, readErr := ReadNodeSource(opts.ProjectRoot, m)
 			if readErr != nil || strings.TrimSpace(text) == "" {
 				res.Skipped++
 				continue
 			}
-			inputs = append(inputs, text)
-			valid = append(valid, m)
+			text = CapInput(text, maxInput)
+			h := ContentHash(text)
+			texts = append(texts, input{node: m, text: text, hash: h})
+			hashes = append(hashes, h)
 		}
-		if len(inputs) == 0 {
+		if len(texts) == 0 {
 			continue
 		}
 
-		vecs, err := client.Embed(ctx, inputs)
+		// Symbols whose text was embedded before, under this model, get the
+		// vector they had: a re-index renumbers every node of a changed file,
+		// but most of its symbols did not change.
+		cached, err := opts.Store.CachedEmbeddings(ctx, model, hashes)
 		if err != nil {
-			return res, fmt.Errorf("embed batch [%d:%d]: %w", i, end, err)
+			return res, err
 		}
-		if len(vecs) != len(valid) {
-			return res, fmt.Errorf("embed batch [%d:%d]: got %d vectors for %d inputs", i, end, len(vecs), len(valid))
+		var reused []ckg.EmbeddingItem
+		inputs := make([]string, 0, len(texts))
+		fresh := make([]input, 0, len(texts))
+		for _, in := range texts {
+			if v, ok := cached[in.hash]; ok {
+				reused = append(reused, ckg.EmbeddingItem{NodeID: in.node.NodeID, Vector: v, ContentHash: in.hash})
+				continue
+			}
+			inputs = append(inputs, in.text)
+			fresh = append(fresh, in)
+		}
+		if len(reused) > 0 {
+			if err := opts.Store.SaveEmbeddings(ctx, model, reused); err != nil {
+				return res, fmt.Errorf("save cached batch [%d:%d]: %w", i, end, err)
+			}
+			res.Reused += len(reused)
+			res.Indexed += len(reused)
 		}
 
-		items := make([]ckg.EmbeddingItem, len(valid))
-		for j, m := range valid {
-			items[j] = ckg.EmbeddingItem{NodeID: m.NodeID, Vector: vecs[j]}
+		if len(inputs) > 0 {
+			vecs, err := client.Embed(ctx, inputs)
+			if err != nil {
+				return res, fmt.Errorf("embed batch [%d:%d]: %w", i, end, err)
+			}
+			if len(vecs) != len(fresh) {
+				return res, fmt.Errorf("embed batch [%d:%d]: got %d vectors for %d inputs", i, end, len(vecs), len(fresh))
+			}
+			items := make([]ckg.EmbeddingItem, len(fresh))
+			for j, in := range fresh {
+				items[j] = ckg.EmbeddingItem{NodeID: in.node.NodeID, Vector: vecs[j], ContentHash: in.hash}
+			}
+			if err := opts.Store.SaveEmbeddings(ctx, model, items); err != nil {
+				return res, fmt.Errorf("save batch [%d:%d]: %w", i, end, err)
+			}
+			res.Indexed += len(items)
 		}
-		if err := opts.Store.SaveEmbeddings(ctx, model, items); err != nil {
-			return res, fmt.Errorf("save batch [%d:%d]: %w", i, end, err)
-		}
-		res.Indexed += len(items)
 
 		if opts.Progress != nil {
 			opts.Progress(res.Indexed+res.Skipped, res.Total, chunk[len(chunk)-1].FQN)
 		}
 	}
 	return res, nil
+}
+
+// CapInput cuts text to at most max bytes, on a line boundary when it can,
+// and says so on the last line. The first line — the symbol's name — stays.
+func CapInput(text string, max int) string {
+	if max <= 0 || len(text) <= max {
+		return text
+	}
+	cut := text[:max]
+	if i := strings.LastIndexByte(cut, '\n'); i > 0 {
+		cut = cut[:i+1]
+	}
+	return cut + "// … truncated\n"
+}
+
+// ContentHash is the key a vector is cached under: the hash of the text it
+// was made from.
+func ContentHash(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
 }
 
 // ReadNodeSource returns the source range for a node, prefixed with its FQN so
