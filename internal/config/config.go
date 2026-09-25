@@ -16,6 +16,7 @@ import (
 	"github.com/orchestra/orchestra/internal/roles"
 	"github.com/orchestra/orchestra/internal/toolspec"
 	llmpkg "github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -999,33 +1000,11 @@ func Save(path string, cfg *ProjectConfig) error {
 		}
 	}
 
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp config file: %w", err)
-	}
-	tmpName := tmp.Name()
-	cleanup := func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		cleanup()
-		return fmt.Errorf("failed to write config file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		cleanup()
-		return fmt.Errorf("failed to sync config file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("failed to close config file: %w", err)
-	}
-	if err := os.Chmod(tmpName, 0600); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("failed to chmod config file: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
+	// fsutil's write retries the rename: on Windows it fails for a moment
+	// while an antivirus scan or a reader holds the file — the config written
+	// just before is the one most likely to be scanned — and a single attempt
+	// turned that into a failed save.
+	if err := fsutil.AtomicWriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("failed to replace config file: %w", err)
 	}
 	// A setting the user changed through Orchestra in a trusted workspace is
