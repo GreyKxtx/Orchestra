@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -65,5 +67,41 @@ func TestRunParallelToolBatch_IdenticalReadsRunOnce(t *testing.T) {
 	// blocked rather than run a fourth time.
 	if !cb.IsReadOnlyBlocked("read", input) {
 		t.Fatal("the repeats in one batch must count towards the doom-loop guard")
+	}
+}
+
+// The parallel batch runs the same gate chain as a single call. It used to
+// check browser consent only and rely on the caller routing anything else to
+// the serial path, so a batch that reached it with a call the mode was never
+// given ran that call.
+func TestRunParallelToolBatch_PassesTheGateChain(t *testing.T) {
+	ag, _ := newTestAgent(t, &scriptedLLM{steps: []string{`{"patches":[]}`}}, Options{Mode: ModeExplore})
+	cb := NewCircuitBreaker(4, 6, 6, 3)
+	calls := []ToolCall{
+		{ID: "c1", Name: "read", Input: []byte(`{"path":"a.txt"}`)},
+		{ID: "c2", Name: "write", Input: []byte(`{"path":"b.txt","content":"x"}`)},
+		{ID: "c3", Name: "webfetch", Input: []byte(`{"url":"http://127.0.0.1:1/"}`)},
+	}
+	history, cbErr := ag.runParallelToolBatch(context.Background(), cb, nil, calls, nil, 1)
+	if cbErr != nil {
+		t.Fatalf("unexpected breaker trip: %v", cbErr)
+	}
+	byID := map[string]string{}
+	for _, m := range history {
+		if m.Role == llm.RoleTool {
+			byID[m.ToolCallID] = m.Content
+		}
+	}
+	if strings.Contains(byID["c1"], "denied") {
+		t.Errorf("the read must run: %s", byID["c1"])
+	}
+	if !strings.Contains(byID["c2"], "not available in explore mode") {
+		t.Errorf("write is not an explore tool and must be refused: %s", byID["c2"])
+	}
+	if !strings.Contains(byID["c3"], "consent") {
+		t.Errorf("webfetch without web consent must be refused: %s", byID["c3"])
+	}
+	if data, err := os.ReadFile(filepath.Join(ag.tools.WorkspaceRoot(), "b.txt")); err == nil {
+		t.Fatalf("the refused write ran: %q", data)
 	}
 }
