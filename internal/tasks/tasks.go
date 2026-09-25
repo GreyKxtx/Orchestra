@@ -195,7 +195,9 @@ type TaskRunner struct {
 
 	// all keeps every task of the turn, collected ones included, for
 	// task_board and for depends_on on a task that was already waited for.
-	all   []*taskEntry
+	all []*taskEntry
+	// byKey names tasks for depends_on, per spawner (keyOf): two Leads that
+	// both call their first WorkOrder wo-1 each depend on their own.
 	byKey map[string]*taskEntry
 	// slots are the per-depth concurrency semaphores (Agency.MaxParallel).
 	slots map[int]chan struct{}
@@ -260,6 +262,7 @@ type taskEntry struct {
 	role         string       // built-in role it runs as
 	parent       string       // address of the spawner
 	parentTaskID string       // task of the spawner ("" = the root)
+	spawner      string       // task that spawned it ("" = the root); a relayed worker's is its Lead, its parent the Lead's owner
 	depth        int          // root children = 1
 	deps         []*taskEntry // must succeed before this one starts
 	goal         string       // first line of the goal, for the board
@@ -486,6 +489,7 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		role:         target.role,
 		parent:       from.address,
 		parentTaskID: from.taskID,
+		spawner:      from.taskID,
 		depth:        from.depth + 1,
 		goal:         firstLine(req.Goal, 120),
 		status:       "queued",
@@ -535,7 +539,7 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		cancel(nil)
 		return "", err
 	}
-	deps, depErr := r.resolveDepsLocked(dependsOn)
+	deps, depErr := r.resolveDepsLocked(from.taskID, dependsOn)
 	if depErr != nil {
 		r.mu.Unlock()
 		cancel(nil)
@@ -549,7 +553,7 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 	if key != "" {
 		// A re-spawned WorkOrder takes its key over: later dependents mean
 		// the attempt that is still to come, not the one that failed.
-		r.byKey[key] = entry
+		r.byKey[keyOf(from.taskID, key)] = entry
 	}
 	r.mu.Unlock()
 
