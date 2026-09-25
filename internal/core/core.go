@@ -107,6 +107,10 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 	}
 	// stderr only: stdout carries the JSON-RPC framing.
 	cfg.FprintWarnings(os.Stderr)
+	if st := cfg.Trust(); len(st.Ignored) > 0 {
+		fmt.Fprintf(os.Stderr, "orchestra: this workspace is not trusted — ignoring %s. "+
+			"Trust it with `orchestra trust` or the workspace.trust method.\n", strings.Join(st.Ignored, ", "))
+	}
 
 	projectID, err := cache.ComputeProjectID(cfg.ProjectRoot)
 	if err != nil {
@@ -122,6 +126,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		ExcludeDirs:        cfg.ExcludeDirs,
 		ExecTimeout:        time.Duration(cfg.Exec.TimeoutS) * time.Second,
 		ExecOutputLimit:    cfg.Exec.OutputLimitKB * 1024,
+		ExecEnvPassthrough: cfg.Exec.EnvPassthrough,
 		WebFetchTimeout:    time.Duration(cfg.Web.FetchTimeoutS) * time.Second,
 		WebMaxContentBytes: cfg.Web.MaxContentBytes,
 		WebSearch:          cfg.Web.Search,

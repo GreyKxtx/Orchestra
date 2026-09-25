@@ -2,16 +2,20 @@ package ckg
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path"
-	"path/filepath"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/orchestra/orchestra/internal/tools/toolpath"
 )
 
 //go:embed ui/index.html
@@ -114,9 +118,10 @@ func sourceHandlerFunc(workspaceRoot string) http.HandlerFunc {
 			http.Error(w, "missing params", http.StatusBadRequest)
 			return
 		}
-		fullPath := filepath.Join(workspaceRoot, filepath.FromSlash(filePath))
-		rel, relErr := filepath.Rel(workspaceRoot, fullPath)
-		if relErr != nil || strings.HasPrefix(rel, "..") {
+		// The same resolution every tool uses: no "..", no absolute path, no
+		// symlink out of the workspace, and never the credential files.
+		fullPath, _, err := toolpath.ResolveWorkspacePath(workspaceRoot, filePath)
+		if err != nil {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -136,14 +141,29 @@ func sourceHandlerFunc(workspaceRoot string) http.HandlerFunc {
 		if end > len(lines) {
 			end = len(lines)
 		}
-		snippet := strings.Join(lines[start-1:end], "\n")
+		if start > end {
+			start = end
+		}
+		snippet := ""
+		if end > 0 {
+			snippet = strings.Join(lines[start-1:end], "\n")
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte(snippet))
 	}
 }
 
-// StartUIServer starts a lightweight HTTP server on the given port to serve the CKG visualization.
-func StartUIServer(store *Store, workspaceRoot string, port int) error {
+// StartUIServer serves the CKG visualization on 127.0.0.1:port.
+//
+// The graph and /api/source expose the project's code, so the server is
+// loopback-only and every request carries token: the first page load takes it
+// from ?token= (the URL the command prints) and trades it for an HttpOnly
+// cookie. It used to listen on every interface with no check at all, which
+// published the source tree to the local network.
+func StartUIServer(store *Store, workspaceRoot string, port int, token string) error {
+	if strings.TrimSpace(token) == "" {
+		return fmt.Errorf("ckg-ui: a token is required")
+	}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/graph", func(w http.ResponseWriter, r *http.Request) {
@@ -170,9 +190,51 @@ func StartUIServer(store *Store, workspaceRoot string, port int) error {
 		w.Write(indexHtml)
 	})
 
-	addr := fmt.Sprintf(":%d", port)
-	log.Printf("Starting CKG UI server at http://localhost%s", addr)
-	return http.ListenAndServe(addr, mux)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	log.Printf("Starting CKG UI server at http://%s/?token=%s", addr, token)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           requireUIToken(token, mux),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	return srv.ListenAndServe()
+}
+
+const uiTokenCookie = "orchestra_ckg_ui"
+
+// requireUIToken admits a request that carries token as ?token=, as the
+// cookie set on the first load, or as a bearer header. A Host other than the
+// loopback address is refused as well, which keeps a DNS-rebinding page from
+// reaching the server by name.
+func requireUIToken(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		if host != "127.0.0.1" && host != "localhost" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		match := func(v string) bool {
+			return subtle.ConstantTimeCompare([]byte(strings.TrimSpace(v)), []byte(token)) == 1
+		}
+		if q := r.URL.Query().Get("token"); q != "" && match(q) {
+			http.SetCookie(w, &http.Cookie{Name: uiTokenCookie, Value: token, Path: "/",
+				HttpOnly: true, SameSite: http.SameSiteStrictMode})
+			next.ServeHTTP(w, r)
+			return
+		}
+		if c, err := r.Cookie(uiTokenCookie); err == nil && match(c.Value) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if auth := r.Header.Get("Authorization"); len(auth) > 7 && strings.EqualFold(auth[:7], "bearer ") && match(auth[7:]) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	})
 }
 
 func BuildGraphData(ctx context.Context, store *Store) (*GraphData, error) {

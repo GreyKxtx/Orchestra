@@ -4,9 +4,9 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `21`
+- **`protocol.ProtocolVersion`**: `22`
 - **`protocol.OpsVersion`**: `1`
-- **`protocol.ToolsVersion`**: `16`
+- **`protocol.ToolsVersion`**: `17`
 
 Совместимость проверяется в `initialize`:
 
@@ -15,6 +15,7 @@
 
 ### История ProtocolVersion
 
+- **v22** (2026-09-25): доверие к рабочей области. Новые методы `workspace.trust_status` и `workspace.trust` (`{revoke?: bool}`) — см. ниже. Настройки проекта, которые действуют на машину (MCP-серверы из `.orchestra.yml` и `.mcp.json`, `hooks`, `lsp.servers`, `exec.confirm` / `exec.allow` / `exec.env_passthrough`, `web.confirm`, правила `permissions` с `action: allow`, блоки `auth`, а также endpoint проекта, куда ушёл бы ключ пользователя — `${VAR}` или ключ из `~/.orchestra/config.yml`), вступают в силу только в доверенной рабочей области; до этого core их не применяет и пишет в stderr, что проигнорировано. `session.start` отклоняет `session_id`, который не является простым именем (буквы, цифры, `.`, `_`, `-`), с `InvalidParams`.
 - **v21** (2026-09-20): `agent.run` и `session.message` принимают `browser_panel` — `browser.*` хода действуют на браузерную панель, которую открыл сам клиент, через server-initiated запрос `browser/call`, а не на браузер, запущенный core. Клиент, который не отвечает на этот запрос, не должен передавать флаг.
 - **v20** (2026-09-18): `session.discard_pending` принимает `paths[]` и отвечает `remaining_ops[]` — ровно так же, как `session.apply_pending`. До этого отклонить один плохой файл хода было нельзя: отклонялся весь ход целиком. Пустой `paths` — прежнее «отклонить всё».
 - **v19** (2026-09-15): `agent.run` и `session.message` принимают `allow_browser` — ход, его подагенты и skills получают `browser.*` (кроме профиля `fast`). Разрешение проверяет агент на каждом вызове: ход без `allow_browser` получает отказ, даже назвав инструмент сам. `tool.call` на `browser.*` отвечает `ExecDenied`. Клиенты: VS Code и веб — переключатель «Браузер» в меню «Доступ», TUI — `/browser`.
@@ -39,6 +40,7 @@
 
 ### История ToolsVersion
 
+- **v17** (2026-09-25): инструмент, которого режим не предложил, отклоняется («not available in … mode»); `final.patches` проходят те же правила записи, что `write` на тот же путь (режим без `write` патчей не возвращает); plan, architecture и ask на верхнем уровне делегируют только читателям (explore, ask, scout, verifier); `exec.allow` проверяет каждую команду shell-строки и не принимает путь вместо имени программы; `bash` запускается без переменных окружения, похожих на секреты (`…_API_KEY`, `…SECRET…`, `…_PASSWORD`), кроме названных в `exec.env_passthrough`; финал агента верхнего уровня ждёт незавершённые задачи хода.
 - **v16** (2026-09-24): агентство (`agency:` в `.orchestra.yml`, см. [agency.md](agency.md)). Новые инструменты `send_message` (разговор с другим агентом/отделом; переписка пары сохраняется в `.orchestra/agency/threads/`), `agent_post` (заметка без ожидания: живому получателю — на следующем шаге, остальным — в `.orchestra/agency/inbox/`; `contract_change_request` требует `artifact` и копируется Orchestrator'у), `task_board` (все задачи хода со статусами). Они предлагаются только когда агентство включено для хода. `task` / `task_spawn` принимают `dept` и `depends_on[]`, `task_spawn` — ещё `key`; WorkOrder JSON принимает `depends_on[]` (по `task_id` других WorkOrder'ов). `task_wait` принимает `task_ids[]` и отвечает `{results[], integration}` — `integration` появляется, когда два и более воркера изменили файлы, и содержит общую проверку их правок. `subagent_type` принимает `scout` (Market Scout: веб-исследование конкурентов) и имена custom-агентов из `agents:`; enum сужается до агентов, до которых этот агент может дотянуться по `agency.flows`. Дочерние агенты получают `task` / `task_spawn` / `task_wait`, когда flows разрешают им делегировать, вплоть до `agency.max_depth`. Результат Dept Lead'а с `batch_workorders[]` рантайм раздаёт воркерам сам и возвращает `relayed.task_ids`.
 - **v15** (2026-09-15): `symbols` отвечает `start_line` / `start_col` / `end_line` / `end_col` с отсчётом от 1 — как префиксы строк `read` и позиции `lsp.*` — вместо `range` во внутренних 0-based координатах ops. Модель получала номер строки на единицу меньше, чем у `read`, и ничто не говорило ей об этом.
 - **v14** (2026-08-16): Learning stack — `lesson_promote` / `playbook_promote` (Dept/Orchestra Lead); dept-scoped `memory_write` → `.orchestra/memory/lessons/<dept>.md`; `memory_read` layer `lessons`; `memory_search` hybrid semantic ranking when `embed.model` is configured (substring fallback); worker spawn injects `<explore_first_policy>`; `playbook_promote` uses single User approval (`promotion_ref` optional, defaults to overlay `decision_ref`); merged local overlays removed from `.orchestra/playbooks/local/`; `child_done` agent/event may carry `lesson_promote_suggestion` / `playbook_promote_suggestion` for UI badges.
@@ -412,6 +414,14 @@ Returns `.orchestra/system.txt` override (if any), `has_override`, and current `
 ### `runtime.set_system_prompt`
 
 Writes or clears `.orchestra/system.txt` (`content` / `clear`). Optional `prompt_family` updates YAML. Does not restart core.
+
+### `workspace.trust_status`
+
+Возвращает `{enforced, trusted, ignored[], hash}`: действуют ли собственные настройки рабочей области, которые влияют на машину, и какие из них игнорируются, пока она не доверена (`ignored`, например `mcp.servers`, `hooks`, `llm.api_key (the project chose where it goes)`). `enforced: false` — проверка выключена пользователем (`security.workspace_trust: off` в `~/.orchestra/config.yml` или `ORCHESTRA_WORKSPACE_TRUST=off`).
+
+### `workspace.trust`
+
+`{revoke?: bool}`. Записывает текущий «опасный срез» конфигурации рабочей области как доверенный (или, с `revoke: true`, забывает её) в `~/.orchestra/trusted-workspaces.json`, перечитывает конфиг и перезапускает MCP-серверы без перезапуска core. Ответ — тот же, что у `workspace.trust_status`, плюс `warnings[]` запуска MCP. Пока идёт ход, отвечает ошибкой: доверие меняется между ходами. Любое последующее изменение среза (pull, правка агента) снова требует доверия. CLI: `orchestra trust [--status|--revoke]`.
 
 ### `mcp.list`
 

@@ -81,13 +81,10 @@ func (a *Agent) requestMCPConsent(ctx context.Context, name, input string) (appr
 		return false, fmt.Sprintf("%s needs the user's consent: its MCP server does not mark it read-only, and this run has no one to ask. "+
 			"Tell the user; they can allow it with a permissions rule {tool: %q, action: allow}", name, name)
 	}
-	if len(input) > 240 {
-		input = input[:240] + "..."
-	}
 	resp, err := a.opts.PermissionRequester.RequestPermission(ctx, PermissionRequest{
 		Tool:        name,
 		Kind:        "mcp.tool",
-		Description: input,
+		Description: permissionText(input),
 		Reason:      "its MCP server does not mark this tool read-only, and it runs for real, even in a turn that does not apply changes",
 	})
 	if err != nil {

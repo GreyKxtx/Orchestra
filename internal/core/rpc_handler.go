@@ -358,6 +358,18 @@ func (h *RPCHandler) Handle(ctx context.Context, method string, params json.RawM
 		}
 		return h.core.RuntimeSetSystemPrompt(p)
 
+	case "workspace.trust_status":
+		return h.core.WorkspaceTrustStatus()
+
+	case "workspace.trust":
+		var p WorkspaceTrustParams
+		if err := decodeParams(params, &p); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, "Invalid JSON format: "+err.Error(), map[string]any{
+				"method": method,
+			})
+		}
+		return h.core.WorkspaceTrust(ctx, p)
+
 	case "mcp.list":
 		var p MCPListParams
 		if err := decodeParams(params, &p); err != nil {

@@ -255,3 +255,23 @@ func TestQuickShape_ExecutionWithWaiversAdmitsAWorker(t *testing.T) {
 		t.Fatal("execution without an approved PRD or a waiver must still be refused")
 	}
 }
+
+func TestKeepRuntimeOwned(t *testing.T) {
+	prev := &State{Phase: PhaseExecution, PRDStatus: "draft", ContractEpoch: 3, ClarificationRounds: 1,
+		DocDebt: []string{"docs/a.md"}, BlockedSince: "t0", Waivers: []string{"doc_debt"}}
+	next := &State{Phase: PhaseDelivery, PRDStatus: "approved", ContractEpoch: 9,
+		Waivers: []string{"prd", "playbooks"}}
+	changed := KeepRuntimeOwned(next, prev)
+	if next.PRDStatus != "draft" || next.ContractEpoch != 3 || next.ClarificationRounds != 1 ||
+		len(next.DocDebt) != 1 || next.BlockedSince != "t0" || next.Phase != PhaseDelivery {
+		t.Fatalf("runtime-owned fields must come from disk: %+v", next)
+	}
+	got := strings.Join(next.Waivers, ",")
+	if got != "doc_debt,prd" {
+		t.Fatalf("waivers = %q: the user's doc_debt stays, prd is the Lead's to add, playbooks is not", got)
+	}
+	want := "prd_status,contract_epoch,clarification_rounds,doc_debt,blocked_since,waivers:playbooks"
+	if strings.Join(changed, ",") != want {
+		t.Fatalf("changed = %v, want %s", changed, want)
+	}
+}

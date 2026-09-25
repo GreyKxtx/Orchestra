@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
@@ -268,7 +269,7 @@ const maxStoredTurnDigests = 24
 func PersistTurnDigest(workspaceRoot, sessionID, digest string) error {
 	digest = strings.TrimSpace(digest)
 	sessionID = strings.TrimSpace(sessionID)
-	if digest == "" || sessionID == "" || workspaceRoot == "" {
+	if digest == "" || !sessionfile.ValidID(sessionID) || workspaceRoot == "" {
 		return nil
 	}
 	dir := filepath.Join(workspaceRoot, ".orchestra", "memory", "sessions")

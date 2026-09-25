@@ -173,6 +173,7 @@ func (r *BackgroundRegistry) SpawnBackground(parent context.Context, req BashBac
 
 	cmd := exec.CommandContext(ctx, cmdName, argList...)
 	cmd.Dir = req.Workdir
+	cmd.Env = commandEnv(req.Env)
 	cmd.Stdin = nil
 	subproc.SetProcessGroup(cmd)
 

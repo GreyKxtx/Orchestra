@@ -28,6 +28,9 @@ func Save(workspaceRoot string, snap *Snapshot) error {
 	if strings.TrimSpace(snap.ID) == "" {
 		return fmt.Errorf("sessionfile: empty id")
 	}
+	if err := CheckID(snap.ID); err != nil {
+		return err
+	}
 	normalizeSnapshot(snap, snap.ID)
 	if snap.CreatedAt.IsZero() {
 		snap.CreatedAt = time.Now().UTC()
@@ -51,6 +54,9 @@ func Save(workspaceRoot string, snap *Snapshot) error {
 func Load(workspaceRoot, id string) (*Snapshot, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, fmt.Errorf("sessionfile: empty id")
+	}
+	if err := CheckID(id); err != nil {
+		return nil, err
 	}
 	data, err := os.ReadFile(snapshotPath(workspaceRoot, id))
 	if err != nil {
@@ -77,6 +83,9 @@ func Load(workspaceRoot, id string) (*Snapshot, error) {
 func Delete(workspaceRoot, id string) error {
 	if workspaceRoot == "" || id == "" {
 		return nil
+	}
+	if err := CheckID(id); err != nil {
+		return err
 	}
 	sidecar := filepath.Join(sessionsDir(workspaceRoot), id+".events.jsonl")
 	if err := os.Remove(sidecar); err != nil && !os.IsNotExist(err) {

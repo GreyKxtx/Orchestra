@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -154,8 +156,19 @@ func extractStatusCode(msg string) int {
 	if _, err := fmt.Sscanf(msg, "API returned status %d", &code); err == nil {
 		return code
 	}
+	// Anywhere else in the message: the Sscanf forms above only match at its
+	// start, and the Anthropic client prefixes its own name ("anthropic API
+	// error (status 429): …"), so its 429 and 529 read as 0 — never retried —
+	// and its "prompt is too long" 400 was never seen as an overflow.
+	if m := statusAnywhereRe.FindStringSubmatch(msg); len(m) == 2 {
+		if v, err := strconv.Atoi(m[1]); err == nil {
+			return v
+		}
+	}
 	return 0
 }
+
+var statusAnywhereRe = regexp.MustCompile(`(?i)\bstatus\s+(\d{3})\b`)
 
 func hintFromHTTP(code int, errMsg string, cfg LLMConfig) string {
 	low := strings.ToLower(errMsg)

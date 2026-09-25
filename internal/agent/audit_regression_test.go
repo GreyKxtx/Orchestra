@@ -118,8 +118,10 @@ func TestAgent_Run_TodoreadPlusRead_BothInHistory(t *testing.T) {
 			},
 		},
 	}}
+	// Build mode: it offers todoread (ask does not, and an unoffered tool is
+	// refused).
 	ag, _ := newTestAgent(t, llmClient, Options{
-		Mode:         ModeAsk,
+		Mode:         ModeBuild,
 		InitialTodos: []tools.TodoItem{{ID: "1", Content: "ship it", Status: tools.TodoDone}},
 	})
 	hist, _, err := ag.Run(context.Background(), nil, "read todos and file")
@@ -157,7 +159,7 @@ func TestAgent_Run_MixedBatch_TodowritePlusRead_BothExecuted(t *testing.T) {
 			},
 		},
 	}}
-	ag, _ := newTestAgent(t, llmClient, Options{Mode: ModeAsk})
+	ag, _ := newTestAgent(t, llmClient, Options{Mode: ModeBuild}) // ask offers no todowrite
 	hist, res, err := ag.Run(context.Background(), nil, "read todos and file")
 	if err != nil {
 		t.Fatalf("Run: %v", err)

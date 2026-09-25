@@ -14,6 +14,10 @@ func writeAuthConfig(t *testing.T, body string) string {
 	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}
+	// Auth blocks run a token command: they apply in a trusted workspace.
+	if _, err := TrustWorkspace(path); err != nil {
+		t.Fatal(err)
+	}
 	return path
 }
 

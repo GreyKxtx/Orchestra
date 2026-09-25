@@ -627,3 +627,82 @@ func prdApproved(projectRoot string, st *State) bool {
 	}
 	return strings.EqualFold(strings.TrimSpace(fm.Status), "approved")
 }
+
+// modelGrantableWaivers are the waivers the Orchestrator may declare itself,
+// for a job it sized as small (orchestra.txt). The rest — playbooks, doc_debt,
+// brief_completeness — are the user's to grant.
+var modelGrantableWaivers = map[string]bool{WaiverPRD: true, WaiverContract: true}
+
+// KeepRuntimeOwned makes next — a state.md the model wrote — keep what only
+// the runtime or the user may set, taken from prev (the file on disk, nil for
+// none): prd_status, contract_epoch, clarification_rounds, doc_debt,
+// phase_since, blocked_since, state_bytes, and the waivers outside the
+// model-grantable set. The model may still add prd/contract waivers and drop
+// any waiver. It returns the fields the content tried to change.
+//
+// The transition guard reads next. It used to take all of it from the model:
+// a Lead could write waivers: [doc_debt] or an empty doc_debt and walk the
+// delivery gate, or erase clarification_rounds and blocked_since.
+func KeepRuntimeOwned(next, prev *State) []string {
+	if next == nil {
+		return nil
+	}
+	var p State
+	if prev != nil {
+		p = *prev
+	}
+	var changed []string
+	if next.PRDStatus != p.PRDStatus {
+		changed = append(changed, "prd_status")
+		next.PRDStatus = p.PRDStatus
+	}
+	if next.ContractEpoch != p.ContractEpoch {
+		changed = append(changed, "contract_epoch")
+		next.ContractEpoch = p.ContractEpoch
+	}
+	if next.ClarificationRounds != p.ClarificationRounds {
+		changed = append(changed, "clarification_rounds")
+		next.ClarificationRounds = p.ClarificationRounds
+	}
+	if strings.Join(next.DocDebt, "\x00") != strings.Join(p.DocDebt, "\x00") {
+		changed = append(changed, "doc_debt")
+		next.DocDebt = append([]string(nil), p.DocDebt...)
+	}
+	if next.PhaseSince != p.PhaseSince {
+		next.PhaseSince = p.PhaseSince // maintained by the phase stamp, silently
+	}
+	if next.BlockedSince != p.BlockedSince {
+		changed = append(changed, "blocked_since")
+		next.BlockedSince = p.BlockedSince
+	}
+	next.StateBytes = p.StateBytes
+
+	var waivers []string
+	seen := map[string]bool{}
+	add := func(w string) {
+		k := strings.ToLower(strings.TrimSpace(w))
+		if k != "" && !seen[k] {
+			seen[k] = true
+			waivers = append(waivers, k)
+		}
+	}
+	userGranted := map[string]bool{}
+	for _, w := range p.Waivers {
+		k := strings.ToLower(strings.TrimSpace(w))
+		if !modelGrantableWaivers[k] {
+			userGranted[k] = true
+			add(k)
+		}
+	}
+	for _, w := range next.Waivers {
+		k := strings.ToLower(strings.TrimSpace(w))
+		switch {
+		case modelGrantableWaivers[k]:
+			add(k)
+		case !userGranted[k]:
+			changed = append(changed, "waivers:"+k)
+		}
+	}
+	next.Waivers = waivers
+	return changed
+}

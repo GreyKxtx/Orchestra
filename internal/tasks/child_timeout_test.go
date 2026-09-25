@@ -45,7 +45,7 @@ func TestChildTimeout_HungBashCancelsWithoutLeak(t *testing.T) {
 	before := runtime.NumGoroutine()
 	id, err := r.Spawn(context.Background(), agent.SubtaskSpawnRequest{
 		Goal:         "hang on bash",
-		SubagentType: "explore",
+		SubagentType: "general", // explore offers no bash, and an unoffered tool is refused
 		MaxSteps:     2,
 		TimeoutMS:    200,
 	})

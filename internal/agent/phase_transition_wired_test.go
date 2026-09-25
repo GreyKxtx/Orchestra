@@ -136,3 +136,42 @@ func TestUpdateWorkingState_ContentWithoutFrontmatterIsNotATransition(t *testing
 		t.Fatalf("note was not written: %q", string(b))
 	}
 }
+
+// The Lead may size a job as small and waive prd/contract itself; the other
+// waivers and the runtime's own fields are not its to write.
+func TestUpdateWorkingState_KeepsRuntimeOwnedFields(t *testing.T) {
+	a, root := orchestraLead(t, orchestrastate.EnforcementStrict)
+	if err := updateState(t, a, stateDoc("execution", "  waivers: [prd, contract]")); err != nil {
+		t.Fatalf("prd/contract waivers are the Lead's to declare: %v", err)
+	}
+	if err := orchestrastate.AddDocDebt(root, "docs/api.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Waiving doc_debt, or writing it away, does not open delivery.
+	for _, extra := range [][]string{
+		{"  waivers: [prd, contract, doc_debt]"},
+		{"  waivers: [prd, contract]", "  doc_debt: []"},
+	} {
+		err := updateState(t, a, stateDoc("delivery", extra...))
+		if err == nil || !strings.Contains(err.Error(), "doc_debt") {
+			t.Fatalf("delivery with owed docs must be refused (%v), got %v", extra, err)
+		}
+	}
+	st, _, err := orchestrastate.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.DocDebt) != 1 || st.HasWaiver(orchestrastate.WaiverDocDebt) {
+		t.Fatalf("doc_debt must stay as the runtime recorded it: %+v", st)
+	}
+
+	// A waiver the user wrote into the file survives the Lead's rewrite.
+	st.Waivers = append(st.Waivers, orchestrastate.WaiverDocDebt)
+	if err := orchestrastate.Save(root, st); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateState(t, a, stateDoc("delivery", "  waivers: [prd, contract]")); err != nil {
+		t.Fatalf("the user's doc_debt waiver opens delivery: %v", err)
+	}
+}

@@ -105,6 +105,18 @@ func (a *Agent) handleFinalStep(
 		}
 	}
 
+	for _, p := range finalPatches {
+		if err := a.finalPatchRefusal(p.Path); err != nil {
+			a.logf("final rejected: patch for %s: %v", p.Path, err)
+			*history = append(*history, llm.Message{Role: llm.RoleUser, Content: "final.patches refused: " + err.Error()})
+			emitStepDone("invalid")
+			if cbErr := cb.RecordDenied("final.patches"); cbErr != nil {
+				return finalStepOutcome{}, cbErr
+			}
+			return finalStepOutcome{Retry: true}, nil
+		}
+	}
+
 	if hint := a.restatedPatchHint(finalPatches); hint != "" {
 		a.logf("final rejected: a patch restates a change already staged this turn")
 		*history = append(*history, llm.Message{Role: llm.RoleUser, Content: hint})

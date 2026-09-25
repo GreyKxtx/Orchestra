@@ -153,5 +153,11 @@ func initProject(ctx context.Context, root string, opts InitOptions) error {
 		}
 	}
 
+	// The config init just wrote is the user's own (its lsp.servers were
+	// detected here): the workspace starts out trusted.
+	if _, err := config.TrustWorkspace(configPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not record the workspace as trusted: %v\n", err)
+	}
+
 	return nil
 }

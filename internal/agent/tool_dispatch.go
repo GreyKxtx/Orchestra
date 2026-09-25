@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
-	"github.com/orchestra/orchestra/internal/plan"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 )
@@ -158,6 +158,9 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	if refusal == nil {
 		refusal = a.mcpModeRefusal(name)
 	}
+	if refusal == nil {
+		refusal = a.offeredToolRefusal(name)
+	}
 	if refusal != nil {
 		toolResult := a.deniedToolResult(name, tc.Input, refusal.Error())
 		*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: toolCallID, Content: toolResult})
@@ -233,16 +236,16 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 
 	if name == "bash" && !effectiveAllowExec && a.opts.PermissionRequester != nil {
-		cmdPreview := ""
-		if len(tc.Input) > 0 {
-			cmdPreview = string(tc.Input)
-			if len(cmdPreview) > 200 {
-				cmdPreview = cmdPreview[:200] + "..."
-			}
+		cmd, args := execCommandFromInput(tc.Input)
+		if len(args) > 0 {
+			cmd += " " + strings.Join(args, " ")
+		}
+		if strings.TrimSpace(cmd) == "" {
+			cmd = string(tc.Input)
 		}
 		resp, permErr := a.opts.PermissionRequester.RequestPermission(ctx, PermissionRequest{
 			Tool:        "bash",
-			Description: cmdPreview,
+			Description: permissionText(cmd),
 		})
 		if permErr == nil && resp.Approved {
 			effectiveAllowExec = true
@@ -265,11 +268,11 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 	}
 
 	if name == "bash" && !effectiveAllowExec {
-		cmd := execCommandFromInput(tc.Input)
-		if !execCommandAllowed(cmd, a.opts.ExecAllow, a.opts.ExecDeny) {
+		cmd, args := execCommandFromInput(tc.Input)
+		if ok, why := execCommandAllowed(cmd, args, a.opts.ExecAllow, a.opts.ExecDeny); !ok {
 			msg := "exec.run requires user consent (use --allow-exec or configure exec.allow)"
 			if len(a.opts.ExecAllow) > 0 {
-				msg = fmt.Sprintf("exec.run: command %q is not in the allowlist", cmd)
+				msg = fmt.Sprintf("exec.run: command %q is not covered by the allowlist: %s", cmd, why)
 			}
 			toolResult := a.deniedToolResult(name, tc.Input, msg)
 			*history = append(*history, llm.Message{
@@ -685,15 +688,7 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *CircuitBreaker, histo
 		}
 		allowed := false
 		if json.Unmarshal(tc.Input, &pathReq) == nil {
-			switch a.opts.Mode {
-			case ModeOrchestra:
-				allowed = plan.IsOrchestraLeadWritablePath(pathReq.Path, a.effectivePlanPath())
-			case ModeArchitecture:
-				// Dept Lead surface (spec §6.1): plans + L2 playbook + specs.
-				allowed = plan.IsDeptLeadWritablePath(pathReq.Path, a.effectivePlanPath())
-			default:
-				allowed = plan.IsWritablePath(pathReq.Path, a.effectivePlanPath())
-			}
+			allowed = a.leadWritablePath(pathReq.Path)
 		}
 		if !allowed {
 			label := "plan mode"
@@ -1017,9 +1012,7 @@ func (a *Agent) requestInteractivePermission(ctx context.Context, toolName, subj
 	if desc == "" {
 		desc = string(input)
 	}
-	if len(desc) > 240 {
-		desc = desc[:240] + "..."
-	}
+	desc = permissionText(desc)
 	kind := toolName
 	if toolName == "bash" {
 		kind = "exec"
@@ -1033,4 +1026,23 @@ func (a *Agent) requestInteractivePermission(ctx context.Context, toolName, subj
 		return false, err
 	}
 	return resp.Approved, nil
+}
+
+// permissionMaxBytes bounds what one approval prompt shows. A command is
+// approved as a whole, so the prompt shows it whole; it used to show the first
+// 200 bytes, and a line with its payload past that point was approved by the
+// harmless start.
+const permissionMaxBytes = 16 * 1024
+
+// permissionText is what the user approves. Past permissionMaxBytes it says,
+// in the text itself, how much is not shown, and never cuts a UTF-8 sequence.
+func permissionText(s string) string {
+	if len(s) <= permissionMaxBytes {
+		return s
+	}
+	cut := permissionMaxBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + fmt.Sprintf("\n…[%d more bytes not shown — deny unless you know what they are]", len(s)-cut)
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"github.com/orchestra/orchestra/internal/execpolicy"
 	"net"
 	neturl "net/url"
 	"os"
@@ -93,32 +94,24 @@ type ExecConfig struct {
 	Deny          []string `yaml:"deny,omitempty"`  // commands explicitly denied (takes precedence over Allow)
 	TimeoutS      int      `yaml:"timeout_s"`
 	OutputLimitKB int      `yaml:"output_limit_kb"`
+	// EnvPassthrough names secret-looking environment variables (…_API_KEY,
+	// …_SECRET, …_PASSWORD) that commands the agent runs still receive, e.g.
+	// a key the project's own test suite needs. All others are removed.
+	EnvPassthrough []string `yaml:"env_passthrough,omitempty"`
 }
 
-// IsCommandAllowed reports whether cmd may run given the allow/deny lists.
-// Called only when Confirm=true (binary consent is already checked by the caller).
-// Deny list takes precedence over Allow list.
-// Empty Allow list with no Deny list → deny all (require explicit allowlist).
+// IsCommandAllowed reports whether cmd — a program name or a whole shell
+// line — may run given the allow/deny lists: every command the line starts
+// must be allowed and none denied (execpolicy.CommandAllowed). Called only
+// when Confirm=true. An empty Allow list allows nothing.
 func (e ExecConfig) IsCommandAllowed(cmd string) bool {
-	base := strings.ToLower(filepath.Base(strings.TrimSpace(cmd)))
-	base = strings.TrimSuffix(base, ".exe") // Windows: strip extension for comparison
-	if base == "" || base == "." {
-		return false
-	}
-	for _, d := range e.Deny {
-		if strings.ToLower(strings.TrimSpace(d)) == base {
-			return false
-		}
-	}
-	if len(e.Allow) == 0 {
-		return false // no allowlist configured → deny all
-	}
-	for _, a := range e.Allow {
-		if strings.ToLower(strings.TrimSpace(a)) == base {
-			return true
-		}
-	}
-	return false
+	return e.AllowsCommand(cmd, nil)
+}
+
+// AllowsCommand is IsCommandAllowed for a command given with args.
+func (e ExecConfig) AllowsCommand(cmd string, args []string) bool {
+	ok, _ := execpolicy.CommandAllowed(cmd, args, e.Allow, e.Deny)
+	return ok
 }
 
 // LSPServerConfig configures a single language server process.
@@ -579,6 +572,14 @@ type ProjectConfig struct {
 	// bindings). Loaded from the config directory by Load; never marshalled
 	// back into .orchestra.yml.
 	Routing *OrchestraRouting `yaml:"-"`
+
+	// trust is how Load treated the project's own settings (trust.go);
+	// untrustedLeaves are the settings it left out, restored on Save.
+	trust           WorkspaceTrust
+	untrustedLeaves [][]string
+	// loaded is set by Load; a config built in code (DefaultConfig, init)
+	// has no workspace it came from.
+	loaded bool
 	// envRefs records every ${VAR} Load resolved in a credential field, keyed
 	// by config path ("llm.api_key", "providers.gemini.api_key"). Save writes
 	// the reference back in place of the value. Unexported, so yaml never
@@ -903,12 +904,26 @@ func Load(path string) (*ProjectConfig, error) {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
+	// Settings that act on this machine take effect only in a trusted
+	// workspace (trust.go); the user's own global config always does.
+	gate, err := evaluateWorkspaceTrust(path)
+	if err != nil {
+		return nil, err
+	}
+	var untrustedLeaves [][]string
+	if !gate.trust.Trusted {
+		data, untrustedLeaves, err = stripUntrustedYAML(data)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	data, err = mergeGlobalConfig(data)
 	if err != nil {
 		return nil, err
 	}
 
-	data, err = mergeLocalOverlay(path, data)
+	data, err = mergeLocalOverlay(path, data, !gate.trust.Trusted)
 	if err != nil {
 		return nil, err
 	}
@@ -920,16 +935,24 @@ func Load(path string) (*ProjectConfig, error) {
 
 	cfg.applyDefaults()
 	cfg.resolveProjectRoot(path)
+	cfg.trust = gate.trust
+	cfg.untrustedLeaves = untrustedLeaves
+	cfg.loaded = true
+	if !gate.trust.Trusted {
+		cfg.isolateCredentials(gate.isolated)
+	}
 
 	// Credentials named as ${VAR} resolve here, before Validate reads the
 	// endpoints and before llmauth attaches a token source to them.
 	cfg.expandEnvRefs(filepath.Dir(path))
 
-	fromMCPJSON, err := LoadMCPJSON(filepath.Dir(path))
-	if err != nil {
-		return nil, err
+	if gate.trust.Trusted {
+		fromMCPJSON, err := LoadMCPJSON(filepath.Dir(path))
+		if err != nil {
+			return nil, err
+		}
+		cfg.MCP.Servers = MergeMCPServers(cfg.MCP.Servers, fromMCPJSON)
 	}
-	cfg.MCP.Servers = MergeMCPServers(cfg.MCP.Servers, fromMCPJSON)
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
@@ -964,6 +987,15 @@ func Load(path string) (*ProjectConfig, error) {
 	return &cfg, nil
 }
 
+// Trust reports whether the workspace's own settings are in effect and, if
+// not, which of them Load left out.
+func (c *ProjectConfig) Trust() WorkspaceTrust {
+	if c == nil {
+		return WorkspaceTrust{}
+	}
+	return c.trust
+}
+
 // Save saves configuration to file.
 //
 // The write is atomic (temp file → fsync → rename): .orchestra.yml is shared
@@ -987,6 +1019,9 @@ func Save(path string, cfg *ProjectConfig) error {
 	// other's changes without this.
 	unlock := acquireFileLock(path)
 	defer unlock()
+
+	_, statErr := os.Stat(path)
+	existed := statErr == nil
 
 	data, err := renderForSave(path, cfg)
 	if err != nil {
@@ -1030,6 +1065,16 @@ func Save(path string, cfg *ProjectConfig) error {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("failed to replace config file: %w", err)
 	}
+	// A setting the user changed through Orchestra in a trusted workspace is
+	// theirs: the new slice stays trusted. An untrusted one stays untrusted —
+	// saving an unrelated setting must not vouch for what the project brought.
+	// A config Orchestra built itself (init) and writes as a new file is the
+	// user's too.
+	if (cfg.loaded && cfg.trust.Trusted && cfg.trust.Enforced) || (!cfg.loaded && !existed) {
+		if _, err := TrustWorkspace(path); err != nil {
+			return fmt.Errorf("config saved, but recording it as trusted failed: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -1070,7 +1115,13 @@ func renderForSave(path string, cfg *ProjectConfig) ([]byte, error) {
 	}
 	// Same reasoning again: mcp.servers entries Load() merged in from
 	// .mcp.json are owned by that file, not this one.
-	return maskMCPJSONServers(path, data)
+	data, err = maskMCPJSONServers(path, data)
+	if err != nil {
+		return nil, err
+	}
+	// Settings an untrusted workspace's Load left out are still the file's:
+	// saving another setting must not delete them.
+	return restoreUntrustedLeaves(path, data, cfg.untrustedLeaves)
 }
 
 func (c *ProjectConfig) applyDefaults() {

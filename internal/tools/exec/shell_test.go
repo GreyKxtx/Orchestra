@@ -1,7 +1,11 @@
 package exec
 
 import (
+	"context"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestMaybeShellExec_PlainCommandPassesThrough(t *testing.T) {
@@ -53,5 +57,24 @@ func TestMaybeShellExec_RefusesArgsWhenShellRouting(t *testing.T) {
 	_, _, _, err := MaybeShellExec("git log", []string{"$(rm -rf ~)"})
 	if err == nil {
 		t.Fatal("expected error when shell-routing with non-empty args")
+	}
+}
+
+// A command the model runs does not see the core's provider keys.
+func TestRunScrubsSecretsFromTheEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses env(1)")
+	}
+	t.Setenv("ORCH_TEST_PROVIDER_API_KEY", "sk-must-not-leak")
+	t.Setenv("ORCH_TEST_PLAIN", "visible")
+	resp, err := Run(context.Background(), t.TempDir(), 10*time.Second, 64*1024, RunRequest{Command: "env"})
+	if err != nil {
+		t.Fatalf("env: %v", err)
+	}
+	if strings.Contains(resp.Stdout, "sk-must-not-leak") {
+		t.Fatal("a secret-looking variable reached the command")
+	}
+	if !strings.Contains(resp.Stdout, "ORCH_TEST_PLAIN=visible") {
+		t.Fatal("ordinary variables must still be passed")
 	}
 }

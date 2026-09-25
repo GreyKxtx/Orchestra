@@ -143,8 +143,9 @@ func TestStartUIServer_ServesAPI(t *testing.T) {
 	root := t.TempDir()
 	port := freePort(t)
 
+	const token = "t0ken"
 	go func() {
-		_ = StartUIServer(store, root, port)
+		_ = StartUIServer(store, root, port, token)
 	}()
 
 	addr := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -153,7 +154,7 @@ func TestStartUIServer_ServesAPI(t *testing.T) {
 	var lastErr error
 	for i := 0; i < 40; i++ {
 		time.Sleep(50 * time.Millisecond)
-		resp, err := http.Get(addr + "/api/graph")
+		resp, err := http.Get(addr + "/api/graph?token=" + token)
 		if err == nil {
 			resp.Body.Close()
 			lastErr = nil
@@ -165,8 +166,18 @@ func TestStartUIServer_ServesAPI(t *testing.T) {
 		t.Fatalf("server did not start: %v", lastErr)
 	}
 
+	// Without the token nothing is served.
+	if resp, err := http.Get(addr + "/api/graph"); err != nil {
+		t.Fatalf("GET /api/graph: %v", err)
+	} else {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("/api/graph without a token = %d, want 401", resp.StatusCode)
+		}
+	}
+
 	// /api/graph should return valid JSON.
-	resp, err := http.Get(addr + "/api/graph")
+	resp, err := http.Get(addr + "/api/graph?token=" + token)
 	if err != nil {
 		t.Fatalf("GET /api/graph: %v", err)
 	}
@@ -180,7 +191,7 @@ func TestStartUIServer_ServesAPI(t *testing.T) {
 	}
 
 	// / should return the HTML UI.
-	resp2, err := http.Get(addr + "/")
+	resp2, err := http.Get(addr + "/?token=" + token)
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}
@@ -205,5 +216,65 @@ func TestSourceHandler_SubdirFile(t *testing.T) {
 	h(w, makeSourceReq("pkg/sub.go", "1", "1"))
 	if w.Code != http.StatusOK {
 		t.Errorf("got %d, want 200", w.Code)
+	}
+}
+
+// /api/source serves project files only: not the credential files, not
+// through "..".
+func TestSourceHandler_RefusesCredentialsAndTraversal(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".orchestra.env"), []byte("KEY=sk-live\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := sourceHandlerFunc(root)
+	for _, f := range []string{".orchestra.env", "../../etc/passwd", "/etc/passwd"} {
+		w := httptest.NewRecorder()
+		h(w, makeSourceReq(f, "1", "5"))
+		// 403, or 404 where "/etc/passwd" is not an absolute path (Windows):
+		// either way nothing outside the workspace is served.
+		if w.Code == http.StatusOK || strings.Contains(w.Body.String(), "sk-live") {
+			t.Fatalf("%s: got %d %q, want it refused", f, w.Code, w.Body.String())
+		}
+	}
+}
+
+// A page on another name (DNS rebinding) is refused even with the cookie.
+func TestRequireUIToken_ChecksHostAndToken(t *testing.T) {
+	h := requireUIToken("tok", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	cases := []struct {
+		host, target string
+		want         int
+	}{
+		{"127.0.0.1:6061", "/api/graph", http.StatusUnauthorized},
+		{"127.0.0.1:6061", "/api/graph?token=bad", http.StatusUnauthorized},
+		{"127.0.0.1:6061", "/api/graph?token=tok", http.StatusOK},
+		{"localhost:6061", "/?token=tok", http.StatusOK},
+		{"evil.example:6061", "/?token=tok", http.StatusForbidden},
+	}
+	for _, c := range cases {
+		r := httptest.NewRequest(http.MethodGet, c.target, nil)
+		r.Host = c.host
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != c.want {
+			t.Fatalf("%s %s = %d, want %d", c.host, c.target, w.Code, c.want)
+		}
+	}
+	// The first load leaves a cookie that admits later requests.
+	r := httptest.NewRequest(http.MethodGet, "/?token=tok", nil)
+	r.Host = "127.0.0.1:6061"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	cookies := w.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].HttpOnly {
+		t.Fatalf("want one HttpOnly cookie, got %+v", cookies)
+	}
+	r2 := httptest.NewRequest(http.MethodGet, "/api/graph", nil)
+	r2.Host = "127.0.0.1:6061"
+	r2.AddCookie(cookies[0])
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, r2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("cookie request = %d, want 200", w2.Code)
 	}
 }

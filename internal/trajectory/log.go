@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/orchestra/orchestra/internal/sessionfile"
 )
 
 // Path returns the sidecar's location for a session.
@@ -40,6 +42,9 @@ type Writer struct {
 func NewWriter(workspaceRoot, sessionID string) (*Writer, error) {
 	if workspaceRoot == "" || sessionID == "" {
 		return nil, fmt.Errorf("trajectory: workspace_root and session_id required")
+	}
+	if err := sessionfile.CheckID(sessionID); err != nil {
+		return nil, err
 	}
 	p := Path(workspaceRoot, sessionID)
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
@@ -171,6 +176,9 @@ func (w *Writer) Close() error {
 // the session at all, which is a different answer from a log with no events:
 // one means "this session predates the log", the other "nothing happened yet".
 func Read(workspaceRoot, sessionID string) (events []Event, recorded bool, err error) {
+	if err := sessionfile.CheckID(sessionID); err != nil {
+		return nil, false, err
+	}
 	p := Path(workspaceRoot, sessionID)
 	f, err := os.Open(p)
 	if err != nil {

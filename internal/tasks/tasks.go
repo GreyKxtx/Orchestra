@@ -187,6 +187,11 @@ type TaskRunner struct {
 	messages int
 	// rootInbox holds notes for the top-level agent, drained on its next step.
 	rootInbox []agent.InboxMessage
+	// closed is set by Close. A spawn after it is refused: a relay or a
+	// task_spawn racing the end of the turn used to register into the fresh
+	// map Close left behind, was never cancelled, and edited the workspace
+	// during the next turn.
+	closed bool
 	// storeMu serialises the inbox and thread files under .orchestra/agency.
 	storeMu sync.Mutex
 }
@@ -204,6 +209,9 @@ var (
 	ErrCauseWaitAbandoned = errors.New("cancelled: parent stopped waiting (wait timeout or turn end)")
 	// ErrCauseShutdown marks children cancelled by TaskRunner.Close.
 	ErrCauseShutdown = errors.New("cancelled: task runner shutting down")
+	// ErrRunnerClosed refuses a spawn after TaskRunner.Close: the turn it
+	// belonged to is over.
+	ErrRunnerClosed = errors.New("the turn has ended; no new subagent can start")
 )
 
 // childReapTimeout bounds how long Wait/Close block for a cancelled child
@@ -338,6 +346,10 @@ type spawnExtra struct {
 
 func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.SubtaskSpawnRequest, extra spawnExtra) (string, error) {
 	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return "", ErrRunnerClosed
+	}
 	r.seq++
 	taskID := fmt.Sprintf("task_%d_%d", r.seq, time.Now().UnixNano()%100000)
 	r.mu.Unlock()
@@ -363,6 +375,10 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 	if err := r.checkReach(from, target, verb); err != nil {
 		return "", err
 	}
+	if req.ReadOnlyChildren && target.changesFiles() {
+		return "", fmt.Errorf("%s: %s can change files, and this turn only reads (plan, architecture and ask modes); delegate to explore, scout, ask or verifier, and describe the change in your answer",
+			from.address, target.address)
+	}
 	if p := target.profile; p != nil {
 		if strings.TrimSpace(req.Provider) == "" && strings.TrimSpace(req.Model) == "" && strings.TrimSpace(req.Tier) == "" {
 			req.Provider, req.Model, req.Tier = p.Provider, p.Model, p.Tier
@@ -382,7 +398,13 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 	}
 
 	if r.child.GuardSpawn != nil {
-		if err := r.child.GuardSpawn(target.role); err != nil {
+		// The phase guard judges by role. A custom agent on a read-only base
+		// that was given write tools is a writer, whatever its base says.
+		guardRole := target.role
+		if agent.ReadOnlyRole(guardRole) && target.changesFiles() {
+			guardRole = "general"
+		}
+		if err := r.child.GuardSpawn(guardRole); err != nil {
 			return "", err
 		}
 	}
@@ -472,6 +494,11 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 	// wait graph is acyclic by construction, and so is the depends_on
 	// graph: a dependency must already be registered.
 	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		cancel(nil)
+		return "", ErrRunnerClosed
+	}
 	deps, depErr := r.resolveDepsLocked(dependsOn)
 	if depErr != nil {
 		r.mu.Unlock()
@@ -1104,6 +1131,7 @@ func (r *TaskRunner) Close() {
 		return
 	}
 	r.mu.Lock()
+	r.closed = true
 	entries := make([]*taskEntry, 0, len(r.tasks))
 	for _, e := range r.tasks {
 		entries = append(entries, e)

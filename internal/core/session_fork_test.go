@@ -176,3 +176,16 @@ func TestSessionSearch_FindsAcrossSessions(t *testing.T) {
 		t.Error("an empty query must be refused")
 	}
 }
+
+// session.start reopens an id the client names; one that is not a plain name
+// is refused before it becomes a path.
+func TestSessionStart_RefusesAPathAsID(t *testing.T) {
+	root := t.TempDir()
+	c := setupSessionV2Core(t, root)
+	for _, id := range []string{"../../x/package", "a/b", ".."} {
+		if _, err := c.SessionStart(SessionStartParams{SessionID: id}); err == nil ||
+			!strings.Contains(err.Error(), "session_id") {
+			t.Fatalf("%q: want an invalid session_id error, got %v", id, err)
+		}
+	}
+}

@@ -11,6 +11,11 @@ type RunRequest struct {
 
 	// RunInBackground switches dispatch to the background path.
 	RunInBackground bool `json:"run_in_background,omitempty"`
+
+	// Env is the command's environment, set by the runner; never read from
+	// the model's input. Nil means the core's environment without secrets
+	// (execpolicy.ScrubEnv).
+	Env []string `json:"-"`
 }
 
 // RunResponse is the output of a foreground exec.run.
@@ -26,8 +31,9 @@ type RunResponse struct {
 type BashBackgroundRequest struct {
 	Command   string
 	Args      []string
-	Workdir   string // absolute, already resolved
-	TimeoutMS int    // 0 → no extra deadline beyond the registry-wide cap
+	Workdir   string   // absolute, already resolved
+	TimeoutMS int      // 0 → no extra deadline beyond the registry-wide cap
+	Env       []string // as RunRequest.Env
 }
 
 // BashBackgroundResponse describes a freshly-spawned background job.

@@ -23,9 +23,9 @@ import { RpcClient } from "./rpc/client";
 import { t } from "./i18n";
 
 /** Must match internal/protocol/version.go */
-const PROTOCOL_VERSION = 21;
+const PROTOCOL_VERSION = 22;
 const OPS_VERSION = 1;
-export const TOOLS_VERSION = 16;
+export const TOOLS_VERSION = 17;
 
 /** session.message can run a long agent turn (orchestrated multi-department runs). */
 const MESSAGE_TIMEOUT_MS = 60 * 60 * 1000;

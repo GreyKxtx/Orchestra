@@ -126,6 +126,8 @@ var genericContextOverflowKeywords = []string{
 	"maximum context", "max_model_len", "model's maximum context",
 	"exceeds the model", "exceeds context", "too many tokens",
 	"context is too long", "reduce the length",
+	// Anthropic: "prompt is too long: 215000 tokens > 200000 maximum".
+	"prompt is too long", "input is too long",
 }
 
 // genericOverflowNumberRe finds bare integers of 3+ digits — used to recover
@@ -156,10 +158,12 @@ func parseGenericContextOverflow(msg string) (ctxLen, promptTok int, ok bool) {
 	if !matched {
 		return 0, 0, false
 	}
-	// Best-effort: the two largest numbers mentioned are usually
-	// (context window, requested/prompt tokens) in either order. Strip the
-	// "status 400" prefix first so the HTTP status itself isn't mistaken
-	// for one of them.
+	// Best-effort: the first two numbers mentioned are usually the context
+	// window and the prompt, in either order. The prompt is the larger one —
+	// that is what the rejection is about ("maximum context length is 128000
+	// tokens … resulted in 130000 tokens"); taking the larger as the window
+	// recorded an inflated window. Strip the "status 400" prefix first so the
+	// HTTP status itself isn't mistaken for one of them.
 	stripped := statusPrefixRe.ReplaceAllString(msg, "")
 	nums := genericOverflowNumberRe.FindAllString(stripped, -1)
 	var parsed []int
@@ -171,7 +175,7 @@ func parseGenericContextOverflow(msg string) (ctxLen, promptTok int, ok bool) {
 	switch {
 	case len(parsed) >= 2:
 		a, b := parsed[0], parsed[1]
-		if a < b {
+		if a > b {
 			a, b = b, a
 		}
 		ctxLen, promptTok = a, b

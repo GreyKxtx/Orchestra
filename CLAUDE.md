@@ -52,6 +52,7 @@ orchestra llm-ping                           # smoke-check the configured LLM
 orchestra search "regex"                     # text search using project excludes
 orchestra skills list|show <name>            # introspect file-based skills
 orchestra mcp list-tools                     # list tools from configured MCP servers
+orchestra trust [--status|--revoke]          # trust this workspace's machine-level settings
 ```
 
 `.orchestra.yml` (created by `init`) configures `project_root`, `exclude_dirs`, `llm.*`, `agent.profile`, `apply.output` / `apply.patch_dir`, `exec.*`, etc. — see `internal/config/config.go` for the full schema. `.orchestra/` is the per-project artifact dir (gitignored): `plan.json`, `diff.txt`, `last_run.jsonl`, `last_result.json`, `llm_log.jsonl`, plus debug discovery files. TUI pipeline audit: `docs/architecture/tui-pipeline.md`.
@@ -95,6 +96,7 @@ orchestra mcp list-tools                     # list tools from configured MCP se
 - `apply` is dry-run unless `--apply` (or `agent.run` `apply: true`); on write, backup to `*.orchestra.bak` by default.
 - `exec.run` requires explicit consent — `--allow-exec` on the CLI, or `exec.confirm: false` in config; the JSON-RPC handler also blocks it when `cfg.Exec.Confirm` is true.
 - Top-level JSON-RPC arrays (batch) are *not* supported — return `-32600` with `id: null`. `id: null` is a request, not a notification.
+- Workspace trust (`internal/config/trust.go`, `docs/security.md`): a project's machine-level settings (MCP servers, hooks, lsp.servers, exec/web consent, allow rules, auth commands, an endpoint that would receive the user's key) apply only once the workspace is trusted (`orchestra trust`, `workspace.trust`). Never read them around `config.Load`. A mode's tool list is enforced at dispatch, and `final.patches` meet the same write rules as `write`.
 
 ## Test seams worth knowing
 

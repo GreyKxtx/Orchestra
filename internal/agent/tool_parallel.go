@@ -4,46 +4,28 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/orchestra/orchestra/internal/execpolicy"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
 )
 
-// execCommandFromInput extracts the command basename from exec.run JSON input.
-func execCommandFromInput(input json.RawMessage) string {
+// execCommandFromInput extracts the command line and args from bash input.
+func execCommandFromInput(input json.RawMessage) (string, []string) {
 	var req struct {
-		Command string `json:"command"`
+		Command string   `json:"command"`
+		Args    []string `json:"args"`
 	}
 	_ = json.Unmarshal(input, &req)
-	return req.Command
+	return req.Command, req.Args
 }
 
-// execCommandAllowed reports whether cmd is permitted by the allow/deny lists.
-// Deny takes precedence. Empty allow list with no deny list → deny all.
-func execCommandAllowed(cmd string, allow, deny []string) bool {
-	base := strings.ToLower(filepath.Base(strings.TrimSpace(cmd)))
-	base = strings.TrimSuffix(base, ".exe")
-	if base == "" || base == "." {
-		return false
-	}
-	for _, d := range deny {
-		if strings.ToLower(strings.TrimSpace(d)) == base {
-			return false
-		}
-	}
-	if len(allow) == 0 {
-		return false
-	}
-	for _, a := range allow {
-		if strings.ToLower(strings.TrimSpace(a)) == base {
-			return true
-		}
-	}
-	return false
+// execCommandAllowed reports whether every command cmd (with args) starts is
+// on allow and none on deny. Empty allow list → nothing is allowed.
+func execCommandAllowed(cmd string, args, allow, deny []string) (bool, string) {
+	return execpolicy.CommandAllowed(cmd, args, allow, deny)
 }
 
 // formatToolDeniedJSON formats a tool denial as JSON for tool message content.

@@ -72,7 +72,7 @@ go install github.com/orchestra/orchestra/cmd/orchestra@latest
 ```bash
 orchestra version
 # orchestra v0.3.0 (a1b2c3d)
-# protocol 21 · ops 1 · tools 16
+# protocol 22 · ops 1 · tools 17
 
 orchestra version --check   # сравнить с последним релизом на GitHub
 ```

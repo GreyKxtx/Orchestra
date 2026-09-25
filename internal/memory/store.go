@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/orchestra/orchestra/internal/sessionfile"
 )
 
 const (
@@ -52,7 +54,7 @@ func NewStore(workspaceRoot, sessionID string, cfg Config) *Store {
 	cfg.Normalize()
 	return &Store{
 		workspaceRoot: strings.TrimSpace(workspaceRoot),
-		sessionID:     strings.TrimSpace(sessionID),
+		sessionID:     validSessionID(sessionID),
 		cfg:           cfg,
 	}
 }
@@ -214,4 +216,15 @@ func relPath(abs, root string) string {
 
 func timestampUTC() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05Z")
+}
+
+// validSessionID drops an id that cannot name a file under
+// .orchestra/memory/sessions/: a session memory at "<id>.md" must not land
+// elsewhere. Such a store simply has no session layer.
+func validSessionID(id string) string {
+	id = strings.TrimSpace(id)
+	if !sessionfile.ValidID(id) {
+		return ""
+	}
+	return id
 }

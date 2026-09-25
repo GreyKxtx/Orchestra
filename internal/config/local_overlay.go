@@ -30,7 +30,7 @@ func localOverlayPath(configPath string) string {
 // mergeLocalOverlay deep-merges the local overlay (if present) over the raw
 // main-config YAML and returns bytes ready for unmarshalling. Returns
 // mainData unchanged when no overlay exists.
-func mergeLocalOverlay(configPath string, mainData []byte) ([]byte, error) {
+func mergeLocalOverlay(configPath string, mainData []byte, untrusted bool) ([]byte, error) {
 	overData, err := os.ReadFile(localOverlayPath(configPath))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -45,6 +45,9 @@ func mergeLocalOverlay(configPath string, mainData []byte) ([]byte, error) {
 	}
 	if err := yaml.Unmarshal(overData, &over); err != nil {
 		return nil, fmt.Errorf("failed to parse %s: %w", LocalOverlayName, err)
+	}
+	if untrusted {
+		stripUntrusted(over)
 	}
 	if len(over) == 0 {
 		return mainData, nil

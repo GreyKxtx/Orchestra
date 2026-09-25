@@ -132,6 +132,7 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 			MaxSteps:         req.MaxSteps,
 			TimeoutMS:        timeoutMS,
 			ParentToolCallID: parentToolCallID,
+			ReadOnlyChildren: a.readOnlyChildren(),
 			Dept:             strings.TrimSpace(req.Dept),
 			DependsOn:        req.DependsOn,
 		})
@@ -225,6 +226,7 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 					MaxSteps:         req.MaxSteps,
 					TimeoutMS:        timeoutMS,
 					ParentToolCallID: parentToolCallID,
+					ReadOnlyChildren: a.readOnlyChildren(),
 					Dept:             strings.TrimSpace(req.Dept),
 				})
 				if err != nil {
@@ -250,6 +252,7 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 			MaxSteps:         req.MaxSteps,
 			TimeoutMS:        timeoutMS,
 			ParentToolCallID: parentToolCallID,
+			ReadOnlyChildren: a.readOnlyChildren(),
 			Dept:             strings.TrimSpace(req.Dept),
 			Key:              strings.TrimSpace(req.Key),
 			DependsOn:        req.DependsOn,
