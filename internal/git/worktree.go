@@ -408,16 +408,3 @@ func ResolveManagedWorktree(dir, name string) (string, error) {
 	}
 	return "", fmt.Errorf("unknown orchestra worktree %q", name)
 }
-
-// ListManaged returns orchestra registry entries (may include missing paths).
-func ListManaged(dir string) ([]registryEntry, error) {
-	mainRoot, err := MainRepoRoot(dir)
-	if err != nil {
-		return nil, err
-	}
-	reg, err := loadRegistry(mainRoot)
-	if err != nil {
-		return nil, err
-	}
-	return reg.Entries, nil
-}

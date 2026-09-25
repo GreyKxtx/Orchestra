@@ -30,10 +30,9 @@ func (a *Agent) offersTool(name string) bool {
 // A name that is no tool at all is left to tools.Call, whose "unknown tool"
 // answer lists what exists.
 func (a *Agent) offeredToolRefusal(name string) error {
-	switch name {
-	case "task_result", "plan_enter":
-		// Their handlers answer the not-offered case with a direction of
-		// their own (finish with a final answer; stay in this mode).
+	if name == "task_result" {
+		// Its handler answers the not-offered case with a direction of its
+		// own (finish with a final answer).
 		return nil
 	}
 	// Without consent the consent gates answer, and say how to grant it (bash

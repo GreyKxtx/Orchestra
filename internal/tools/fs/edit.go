@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/patch/applier"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/patch/resolver"
 	"github.com/orchestra/orchestra/protocol"
@@ -45,7 +45,7 @@ func (c *Client) Edit(ctx context.Context, req FSEditRequest) (*FSEditResponse, 
 		// applier checks it; the staging path ignored it (LLM-13) and
 		// edited whatever the file had become since.
 		if want := strings.TrimSpace(req.FileHash); want != "" {
-			if have := cache.ComputeSHA256(currentContent); have != want {
+			if have := fsutil.ComputeSHA256(currentContent); have != want {
 				return nil, protocol.NewError(protocol.StaleContent, "file changed since it was read (file_hash mismatch): read it again", map[string]any{
 					"path": relSlash, "expected_hash": want, "current_hash": have,
 				})
@@ -55,7 +55,7 @@ func (c *Client) Edit(ctx context.Context, req FSEditRequest) (*FSEditResponse, 
 		if err != nil {
 			return nil, err
 		}
-		newHash := cache.ComputeSHA256(newContent)
+		newHash := fsutil.ComputeSHA256(newContent)
 		if err := c.Overlay.stageFile(c, relSlash, string(newContent), newHash); err != nil {
 			return nil, err
 		}

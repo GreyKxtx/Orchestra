@@ -53,21 +53,6 @@ func TestParseMCPToolName_Empty(t *testing.T) {
 	}
 }
 
-func TestIsMCPTool_True(t *testing.T) {
-	if !IsMCPTool("mcp:server:tool") {
-		t.Fatal("expected true for mcp: prefix")
-	}
-}
-
-func TestIsMCPTool_False(t *testing.T) {
-	if IsMCPTool("fs.read") {
-		t.Fatal("expected false for non-mcp tool")
-	}
-	if IsMCPTool("mcpfoo") {
-		t.Fatal("expected false — no colon after mcp")
-	}
-}
-
 func TestManager_IsEmpty_Nil(t *testing.T) {
 	var m *Manager
 	if !m.IsEmpty() {

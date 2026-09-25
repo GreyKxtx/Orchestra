@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orchestra/orchestra/internal/agent/digest"
+
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol"
@@ -24,8 +26,8 @@ func TestNormalizeToolName(t *testing.T) {
 		{"mcp:server:tool", "mcp:server:tool"},
 	}
 	for _, tc := range tests {
-		if got := normalizeToolName(tc.in); got != tc.want {
-			t.Errorf("normalizeToolName(%q) = %q, want %q", tc.in, got, tc.want)
+		if got := digest.NormalizeToolName(tc.in); got != tc.want {
+			t.Errorf("digest.NormalizeToolName(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

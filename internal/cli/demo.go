@@ -9,7 +9,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/tools"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/spf13/cobra"
@@ -129,8 +129,8 @@ func Subtract(a, b int) int {
 	if err != nil {
 		return fmt.Errorf("failed to read utils.go: %w", err)
 	}
-	mainHash := cache.ComputeSHA256(mainBefore)
-	utilsHash := cache.ComputeSHA256(utilsBefore)
+	mainHash := fsutil.ComputeSHA256(mainBefore)
+	utilsHash := fsutil.ComputeSHA256(utilsBefore)
 
 	anyOps := []ops.AnyOp{
 		{

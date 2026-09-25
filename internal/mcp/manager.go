@@ -379,11 +379,6 @@ func sameToolNames(a, b []string) bool {
 	return true
 }
 
-// IsMCPTool reports whether a tool name is an MCP-prefixed tool.
-func IsMCPTool(name string) bool {
-	return strings.HasPrefix(name, "mcp:")
-}
-
 func (m *Manager) findClient(serverName string) ServerClient {
 	for _, c := range m.clients {
 		if c.ServerName() == serverName {

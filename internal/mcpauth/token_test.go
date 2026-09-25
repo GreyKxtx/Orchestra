@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/orchestra/orchestra/internal/authstore"
 )
 
 // isolateHome points os.UserHomeDir at a temp dir on both Windows and Unix
@@ -90,4 +92,12 @@ func TestTokenPath_PlacesFileUnderGlobalMCPOAuthDir(t *testing.T) {
 	if path != want {
 		t.Fatalf("tokenPath = %q, want %q", path, want)
 	}
+}
+
+// tokenPath returns the on-disk path for a server's stored token. The name
+// guard lives in authstore: a server name comes from a hand-editable
+// .orchestra.yml, so it is validated there for every caller rather than
+// here for one.
+func tokenPath(serverName string) (string, error) {
+	return authstore.Path(namespace, serverName)
 }

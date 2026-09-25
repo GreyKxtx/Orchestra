@@ -15,11 +15,11 @@ func TestPinnedEntriesAndSearch(t *testing.T) {
 	if len(hits) != 1 {
 		t.Fatalf("search hits=%v", hits)
 	}
-	joined := joinEntriesRecentFirst(splitEntries(raw))
+	joined := joinEntriesByPriority(splitEntries(raw))
 	if !strings.Contains(joined, "[pin]") {
 		t.Fatalf("expected pin in inject: %q", joined)
 	}
-	// Pin should appear before the non-pin "widgets" note when recent-first.
+	// Pins come before every other entry.
 	pinAt := strings.Index(joined, "[pin]")
 	widgetAt := strings.Index(joined, "widgets")
 	if pinAt < 0 || widgetAt < 0 || pinAt > widgetAt {

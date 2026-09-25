@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/agent/digest"
+
 	agentformat "github.com/orchestra/orchestra/internal/agent/format"
 )
 
@@ -45,7 +47,7 @@ func (a *Agent) toolHistoryContent(name string, input json.RawMessage, out []byt
 	// still shrunk by pruneRetroactiveToolHistory once they fall out of the
 	// keep-recent window.
 	if !skipWriteTimeDigest(name) && len(out) > budget {
-		if digested, ok := DigestToolOutput(name, input, out, budget); ok {
+		if digested, ok := digest.DigestToolOutput(name, input, out, budget); ok {
 			content = digested
 		}
 	}
@@ -67,7 +69,7 @@ func (a *Agent) maybeAutoSessionMemory(name string, input json.RawMessage, conte
 	if !a.opts.AutoSessionMemory || a.opts.SessionID == "" || !a.opts.Memory.SessionEnabled {
 		return
 	}
-	note := AutoMemoryNote(name, input, content)
+	note := digest.AutoMemoryNote(name, input, content)
 	if note == "" {
 		return
 	}

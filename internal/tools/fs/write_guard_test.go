@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/tools"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -16,7 +16,7 @@ func TestFSEdit_ExternalChange_StaleContentPreservesBak(t *testing.T) {
 	r, root := newEditRunner(t)
 	original := "hello world\n"
 	writeTestFile(t, root, "handler.go", original)
-	h1 := cache.ComputeSHA256([]byte(original))
+	h1 := fsutil.ComputeSHA256([]byte(original))
 
 	bakPath := filepath.Join(root, "handler.go.orchestra.bak")
 	bakBody := []byte("prior-backup-must-survive\n")
@@ -63,7 +63,7 @@ func TestFSWrite_ExternalChange_StaleContentPreservesBak(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "service.go"), []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h1 := cache.ComputeSHA256([]byte(original))
+	h1 := fsutil.ComputeSHA256([]byte(original))
 
 	bakPath := filepath.Join(root, "service.go.orchestra.bak")
 	bakBody := []byte("write-bak-seed\n")

@@ -16,7 +16,7 @@
 
 **Инструменты:** `ls`, `read`, `glob`, `write`, `edit`, `grep`, `symbols`, `explore`, `runtime_query`, `todowrite`, `todoread`, `bash` (если `--allow-exec`), `task` + `task_spawn/wait/cancel` (если включён SubtaskRunner), `question` (если включён QuestionAsker).
 
-**Примечание:** `plan_enter` **не** рекламируется как tool (как в OpenCode) — вход в plan только через `--mode plan` / RPC `mode: "plan"`.
+**Примечание:** инструмента `plan_enter` нет (как и в OpenCode) — вход в plan только через `--mode plan` / RPC `mode: "plan"`.
 
 **Промпты:** `build.txt`; вариации по семейству модели: `build-anthropic.txt`, `build-gpt.txt`, `build-gemini.txt`, `build-local.txt`, `build-kimi.txt`.
 

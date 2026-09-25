@@ -6,6 +6,10 @@ import (
 	"runtime/debug"
 	"strings"
 
+	agentformat "github.com/orchestra/orchestra/internal/agent/format"
+	"github.com/orchestra/orchestra/internal/agent/guard"
+	agenthistory "github.com/orchestra/orchestra/internal/agent/history"
+
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/protocol"
 
@@ -91,13 +95,13 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	steps := 0
 	a.syncModelContextFromClient()
 	maxStepsReminderSent := false
-	cb := NewCircuitBreaker(a.opts.MaxDeniedToolRepeats, a.opts.MaxToolErrorRepeats, a.opts.MaxFinalFailures, a.opts.MaxInvalidRetries)
+	cb := guard.NewCircuitBreaker(a.opts.MaxDeniedToolRepeats, a.opts.MaxToolErrorRepeats, a.opts.MaxFinalFailures, a.opts.MaxInvalidRetries)
 	// syncModelContextFromClient ran just above, so this is the window the
 	// server actually reports. On a small one the repeat budget shrinks: two
 	// copies of a file is a large share of a 16k prompt.
 	cb.SetContextWindow(a.opts.ModelContextTokens)
 	cb.ResetDedup()
-	cb.SetOnClassified(func(kind ErrorKind, meta RecordMeta) {
+	cb.SetOnClassified(func(kind guard.ErrorKind, meta guard.RecordMeta) {
 		if a.opts.AgentLogger == nil {
 			return
 		}
@@ -133,7 +137,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 		snap := append([]llm.Message(nil), h...)
 		step := steps
 		rewritten := historyRewritten
-		safeRun("OnStepHistory", func() { a.opts.OnStepHistory(step, snap, rewritten) })
+		agentformat.SafeRun("OnStepHistory", func() { a.opts.OnStepHistory(step, snap, rewritten) })
 	}
 
 	for steps < a.opts.MaxSteps {
@@ -150,14 +154,14 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 		// Retroactive prune: shrink older tool outputs already in history.
 		keep := a.opts.HistoryPruneKeepRecent
 		if keep <= 0 {
-			keep = defaultHistoryPruneKeepRecent
+			keep = agenthistory.DefaultHistoryPruneKeepRecent
 		}
 		var protect []string
 		if a.working != nil {
 			protect = a.working.ActiveFiles()
 		}
 		if a.opts.ToolDigestBytes > 0 {
-			history = pruneRetroactiveToolHistory(history, a.opts.ToolDigestBytes, keep, protect...)
+			history = agenthistory.PruneRetroactiveToolHistory(history, a.opts.ToolDigestBytes, keep, protect...)
 		}
 		if a.opts.Mode == ModeOrchestra {
 			history = collapseOrchestraWorkerTaskHistory(history, keep)
@@ -223,24 +227,21 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 						return history, nil, compactErr
 					}
 					a.logf("compaction failed (non-fatal), continuing with truncation: %v", compactErr)
-					history = truncateMessages(history, a.opts.MaxPromptBytes)
+					history = agenthistory.TruncateMessages(history, a.opts.MaxPromptBytes)
 					historyRewritten = true
-					a.recordCompactMetrics(before, historyBytes(history), false)
 				} else {
 					after := historyBytes(compacted)
 					if after*5 >= before*4 { // < 20% shrink
 						a.logf("compaction did not converge: %d > %d bytes (>=80%% retained); falling back to truncation", before, after)
-						history = truncateMessages(history, a.opts.MaxPromptBytes)
+						history = agenthistory.TruncateMessages(history, a.opts.MaxPromptBytes)
 						// Truncation is not compaction, but it drops entries
 						// from the front just the same: every index into the
 						// old array is now wrong.
 						historyRewritten = true
-						a.recordCompactMetrics(before, historyBytes(history), false)
 					} else {
 						a.logf("history compacted: %d bytes > %d bytes", before, after)
 						history = compacted
 						historyRewritten = true
-						a.recordCompactMetrics(before, after, true)
 						// Forgive one repeat, do not forget them all: on a small
 						// window compaction runs every few steps, and clearing the
 						// counters reset the doom-loop guard faster than it could
@@ -330,7 +331,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 				}
 				history = append(history, llm.Message{
 					Role:    llm.RoleUser,
-					Content: formatValidatorError("Invalid JSON format: tool is required", raw),
+					Content: agentformat.ValidatorError("Invalid JSON format: tool is required", raw),
 				})
 				emitStepDone("invalid")
 				continue
@@ -398,7 +399,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 				}
 				history = append(history, llm.Message{
 					Role:    llm.RoleUser,
-					Content: formatValidatorErrorCompact(hint),
+					Content: agentformat.ValidatorErrorCompact(hint),
 				})
 				// Empty-response retries stay in the agent loop; skip TUI spam.
 				if a.opts.OnEvent != nil && !isSilentPrematureFinalHint(hint) {
@@ -428,7 +429,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 			}
 			history = append(history, llm.Message{
 				Role:    llm.RoleUser,
-				Content: formatValidatorError("Invalid JSON format: unknown step type", raw),
+				Content: agentformat.ValidatorError("Invalid JSON format: unknown step type", raw),
 			})
 			emitStepDone("invalid")
 		}

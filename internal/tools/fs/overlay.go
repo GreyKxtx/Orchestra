@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	"github.com/orchestra/orchestra/internal/ckg"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/patch/resolver"
@@ -142,7 +142,7 @@ func (o *Overlay) stageFileLocked(relSlash, content, hash string) {
 	isNew := os.IsNotExist(err)
 	diskHash := ""
 	if err == nil {
-		diskHash = cache.ComputeSHA256(diskBytes)
+		diskHash = fsutil.ComputeSHA256(diskBytes)
 	}
 	o.staged[relSlash] = &stagedFile{
 		content:  content,
@@ -280,7 +280,7 @@ func (o *Overlay) currentHash(relSlash string) string {
 	if err != nil {
 		return ""
 	}
-	return cache.ComputeSHA256(b)
+	return fsutil.ComputeSHA256(b)
 }
 
 // currentContent returns what relSlash holds right now — staged content in a
@@ -451,7 +451,7 @@ func (o *Overlay) ApplyPatchesToStaged(c *Client, patchList []patches.Patch) err
 			return err
 		}
 
-		newHash := cache.ComputeSHA256(newContent)
+		newHash := fsutil.ComputeSHA256(newContent)
 		if err := o.stageFile(c, relSlash, string(newContent), newHash); err != nil {
 			return err
 		}
@@ -580,7 +580,7 @@ func (o *Overlay) RestoreStaged(files []StagedSnapshot) {
 	for _, f := range files {
 		o.staged[f.Path] = &stagedFile{
 			content:  f.Content,
-			hash:     cache.ComputeSHA256([]byte(f.Content)),
+			hash:     fsutil.ComputeSHA256([]byte(f.Content)),
 			diskHash: f.DiskHash,
 			isNew:    f.IsNew,
 		}

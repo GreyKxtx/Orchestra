@@ -1,7 +1,6 @@
 package view
 
 import (
-	"fmt"
 	"hash/fnv"
 	"strings"
 	"sync"
@@ -199,25 +198,6 @@ func RenderFileDiff(before, after string, width int) string {
 		sb.WriteString("\n")
 	}
 	return strings.TrimRight(sb.String(), "\n")
-}
-
-// RenderAllDiffs renders diffs for a slice of FileDiff values, each with a
-// path header. path and before/after fields are plain strings.
-func RenderAllDiffs(diffs []FileDiffView, width int) string {
-	_, _, ctxStyle, pathStyle := diffStyles()
-	if len(diffs) == 0 {
-		return ctxStyle.Render("(нет изменений в файлах)")
-	}
-	var sb strings.Builder
-	for i, fd := range diffs {
-		sb.WriteString(pathStyle.Render(fmt.Sprintf("── %s ──", fd.Path)))
-		sb.WriteString("\n")
-		sb.WriteString(RenderFileDiff(fd.Before, fd.After, width))
-		if i < len(diffs)-1 {
-			sb.WriteString("\n\n")
-		}
-	}
-	return sb.String()
 }
 
 // FileDiffView is a view-layer copy of rpcclient.FileDiff to avoid import cycle.

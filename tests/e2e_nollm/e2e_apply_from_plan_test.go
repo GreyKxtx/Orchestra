@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -43,7 +43,7 @@ func TestApply_FromPlan_DryRun_And_Apply(t *testing.T) {
 	}
 
 	// Build a deterministic plan.json with ops (no LLM required).
-	h := cache.ComputeSHA256(orig)
+	h := fsutil.ComputeSHA256(orig)
 	plan := map[string]any{
 		"protocol_version":  protocol.ProtocolVersion,
 		"ops_version":       protocol.OpsVersion,

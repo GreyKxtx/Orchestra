@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/agent/guard"
+
 	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/plan"
 	"github.com/orchestra/orchestra/internal/roles"
@@ -52,7 +54,7 @@ func (a *Agent) writeScopeRefusal(name string, input json.RawMessage) error {
 	}
 	switch spec.Write {
 	case roles.WritePlan, roles.WriteOrchestraLead, roles.WriteDeptLead:
-		if !a.leadWritablePath(extractWriteOrEditPath(input)) {
+		if !a.leadWritablePath(guard.ExtractWriteOrEditPath(input)) {
 			return a.leadScopeRefusal(spec)
 		}
 		if err := a.checkDeptPlaybookNarrowing(input); err != nil {
@@ -117,7 +119,7 @@ func (a *Agent) runtimeOwnedCallRefusal(name string, input json.RawMessage) erro
 	}
 	switch name {
 	case "write", "edit":
-		return a.runtimeOwnedRefusal(extractWriteOrEditPath(input), plan.IsRuntimeOwnedPath)
+		return a.runtimeOwnedRefusal(guard.ExtractWriteOrEditPath(input), plan.IsRuntimeOwnedPath)
 	case "fs.delete", "fs.rename":
 		_ = json.Unmarshal(input, &req)
 		if err := a.runtimeOwnedRefusal(req.Path, plan.HoldsRuntimeOwnedPath); err != nil {

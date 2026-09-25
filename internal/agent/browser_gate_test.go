@@ -136,7 +136,7 @@ func TestAgent_RefusesBrowserToolsInAParallelBatchToo(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tr.Close() })
-	custom, err := tools.ResolveToolNames([]string{"read", "browser.snapshot"})
+	custom, err := tools.ResolveToolNamesWithPolicy([]string{"read", "browser.snapshot"}, tools.Capabilities{Exec: true, Web: true, Browser: true})
 	if err != nil {
 		t.Fatal(err)
 	}

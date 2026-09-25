@@ -15,7 +15,7 @@ import (
 	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/schema"
@@ -135,7 +135,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		}
 	}
 
-	projectID, err := cache.ComputeProjectID(cfg.ProjectRoot)
+	projectID, err := fsutil.ComputeProjectID(cfg.ProjectRoot)
 	if err != nil {
 		return nil, err
 	}

@@ -324,10 +324,3 @@ func (r *Runner) HasStagedChanges() bool {
 func (r *Runner) CommitStagedPath(ctx context.Context, path string, backup bool) (*FSApplyOpsResponse, error) {
 	return r.fsClient().CommitStagedPath(ctx, path, backup)
 }
-
-func (r *Runner) currentHash(relSlash string) string {
-	if r.fsTools == nil || r.fsTools.Overlay == nil {
-		return ""
-	}
-	return r.fsTools.Overlay.CurrentHash(relSlash)
-}

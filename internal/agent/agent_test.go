@@ -10,11 +10,13 @@ import (
 	"sync"
 	"testing"
 
+	agentformat "github.com/orchestra/orchestra/internal/agent/format"
+
 	"github.com/orchestra/orchestra/internal/lsp"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/schema"
 )
@@ -40,34 +42,34 @@ func (m *mockQuestionAsker) Ask(_ context.Context, questions []tools.QuestionIte
 }
 
 func TestExtractLSPErrors_Nil(t *testing.T) {
-	if got := extractLSPErrors(nil); got != "" {
+	if got := agentformat.ExtractLSPErrors(nil); got != "" {
 		t.Errorf("nil input: expected empty string, got %q", got)
 	}
 }
 
 func TestExtractLSPErrors_EmptyObject(t *testing.T) {
-	if got := extractLSPErrors(json.RawMessage(`{}`)); got != "" {
+	if got := agentformat.ExtractLSPErrors(json.RawMessage(`{}`)); got != "" {
 		t.Errorf("empty object: expected empty string, got %q", got)
 	}
 }
 
 func TestExtractLSPErrors_NoDiagnostics(t *testing.T) {
 	out := json.RawMessage(`{"path":"a.go","file_hash":"abc123"}`)
-	if got := extractLSPErrors(out); got != "" {
+	if got := agentformat.ExtractLSPErrors(out); got != "" {
 		t.Errorf("no diagnostics field: expected empty string, got %q", got)
 	}
 }
 
 func TestExtractLSPErrors_OnlyWarnings(t *testing.T) {
 	out := json.RawMessage(`{"diagnostics":[{"severity":"warning","message":"unused import","start_line":1,"start_col":1}]}`)
-	if got := extractLSPErrors(out); got != "" {
+	if got := agentformat.ExtractLSPErrors(out); got != "" {
 		t.Errorf("warning-only: expected empty string, got %q", got)
 	}
 }
 
 func TestExtractLSPErrors_SingleError(t *testing.T) {
 	out := json.RawMessage(`{"diagnostics":[{"severity":"error","message":"undefined: Foo","start_line":3,"start_col":5}]}`)
-	got := extractLSPErrors(out)
+	got := agentformat.ExtractLSPErrors(out)
 	if got == "" {
 		t.Fatal("expected non-empty hint for error diagnostic")
 	}
@@ -88,7 +90,7 @@ func TestExtractLSPErrors_MixedSeverity(t *testing.T) {
 		{"severity":"error","message":"type mismatch","start_line":5,"start_col":3},
 		{"severity":"information","message":"consider renaming","start_line":7,"start_col":1}
 	]}`)
-	got := extractLSPErrors(out)
+	got := agentformat.ExtractLSPErrors(out)
 	if !strings.Contains(got, "type mismatch") {
 		t.Errorf("expected error message in hint, got %q", got)
 	}
@@ -105,7 +107,7 @@ func TestExtractLSPErrors_MultipleErrors(t *testing.T) {
 		{"severity":"error","message":"first error","start_line":2,"start_col":1},
 		{"severity":"error","message":"second error","start_line":4,"start_col":3}
 	]}`)
-	got := extractLSPErrors(out)
+	got := agentformat.ExtractLSPErrors(out)
 	if !strings.Contains(got, "first error") {
 		t.Errorf("expected first error in hint, got %q", got)
 	}
@@ -115,7 +117,7 @@ func TestExtractLSPErrors_MultipleErrors(t *testing.T) {
 }
 
 func TestExtractLSPErrors_InvalidJSON(t *testing.T) {
-	if got := extractLSPErrors(json.RawMessage(`not json at all`)); got != "" {
+	if got := agentformat.ExtractLSPErrors(json.RawMessage(`not json at all`)); got != "" {
 		t.Errorf("invalid JSON: expected empty string, got %q", got)
 	}
 }
@@ -228,7 +230,7 @@ func TestAgent_Run_ToolCallThenFinal_Applies(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello old world\n"), 0644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
-	h := cache.ComputeSHA256([]byte("hello old world\n"))
+	h := fsutil.ComputeSHA256([]byte("hello old world\n"))
 
 	v, err := schema.NewValidator()
 	if err != nil {
@@ -275,7 +277,7 @@ func TestAgent_Run_ExecDenied_IsRetriedInsideNextStep_AndDoesNotBurnStep(t *test
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello old world\n"), 0644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
-	h := cache.ComputeSHA256([]byte("hello old world\n"))
+	h := fsutil.ComputeSHA256([]byte("hello old world\n"))
 
 	v, err := schema.NewValidator()
 	if err != nil {
@@ -900,7 +902,7 @@ func TestAgent_OnEvent_PendingOps(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "d.txt"), content, 0644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	h := cache.ComputeSHA256(content)
+	h := fsutil.ComputeSHA256(content)
 
 	v, err := schema.NewValidator()
 	if err != nil {
@@ -1012,7 +1014,7 @@ func TestAgent_Run_LSPErrors_HintInjected(t *testing.T) {
 	root := t.TempDir()
 	// Pre-create the file with known content so we have its hash.
 	content := "package main\n"
-	h := cache.ComputeSHA256([]byte(content))
+	h := fsutil.ComputeSHA256([]byte(content))
 	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte(content), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -1054,7 +1056,7 @@ func TestAgent_Run_LSPErrors_HintInjected(t *testing.T) {
 func TestAgent_Run_LSPErrors_HintInjected_DryRun(t *testing.T) {
 	root := t.TempDir()
 	content := "package main\n"
-	h := cache.ComputeSHA256([]byte(content))
+	h := fsutil.ComputeSHA256([]byte(content))
 	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte(content), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -1150,7 +1152,7 @@ func TestAgent_Run_LSPErrors_HintInjected_Edit(t *testing.T) {
 	root := t.TempDir()
 	// Pre-create the file with known content so we have its hash.
 	content := "package main\n"
-	h := cache.ComputeSHA256([]byte(content))
+	h := fsutil.ComputeSHA256([]byte(content))
 	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte(content), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
@@ -1192,7 +1194,7 @@ func TestAgent_Run_LSPErrors_HintInjected_Edit(t *testing.T) {
 func TestAgent_Run_LSPErrors_HintInjectedEdit_DryRun(t *testing.T) {
 	root := t.TempDir()
 	content := "package main\n"
-	h := cache.ComputeSHA256([]byte(content))
+	h := fsutil.ComputeSHA256([]byte(content))
 	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte(content), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}

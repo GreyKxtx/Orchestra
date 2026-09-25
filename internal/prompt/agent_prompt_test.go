@@ -27,32 +27,16 @@ func TestPrompt_IncludesUserInfo_Minimal(t *testing.T) {
 	}
 }
 
-func TestPrompt_RespectsMaxPromptBytes_TruncatesOldestHistory(t *testing.T) {
-	snap := WorkspaceSnapshot{WorkspaceRoot: "D:/proj"}
-	base := BuildUserPrompt("сделай X", snap, []string{"read"})
-
-	history := []string{
-		"OLD_1 " + strings.Repeat("a", 200),
-		"OLD_2 " + strings.Repeat("b", 200),
-		"NEW_1 " + strings.Repeat("c", 200),
-		"NEW_2 " + strings.Repeat("d", 200),
-	}
-
-	// Force a tight budget to keep only the tail (but still allow history header+footer).
-	p := BuildUserPromptWithHistory(base, history, len(base)+600)
-
-	if strings.Contains(p, "OLD_1") || strings.Contains(p, "OLD_2") {
-		t.Fatalf("expected oldest history to be truncated, got:\n%s", p)
-	}
-	if !strings.Contains(p, "NEW_2") {
-		t.Fatalf("expected newest history to be kept, got:\n%s", p)
-	}
-}
-
 func TestPrompt_DoesNotLeakDeniedTools(t *testing.T) {
 	snap := WorkspaceSnapshot{WorkspaceRoot: "D:/proj"}
 	base := BuildUserPrompt("сделай X", snap, []string{"ls", "read", "grep"})
 	if strings.Contains(base, "bash") {
 		t.Fatalf("did not expect denied tool name in prompt, got:\n%s", base)
 	}
+}
+
+// BuildUserPrompt builds the user-facing message content:
+// it includes the IDE snapshot and the user's query.
+func BuildUserPrompt(userQuery string, snap WorkspaceSnapshot, allowedTools []string) string {
+	return BuildUserContext(snap, allowedTools) + UserQueryBlock(userQuery) + "\n"
 }

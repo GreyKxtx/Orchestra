@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -13,7 +13,7 @@ import (
 // ignored it, and edited whatever the file had become since the read.
 func TestEdit_StagingChecksTheFileHash(t *testing.T) {
 	c, _ := workspaceWithFile(t, "a.go", "package a\n\nvar x = 1\n")
-	read := cache.ComputeSHA256([]byte("package a\n\nvar x = 1\n"))
+	read := fsutil.ComputeSHA256([]byte("package a\n\nvar x = 1\n"))
 
 	// Another edit lands after the read.
 	if _, err := c.Edit(context.Background(), FSEditRequest{Path: "a.go", Search: "var x = 1", Replace: "var x = 2", FileHash: read}); err != nil {

@@ -77,3 +77,8 @@ func TestModal_ShellRender(t *testing.T) {
 		t.Fatalf("expected shell permission UI:\n%s", out)
 	}
 }
+
+// NewModal creates a permission modal for the given tool request.
+func NewModal(tool, description string) *Modal {
+	return &Modal{Tool: tool, Description: description}
+}

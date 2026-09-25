@@ -68,21 +68,6 @@ func RenderAssistantNotice(kind state.SystemKind, text string, width int) string
 	return renderNoticeLines(muted.Render(icon+" ")+label, muted, text, width)
 }
 
-// RenderAssistantNotices renders a stack of notices (legacy / tests). Prefer
-// chronological SegmentNotice rendering via RenderAssistantNotice.
-func RenderAssistantNotices(notices []state.SystemNotice, width int) string {
-	if len(notices) == 0 {
-		return ""
-	}
-	var lines []string
-	for _, n := range notices {
-		if line := RenderAssistantNotice(n.Kind, n.Text, width); line != "" {
-			lines = append(lines, line)
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
 // RenderSystemMessage renders standalone system lines (committed, workflow, errors).
 func RenderSystemMessage(m state.Message, width int) string {
 	t := theme.CurrentTheme()

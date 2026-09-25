@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -106,7 +107,7 @@ func TestParseRipgrepJSON_ContextDoesNotCrossFiles(t *testing.T) {
 func TestSearchWithRipgrep_EmptyQuery(t *testing.T) {
 	dir := t.TempDir()
 	opts := DefaultOptions()
-	_, err := SearchWithRipgrep(dir, "", nil, opts, nil)
+	_, err := SearchWithRipgrepContext(context.Background(), dir, "", nil, opts, nil)
 	if err == nil {
 		t.Error("expected error for empty query, got nil")
 	}
@@ -122,7 +123,7 @@ func TestSearchWithRipgrep_Basic(t *testing.T) {
 
 	opts := DefaultOptions()
 	opts.ContextLines = 0
-	matches, err := SearchWithRipgrep(dir, "hello", nil, opts, nil)
+	matches, err := SearchWithRipgrepContext(context.Background(), dir, "hello", nil, opts, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +151,7 @@ func TestSearchWithRipgrep_CaseInsensitive(t *testing.T) {
 	opts := DefaultOptions()
 	opts.CaseInsensitive = true
 	opts.ContextLines = 0
-	matches, err := SearchWithRipgrep(dir, "HELLO", nil, opts, nil)
+	matches, err := SearchWithRipgrepContext(context.Background(), dir, "HELLO", nil, opts, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +168,7 @@ func TestSearchWithRipgrep_NoMatches(t *testing.T) {
 	writeSearchFile(t, dir, "f.go", "package main\n")
 
 	opts := DefaultOptions()
-	matches, err := SearchWithRipgrep(dir, "NONEXISTENT_STRING_XYZ", nil, opts, nil)
+	matches, err := SearchWithRipgrepContext(context.Background(), dir, "NONEXISTENT_STRING_XYZ", nil, opts, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +187,7 @@ func TestSearchWithRipgrep_ExcludeDirs(t *testing.T) {
 
 	opts := DefaultOptions()
 	opts.ContextLines = 0
-	matches, err := SearchWithRipgrep(dir, "target", []string{"vendor"}, opts, nil)
+	matches, err := SearchWithRipgrepContext(context.Background(), dir, "target", []string{"vendor"}, opts, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

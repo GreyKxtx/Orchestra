@@ -11,7 +11,7 @@ import (
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/sessionfile"
 	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -83,7 +83,7 @@ func setupRewriteCoreWithBudget(t *testing.T, root string, client llm.Client, co
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	projectID, err := cache.ComputeProjectID(root)
+	projectID, err := fsutil.ComputeProjectID(root)
 	if err != nil {
 		t.Fatal(err)
 	}

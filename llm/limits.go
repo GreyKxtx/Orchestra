@@ -149,11 +149,6 @@ func userConfiguredNumCtx(cfg *LLMConfig) int {
 	return contextLenFromExtra(cfg.ExtraBody)
 }
 
-// ClampMaxTokensAgainstContext is the exported form of effectiveMaxTokens.
-func ClampMaxTokensAgainstContext(maxTokens, contextLen int) int {
-	return effectiveMaxTokens(maxTokens, contextLen)
-}
-
 // ResolveModelLimits determines the model's context window and applies it to
 // cfg. It prefers what the server reports (/v1/models max_model_len), and
 // falls back to the static model catalog when the server is silent — which is

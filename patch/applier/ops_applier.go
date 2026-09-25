@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/relpath"
 	"github.com/orchestra/orchestra/protocol"
@@ -89,16 +89,6 @@ func (r *pathResolver) canonRel(p string) (string, error) {
 		return "", protocol.NewError(protocol.InvalidLLMOutput, "path is invalid", map[string]any{"path": p})
 	}
 	return rp, nil
-}
-
-// ApplyOps applies Internal Ops v1 (compat wrapper for file.replace_range).
-//
-// Safety properties (per spec):
-// - Path traversal is rejected.
-// - Each op checks `expected` strictly at `range` OR uses fuzzy fallback if enabled.
-// - `conditions.file_hash` participates in stale detection (used to guard against applying to changed files).
-func ApplyOps(root string, in []ops.ReplaceRangeOp, opts ApplyOptions) (*ApplyResult, error) {
-	return ApplyAnyOps(root, ops.WrapReplaceRangeOps(in), opts)
 }
 
 // ApplyAnyOps applies a mixed set of ops (replace_range, write_atomic, mkdir_all).
@@ -288,7 +278,7 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 				"path": rel,
 			})
 		}
-		actualHash := cache.ComputeSHA256(fp.before)
+		actualHash := fsutil.ComputeSHA256(fp.before)
 		if strings.TrimSpace(wa.Conditions.FileHash) != "" && strings.TrimSpace(wa.Conditions.FileHash) != actualHash {
 			return nil, protocol.NewError(protocol.StaleContent, "cannot apply op: file_hash mismatch", map[string]any{
 				"path":          rel,
@@ -366,7 +356,7 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 					"file created between plan and apply",
 					map[string]any{"path": rel})
 			}
-			if cache.ComputeSHA256(current) != cache.ComputeSHA256(fp.before) {
+			if fsutil.ComputeSHA256(current) != fsutil.ComputeSHA256(fp.before) {
 				return nil, protocol.NewError(protocol.StaleContent,
 					"file changed between plan and apply",
 					map[string]any{"path": rel})
@@ -540,7 +530,7 @@ func writeBackupsParallel(targets []backupSpec, suffix, rootReal string) error {
 }
 
 func applyReplaceRangeOps(relPath string, before []byte, fileOps []ops.ReplaceRangeOp) ([]byte, error) {
-	baseHash := cache.ComputeSHA256(before)
+	baseHash := fsutil.ComputeSHA256(before)
 
 	// Apply from bottom to top so earlier edits don't shift later ranges.
 	sort.Slice(fileOps, func(i, j int) bool {

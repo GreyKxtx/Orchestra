@@ -18,11 +18,6 @@ type Scanner struct {
 	ignores []string
 }
 
-// NewScanner creates a new scanner and loads ignore files.
-func NewScanner(store *Store, root string) *Scanner {
-	return NewScannerWithIgnores(store, root, nil)
-}
-
 // NewScannerWithIgnores creates a scanner with project-configured exclusions
 // in addition to the built-in and ignore-file rules.
 func NewScannerWithIgnores(store *Store, root string, ignores []string) *Scanner {
@@ -115,17 +110,6 @@ type ScanResult struct {
 	// Hashed is how many files had to be read: their stamp was unknown or had
 	// changed. An unchanged tree hashes nothing.
 	Hashed int
-}
-
-// Scan performs an incremental scan of the workspace.
-// Returns a list of file paths that need parsing (new or modified)
-// and a list of file paths that should be deleted from the DB.
-func (s *Scanner) Scan(ctx context.Context) (toParse []string, toDelete []string, err error) {
-	res, err := s.ScanChanges(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	return res.ToParse, res.ToDelete, nil
 }
 
 // ScanChanges walks the workspace and compares it with the graph. A file

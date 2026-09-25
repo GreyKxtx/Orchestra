@@ -1450,13 +1450,6 @@ func BuiltInModeKind(name string) (ModeKind, bool) {
 	return spec.Kind, ok
 }
 
-// IsUserSelectableMode reports whether the user may start this mode directly
-// (CLI --mode, RPC agent.run). Child-only and internal modes are not.
-func IsUserSelectableMode(name string) bool {
-	k, ok := BuiltInModeKind(name)
-	return ok && k == ModeKindTopLevel
-}
-
 // BuiltInModeNames returns reserved agent mode names (sorted).
 func BuiltInModeNames() []string {
 	var out []string

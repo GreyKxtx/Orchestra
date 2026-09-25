@@ -30,28 +30,6 @@ func splitEntries(content string) []string {
 	return out
 }
 
-// joinEntriesRecentFirst concatenates entries with most recent first (for inject).
-// Pinned entries ([pin] / pin:) always come first.
-func joinEntriesRecentFirst(entries []string) string {
-	if len(entries) == 0 {
-		return ""
-	}
-	var pins, rest []string
-	for _, e := range entries {
-		if IsPinnedEntry(e) {
-			pins = append(pins, e)
-		} else {
-			rest = append(rest, e)
-		}
-	}
-	reversed := make([]string, len(rest))
-	for i, e := range rest {
-		reversed[len(rest)-1-i] = e
-	}
-	out := append(append([]string{}, pins...), reversed...)
-	return strings.Join(out, entrySep+"\n")
-}
-
 // IsPinnedEntry reports sticky facts that must survive agent.md compaction.
 func IsPinnedEntry(entry string) bool {
 	s := strings.TrimSpace(entry)

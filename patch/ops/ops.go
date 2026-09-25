@@ -198,13 +198,3 @@ func strictUnmarshal(data []byte, out any) error {
 	}
 	return nil
 }
-
-func WrapReplaceRangeOps(in []ReplaceRangeOp) []AnyOp {
-	out := make([]AnyOp, 0, len(in))
-	for i := range in {
-		rr := in[i]
-		rrCopy := rr
-		out = append(out, AnyOp{Op: rrCopy.Op, Path: rrCopy.Path, ReplaceRange: &rrCopy})
-	}
-	return out
-}

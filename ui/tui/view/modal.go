@@ -18,11 +18,6 @@ type Modal struct {
 	width       int
 }
 
-// NewModal creates a permission modal for the given tool request.
-func NewModal(tool, description string) *Modal {
-	return &Modal{Tool: tool, Description: description}
-}
-
 // NewPermissionModal creates a modal with an explicit kind (e.g. lsp.install).
 func NewPermissionModal(tool, description, kind string) *Modal {
 	return &Modal{Tool: tool, Description: description, Kind: kind}

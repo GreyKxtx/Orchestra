@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/patches"
 )
 
@@ -27,7 +27,7 @@ func guardWorkspace(t *testing.T, name, content string) (root, hash string) {
 	if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return root, cache.ComputeSHA256([]byte(content))
+	return root, fsutil.ComputeSHA256([]byte(content))
 }
 
 func writeAtomicPatch(path, content, fileHash string) patches.Patch {

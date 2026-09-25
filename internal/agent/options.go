@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orchestra/orchestra/internal/agent/guard"
+
 	"github.com/orchestra/orchestra/internal/agent/working"
 	configpkg "github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/tools"
@@ -156,21 +158,6 @@ const (
 	ModeTitle        Mode = "title"        // internal: generates a short task title from the user query.
 	ModeSummary      Mode = "summary"      // internal: produces a brief summary of completed work.
 )
-
-// IsKnownMode reports whether m is one of the built-in modes.
-//
-// The registry lives in internal/config (config.BuiltInModeKind) because the
-// tools and CLI layers need it too and cannot import this package. Keeping a
-// second list here is what let `product` and `documentation` exist as real
-// modes while being absent from the reserved-name check, so a custom agent or
-// skill could take their names.
-//
-// A false result does NOT mean "invalid": a custom agent from .orchestra.yml
-// is passed through Options.Mode under its own name and falls through to
-// build-mode tools by design.
-func IsKnownMode(m Mode) bool {
-	return configpkg.IsBuiltInMode(string(m))
-}
 
 // IsChildOnlyMode reports whether m is a subagent role with its own input
 // contract (WorkOrder, task_result) rather than a mode a user starts.
@@ -636,7 +623,7 @@ type Agent struct {
 	// same compile errors is detected even when its tool arguments
 	// differ. H7 in architecture audit: replaces the Sprint 6 prompt-
 	// only signal with a structural check.
-	diags *DiagTracker
+	diags *guard.DiagTracker
 
 	// turnMutatingTools counts write/edit calls in the current Run so
 	// premature-final rejection does not block legitimate finals after a
@@ -698,9 +685,6 @@ type Agent struct {
 	// notice once this Run (avoid per-step spam).
 	contextPressureWarned bool
 
-	// compactMetrics accumulates compaction stats for this agent instance.
-	compactMetrics CompactMetrics
-
 	// working is the rule-based ledger for the current Run (token economy).
 	working *working.State
 }
@@ -725,7 +709,7 @@ func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, op
 		opts:                 opts,
 		baseLogger:           opts.AgentLogger,
 		justSwitchedFromPlan: opts.JustSwitchedFromPlan,
-		diags:                newDiagTracker(),
+		diags:                guard.NewDiagTracker(),
 		taint:                taintState{source: opts.Tainted},
 	}, nil
 }

@@ -70,18 +70,6 @@ func PromptBudgetTokens(contextLen, wantCompletion int) int {
 	return budget
 }
 
-// FitsContext reports whether promptTok + wantCompletion can fit in contextLen
-// under the vLLM check (with safety slack).
-func FitsContext(contextLen, promptTok, wantCompletion int) bool {
-	if contextLen <= 0 {
-		return true
-	}
-	if wantCompletion <= 0 {
-		wantCompletion = defaultMaxTokens
-	}
-	return promptTok+wantCompletion+ContextSafetyTokens <= contextLen
-}
-
 // ContextOverflow carries the server-reported numbers from a context-overflow
 // rejection so callers (the agent loop) can compact history and retry the step
 // instead of failing the turn.

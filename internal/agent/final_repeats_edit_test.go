@@ -9,7 +9,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol/schema"
 )
 
@@ -214,7 +214,7 @@ func TestFinal_AFurtherChangeCarryingTheCurrentHashStillApplies(t *testing.T) {
 		`{"patches":[{"path":"math.go","type":"file.search_replace",` +
 			`"search":` + jsonString("// Multiply multiplies two integers.") + `,` +
 			`"replace":` + jsonString("// Multiply returns a*b.") + `,` +
-			`"file_hash":` + jsonString(cache.ComputeSHA256([]byte(mathAfterEdit))) + `}]}`,
+			`"file_hash":` + jsonString(fsutil.ComputeSHA256([]byte(mathAfterEdit))) + `}]}`,
 	})
 
 	if !strings.Contains(got, "// Multiply returns a*b.") {

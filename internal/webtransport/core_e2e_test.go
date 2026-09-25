@@ -12,7 +12,7 @@ import (
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
 	"github.com/orchestra/orchestra/internal/webtransport"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/jsonrpc"
 )
@@ -89,7 +89,7 @@ func TestWS_RealCoreHandshakeAndSession(t *testing.T) {
 		}
 	}
 
-	projectID, err := cache.ComputeProjectID(root)
+	projectID, err := fsutil.ComputeProjectID(root)
 	if err != nil {
 		t.Fatalf("ComputeProjectID: %v", err)
 	}

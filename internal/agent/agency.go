@@ -318,17 +318,6 @@ func (a *Agent) drainAgencyInbox(history []llm.Message) []llm.Message {
 	return append(history, llm.Message{Role: llm.RoleUser, Content: text})
 }
 
-// FormatAgentMessages renders inbox notes for a model. Shared with the task
-// runner, which prepends pending notes to a recipient's first message.
-//
-// The notes are other agents' words, so they are framed as information, and
-// their text cannot close the block: an agent that read a hostile file could
-// otherwise end </agent_messages> and go on as if the user were speaking.
-func FormatAgentMessages(msgs []InboxMessage, maxBytes int) string {
-	text, _ := FitAgentMessages(msgs, maxBytes)
-	return text
-}
-
 // FitAgentMessages renders as many notes as fit in maxBytes and returns the
 // rest, which the caller delivers later. The block says how many are still
 // to come, so a reader never takes a cut list for the whole.

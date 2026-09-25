@@ -198,11 +198,6 @@ func (cb *CircuitBreaker) RecordReadOnlyCall(toolName string, inputBytes []byte)
 	return ""
 }
 
-// ResetReadOnlyCalls clears read-only repeat counters.
-func (cb *CircuitBreaker) ResetReadOnlyCalls() {
-	cb.readOnlyCallKeys = make(map[string]int, 8)
-}
-
 // ForgiveReadOnlyCallsAfterCompaction credits back exactly one repeat per
 // call, for when history compaction may have dropped a result the model
 // legitimately needs again.
@@ -345,13 +340,6 @@ func (cb *CircuitBreaker) ResetDeniedForTool(toolName string) {
 		return
 	}
 	delete(cb.deniedPerTool, toolName)
-}
-
-// RecordFinalFailure records a failed resolve/apply attempt and returns an error if the circuit trips.
-// Prefer RecordResolveFailure / RecordApplyRecoverable when the failure kind is known.
-func (cb *CircuitBreaker) RecordFinalFailure(lastErr error) *protocol.Error {
-	kind := Classify(lastErr, ErrorKindResolveFailed)
-	return cb.Record(kind, RecordMeta{Err: lastErr})
 }
 
 // RecordResolveFailure records a staged-patch resolve failure.

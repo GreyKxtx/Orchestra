@@ -15,7 +15,7 @@ import (
 	"github.com/orchestra/orchestra/internal/hooks"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol/schema"
 )
 
@@ -467,7 +467,7 @@ func computeFileHashForTest(t *testing.T, path string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return cache.ComputeSHA256(b)
+	return fsutil.ComputeSHA256(b)
 }
 
 func readLines(t *testing.T, path string) []string {

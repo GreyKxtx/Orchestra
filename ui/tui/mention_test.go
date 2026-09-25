@@ -69,3 +69,14 @@ func TestReplaceLastMention(t *testing.T) {
 		}
 	}
 }
+
+// mentionQuery returns the text after @ in the last in-progress @-mention,
+// or "" if none / completed. Prefer activeMentionQuery when you need to know
+// whether the palette should open (bare "@" is active with empty query).
+func mentionQuery(text string) string {
+	q, active := activeMentionQuery(text)
+	if !active {
+		return ""
+	}
+	return q
+}

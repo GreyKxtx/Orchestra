@@ -66,16 +66,6 @@ func familyAddendum(internal bool, family string) string {
 	return loadPromptFile("addendum-" + family + ".txt")
 }
 
-// BuildSystemPrompt returns the default build-mode prompt.
-func BuildSystemPrompt() string {
-	return BuildSystemPromptForMode("build", "")
-}
-
-// BuildSystemPromptForFamily returns a build-mode prompt for the given model family.
-func BuildSystemPromptForFamily(family string) string {
-	return BuildSystemPromptForMode("build", family)
-}
-
 func loadPromptFile(name string) string {
 	data, err := promptFiles.ReadFile("files/" + name)
 	if err != nil {

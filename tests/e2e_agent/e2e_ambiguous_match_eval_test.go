@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/tools"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -86,7 +86,7 @@ func TestEval_AmbiguousMatchRate_WithTargetSymbol(t *testing.T) {
 			}
 			t.Cleanup(func() { r.Close() })
 
-			hash := cache.ComputeSHA256([]byte(tc.fileContent))
+			hash := fsutil.ComputeSHA256([]byte(tc.fileContent))
 			if err := r.SeedCKGSymbolForTest(context.Background(), tc.relPath, hash, tc.symbol, tc.lineStart, tc.lineEnd); err != nil {
 				t.Fatalf("SeedCKGSymbolForTest: %v", err)
 			}

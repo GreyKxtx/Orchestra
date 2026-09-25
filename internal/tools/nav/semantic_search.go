@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/ckg"
-	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/embed"
 	"github.com/orchestra/orchestra/internal/embedindex"
 	"github.com/orchestra/orchestra/protocol"
@@ -237,20 +236,6 @@ func (c *Client) RebuildCKG(ctx context.Context) error {
 		orch := ckg.NewOrchestratorWithIgnores(snap.Store, c.Root, c.ExcludeDirs)
 		return orch.UpdateGraph(ctx)
 	})
-}
-
-// SetEmbedCfg updates embed config used by semantic search / CKG admin.
-func (c *Client) SetEmbedCfg(cfg config.EmbedConfig) {
-	if c != nil {
-		c.EmbedCfg = cfg
-	}
-}
-
-// SetExcludeDirs updates exclude list for repo_map scans.
-func (c *Client) SetExcludeDirs(exclude []string) {
-	if c != nil {
-		c.ExcludeDirs = append([]string(nil), exclude...)
-	}
 }
 
 type CKGEmbedResult struct {

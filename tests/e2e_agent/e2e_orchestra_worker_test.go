@@ -14,7 +14,7 @@ import (
 	"github.com/orchestra/orchestra/internal/tasks"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol/schema"
 )
 
@@ -81,7 +81,7 @@ func workerLSPFixture(t *testing.T) (root, initialHash string) {
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(original), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	return root, cache.ComputeSHA256([]byte(original))
+	return root, fsutil.ComputeSHA256([]byte(original))
 }
 
 func newLSPFixRunner(t *testing.T, root string) *tools.Runner {

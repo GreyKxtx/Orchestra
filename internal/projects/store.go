@@ -9,7 +9,6 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
@@ -98,7 +97,7 @@ func NewStore(path string) (*Store, error) {
 // API use, which case-folds on Windows. Falling back to the path keeps a
 // project that cannot be hashed visible rather than dropping it.
 func identity(abs string) string {
-	if id, err := cache.ComputeProjectID(abs); err == nil {
+	if id, err := fsutil.ComputeProjectID(abs); err == nil {
 		return id
 	}
 	return abs

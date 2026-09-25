@@ -13,7 +13,7 @@ import (
 
 func TestCacheBinaryPath_Layout(t *testing.T) {
 	t.Setenv("ORCHESTRA_LSP_CACHE", filepath.Join(t.TempDir(), "lsp-cache"))
-	p, err := provision.CacheBinaryPath("gopls", "latest", "gopls")
+	p, err := cacheBinaryPath("gopls", "latest", "gopls")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestResolve_CacheHit(t *testing.T) {
 	if !ok {
 		t.Fatal("gopls missing from registry")
 	}
-	p, err := provision.CacheBinaryPath(e.ID, e.Version, e.BinaryName)
+	p, err := cacheBinaryPath(e.ID, e.Version, e.BinaryName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,4 +110,14 @@ func TestRegistry_ByExtension(t *testing.T) {
 	if !ok || e.ID != "typescript-language-server" {
 		t.Fatalf("got %+v ok=%v", e, ok)
 	}
+}
+
+// cacheBinaryPath is the first of CacheBinaryCandidates: the layout the tests
+// pin, ~/.orchestra/lsp/<id>/<version>/<binary>[.exe].
+func cacheBinaryPath(id, version, binaryName string) (string, error) {
+	cands, err := provision.CacheBinaryCandidates(id, version, binaryName)
+	if err != nil {
+		return "", err
+	}
+	return cands[0], nil
 }

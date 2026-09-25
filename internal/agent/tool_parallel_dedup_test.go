@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orchestra/orchestra/internal/agent/guard"
+
 	"github.com/orchestra/orchestra/llm"
 )
 
@@ -16,7 +18,7 @@ import (
 // the duplicates at it.
 func TestRunParallelToolBatch_IdenticalReadsRunOnce(t *testing.T) {
 	ag, _ := newTestAgent(t, &scriptedLLM{steps: []string{`{"patches":[]}`}}, Options{})
-	cb := NewCircuitBreaker(2, 6, 6, 3)
+	cb := guard.NewCircuitBreaker(2, 6, 6, 3)
 	input := []byte(`{"path":"a.txt"}`)
 	calls := []ToolCall{
 		{ID: "c1", Name: "read", Input: input},
@@ -76,7 +78,7 @@ func TestRunParallelToolBatch_IdenticalReadsRunOnce(t *testing.T) {
 // given ran that call.
 func TestRunParallelToolBatch_PassesTheGateChain(t *testing.T) {
 	ag, _ := newTestAgent(t, &scriptedLLM{steps: []string{`{"patches":[]}`}}, Options{Mode: ModeExplore})
-	cb := NewCircuitBreaker(4, 6, 6, 3)
+	cb := guard.NewCircuitBreaker(4, 6, 6, 3)
 	calls := []ToolCall{
 		{ID: "c1", Name: "read", Input: []byte(`{"path":"a.txt"}`)},
 		{ID: "c2", Name: "write", Input: []byte(`{"path":"b.txt","content":"x"}`)},

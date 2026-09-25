@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/agent/digest"
+
 	"github.com/orchestra/orchestra/internal/roles"
 	"github.com/orchestra/orchestra/llm"
 )
 
 func exploreNavTool(name string) bool {
-	switch normalizeToolName(name) {
+	switch digest.NormalizeToolName(name) {
 	case "read", "grep", "glob", "ls", "explore", "symbols", "semantic_search", "repo_map",
 		"lsp.definition", "lsp.references", "lsp.hover", "lsp.diagnostics", "diff.preview":
 		return true
@@ -99,7 +101,7 @@ func workerReadPaths(history []llm.Message) map[string]bool {
 			continue
 		}
 		for _, tc := range m.ToolCalls {
-			name := normalizeToolName(tc.Function.Name)
+			name := digest.NormalizeToolName(tc.Function.Name)
 			if name != "read" {
 				continue
 			}

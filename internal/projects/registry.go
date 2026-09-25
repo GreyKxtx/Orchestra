@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/core"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 type State string
@@ -53,7 +53,7 @@ func ClosedProject(path string) (Project, bool) {
 		return Project{}, false
 	}
 	abs = filepath.Clean(abs)
-	id, err := cache.ComputeProjectID(abs)
+	id, err := fsutil.ComputeProjectID(abs)
 	if err != nil {
 		return Project{}, false
 	}
@@ -108,7 +108,7 @@ func (r *Registry) Open(ctx context.Context, path string) (Project, error) {
 		return Project{}, fmt.Errorf("%w: %s", ErrNotInitialized, abs)
 	}
 
-	id, err := cache.ComputeProjectID(abs)
+	id, err := fsutil.ComputeProjectID(abs)
 	if err != nil {
 		return Project{}, fmt.Errorf("project id: %w", err)
 	}
@@ -154,7 +154,7 @@ func (r *Registry) Open(ctx context.Context, path string) (Project, error) {
 }
 
 // isOpen reports whether a *ready* project exists for this path or id. Callers
-// hold r.mu. The id is the authoritative identity — cache.ComputeProjectID
+// hold r.mu. The id is the authoritative identity — fsutil.ComputeProjectID
 // case-folds on Windows while byPath keeps the spelling it was given — so both
 // keys are consulted; an errored placeholder (nil core) does not count as open.
 func (r *Registry) isOpen(abs, id string) bool {
@@ -175,7 +175,7 @@ func (r *Registry) OpenedIDFor(path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	id, _ := cache.ComputeProjectID(abs)
+	id, _ := fsutil.ComputeProjectID(abs)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if e, ok := r.byID[id]; ok && e.core != nil {
@@ -187,19 +187,6 @@ func (r *Registry) OpenedIDFor(path string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// Close releases the project's core, and with it its CKG database and its
-// language servers.
-func (r *Registry) Close(id string) error {
-	c, err := r.Detach(id)
-	if err != nil {
-		return err
-	}
-	if c == nil {
-		return nil
-	}
-	return c.Close()
 }
 
 // Detach removes the project from the registry and hands its core (nil for an
@@ -245,18 +232,6 @@ func (r *Registry) List() []Project {
 		}
 		return out[i].Path < out[j].Path
 	})
-	return out
-}
-
-// Paths returns the open project paths, for persistence.
-func (r *Registry) Paths() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]string, 0, len(r.byPath))
-	for p := range r.byPath {
-		out = append(out, p)
-	}
-	sort.Strings(out)
 	return out
 }
 

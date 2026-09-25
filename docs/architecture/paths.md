@@ -8,7 +8,7 @@ Use this when navigating the repo or writing docs. **Do not** reference deleted 
 |--------|-------------|----------|
 | Root | `github.com/orchestra/orchestra` | `cmd/`, `internal/*`, `ui/tui`, tests |
 | Protocol | `github.com/orchestra/orchestra/protocol` | `protocol/`, `protocol/jsonrpc`, `protocol/schema` |
-| Patch | `github.com/orchestra/orchestra/patch` | `patch/ops`, `patches`, `resolver`, `applier`, `fsutil`, `cache`, `relpath` |
+| Patch | `github.com/orchestra/orchestra/patch` | `patch/ops`, `patches`, `resolver`, `applier`, `fsutil`, `relpath` |
 | LLM | `github.com/orchestra/orchestra/llm` | clients, streaming, `lmstudio/` |
 
 ```bash
@@ -54,7 +54,7 @@ go vet ./... ./protocol/... ./patch/... ./llm/...
 ## Removed (do not reintroduce)
 
 - `internal/daemon/` — v0.3 HTTP daemon (removed)
-- `orchestra daemon` CLI
+- `orchestra daemon` CLI, `--no-daemon`, and the v0.3 file cache `patch/cache` (its hash helpers live in `patch/fsutil`)
 - `internal/{protocol,jsonrpc,schema,ops,applier,patches,resolver,fsutil,cache,relpath,llm}/` → use sub-modules above
 - `orchestra chat` REPL — use TUI / VS Code
 

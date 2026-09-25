@@ -52,21 +52,3 @@ func ByName(name string) Theme {
 	}
 	return registry[DefaultTheme]
 }
-
-// Register adds (or replaces) a theme by name. Useful for plugins or tests
-// that want to install custom palettes.
-func Register(name string, t Theme) {
-	if t != nil && name != "" {
-		registry[name] = t
-	}
-}
-
-// AvailableThemes returns the list of registered theme names. Order is not
-// guaranteed; callers that need stable order should sort.
-func AvailableThemes() []string {
-	out := make([]string, 0, len(registry))
-	for name := range registry {
-		out = append(out, name)
-	}
-	return out
-}

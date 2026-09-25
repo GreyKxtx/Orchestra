@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/orchestra/orchestra/internal/agent/history"
+	agenthistory "github.com/orchestra/orchestra/internal/agent/history"
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/llm"
 )
@@ -16,7 +16,7 @@ import (
 func historyBytes(hist []llm.Message) int {
 	total := 0
 	for _, m := range hist {
-		total += estimateMessageSize(m)
+		total += agenthistory.EstimateMessageSize(m)
 	}
 	return total
 }
@@ -45,7 +45,7 @@ func (a *Agent) compactHistory(ctx context.Context, userQuery string, hist []llm
 	// which is what makes a long run start re-reading files it already read.
 	keep := a.opts.HistoryPruneKeepRecent
 	if keep <= 0 {
-		keep = defaultHistoryPruneKeepRecent
+		keep = agenthistory.DefaultHistoryPruneKeepRecent
 	}
 	older, tail := splitHistoryForCompaction(hist, a.compactionTailBudget(), keep)
 	if len(older) == 0 {
@@ -400,7 +400,7 @@ func splitHistoryForCompaction(msgs []llm.Message, tailBudget, minToolAtoms int)
 	if len(msgs) == 0 {
 		return nil, nil
 	}
-	atoms := history.BuildHistoryAtoms(msgs)
+	atoms := agenthistory.BuildHistoryAtoms(msgs)
 	if len(atoms) <= 1 {
 		return msgs, nil
 	}
@@ -408,8 +408,8 @@ func splitHistoryForCompaction(msgs []llm.Message, tailBudget, minToolAtoms int)
 	sizes := make([]int, len(atoms))
 	total := 0
 	for i, at := range atoms {
-		for _, m := range history.AtomMessages(at) {
-			sizes[i] += estimateMessageSize(m)
+		for _, m := range agenthistory.AtomMessages(at) {
+			sizes[i] += agenthistory.EstimateMessageSize(m)
 		}
 		total += sizes[i]
 	}
@@ -429,7 +429,7 @@ func splitHistoryForCompaction(msgs []llm.Message, tailBudget, minToolAtoms int)
 		}
 		start = i
 		used += sizes[i]
-		if history.AtomHasToolRole(atoms[i]) {
+		if agenthistory.AtomHasToolRole(atoms[i]) {
 			toolAtoms++
 		}
 	}
@@ -443,10 +443,10 @@ func splitHistoryForCompaction(msgs []llm.Message, tailBudget, minToolAtoms int)
 	}
 
 	for i := 0; i < start; i++ {
-		older = append(older, history.AtomMessages(atoms[i])...)
+		older = append(older, agenthistory.AtomMessages(atoms[i])...)
 	}
 	for i := start; i < len(atoms); i++ {
-		tail = append(tail, history.AtomMessages(atoms[i])...)
+		tail = append(tail, agenthistory.AtomMessages(atoms[i])...)
 	}
 	return older, tail
 }

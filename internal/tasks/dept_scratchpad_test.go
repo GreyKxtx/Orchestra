@@ -39,10 +39,10 @@ func TestAppendDeptScratchpadDone_CreatesAndAppends(t *testing.T) {
 	root := t.TempDir()
 	rel := ".orchestra/depts/frontend@web.md"
 
-	if err := appendDeptScratchpadDone(root, rel, "wo1: worker done path=a.go"); err != nil {
+	if err := appendDeptScratchpadEntry(root, rel, "wo1: worker done path=a.go", true); err != nil {
 		t.Fatalf("append (create): %v", err)
 	}
-	if err := appendDeptScratchpadDone(root, rel, "wo2: worker done path=b.go"); err != nil {
+	if err := appendDeptScratchpadEntry(root, rel, "wo2: worker done path=b.go", true); err != nil {
 		t.Fatalf("append (existing): %v", err)
 	}
 

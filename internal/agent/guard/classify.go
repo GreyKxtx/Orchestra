@@ -1,7 +1,6 @@
 package guard
 
 import (
-	"errors"
 	"strings"
 
 	"github.com/orchestra/orchestra/protocol"
@@ -73,12 +72,6 @@ func Classify(err error, hint ErrorKind) ErrorKind {
 	return ErrorKindNone
 }
 
-// ClassifyHint is a zero-allocation helper when the caller already knows the kind
-// and only wants ROADMAP naming / logging consistency.
-func ClassifyHint(hint ErrorKind) ErrorKind {
-	return Classify(nil, hint)
-}
-
 // RecordMeta carries optional context for CircuitBreaker.Record / OnClassified.
 type RecordMeta struct {
 	ToolName string
@@ -127,16 +120,4 @@ func (cb *CircuitBreaker) Record(kind ErrorKind, meta RecordMeta) *protocol.Erro
 	default:
 		return nil
 	}
-}
-
-// ErrStringCompact returns a short error string for logging (nil-safe).
-func ErrStringCompact(err error) string {
-	if err == nil {
-		return ""
-	}
-	var pe *protocol.Error
-	if errors.As(err, &pe) && pe != nil {
-		return string(pe.Code) + ": " + pe.Message
-	}
-	return err.Error()
 }

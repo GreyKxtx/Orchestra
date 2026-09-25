@@ -9,6 +9,9 @@ import (
 	"strings"
 	"time"
 
+	agentformat "github.com/orchestra/orchestra/internal/agent/format"
+	agenthistory "github.com/orchestra/orchestra/internal/agent/history"
+
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/protocol"
@@ -106,7 +109,7 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 	}
 	// Repairs histories saved before hints were deferred past a batch's
 	// replies (see deferNonToolMessages); a no-op on a well-formed history.
-	messages = append(messages, orderToolReplies(history)...)
+	messages = append(messages, agenthistory.OrderToolReplies(history)...)
 
 	// Debug: log history length before truncation
 	if a.opts.Debug {
@@ -124,7 +127,7 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 			budget = a.opts.MaxPromptBytes / 2
 		}
 		beforeTruncate := len(messages)
-		messages = truncateMessages(messages, budget)
+		messages = agenthistory.TruncateMessages(messages, budget)
 		if a.opts.Debug && len(messages) != beforeTruncate {
 			a.logf("agent.nextStep messages truncated: %d -> %d (budget=%d)", beforeTruncate, len(messages), budget)
 		}
@@ -164,7 +167,7 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 				roleStr = fmt.Sprintf("%s(tool_calls=%d)", roleStr, len(m.ToolCalls))
 			}
 			if m.Role == llm.RoleTool && m.ToolCallID != "" {
-				roleStr = fmt.Sprintf("%s(id=%s)", roleStr, truncateID(m.ToolCallID, 12))
+				roleStr = fmt.Sprintf("%s(id=%s)", roleStr, agentformat.TruncateID(m.ToolCallID, 12))
 			}
 			roles = append(roles, roleStr)
 		}
@@ -268,16 +271,16 @@ func (a *Agent) nextStep(ctx context.Context, userQuery string, history []llm.Me
 			// Add error feedback to messages for retry
 			errorMsg := llm.Message{
 				Role:    llm.RoleUser,
-				Content: stopReasonHint(resp) + formatValidatorErrorCompact(lastInvalid.Message),
+				Content: stopReasonHint(resp) + agentformat.ValidatorErrorCompact(lastInvalid.Message),
 			}
 			messages = append(messages, errorMsg)
 			// Truncate again if needed
 			if a.opts.MaxPromptBytes > 0 {
-				messages = truncateMessages(messages, a.opts.MaxPromptBytes)
+				messages = agenthistory.TruncateMessages(messages, a.opts.MaxPromptBytes)
 			}
 			if a.opts.OnEvent != nil {
 				msg := "schema invalid: " + lastInvalid.Message
-				msg = truncate(msg, 200)
+				msg = agentformat.Truncate(msg, 200)
 				a.opts.OnEvent(AgentEvent{Step: stepNum, Stream: llm.StreamEvent{
 					Kind:    llm.StreamEventRecoverableError,
 					Content: msg,
@@ -351,7 +354,7 @@ func (a *Agent) streamStep(ctx context.Context, req llm.CompleteRequest, s llm.S
 			}
 			a.opts.OnEvent(AgentEvent{Step: step, Stream: llm.StreamEvent{
 				Kind:    llm.StreamEventRecoverableError,
-				Content: truncate(fmt.Sprintf("%s, retry %d/%d: %v", note, attempt, maxStreamAttempts-1, err), 200),
+				Content: agentformat.Truncate(fmt.Sprintf("%s, retry %d/%d: %v", note, attempt, maxStreamAttempts-1, err), 200),
 			}})
 		}
 		select {
@@ -487,7 +490,7 @@ func (a *Agent) bytesPerToken() int {
 func messagesBytes(msgs []llm.Message) int {
 	total := 0
 	for _, m := range msgs {
-		total += estimateMessageSize(m)
+		total += agenthistory.EstimateMessageSize(m)
 	}
 	return total
 }

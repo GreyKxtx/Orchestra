@@ -21,7 +21,7 @@ import (
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/applier"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol"
@@ -972,7 +972,7 @@ func refreshPendingWriteHashes(workspaceRoot string, pendingOps []ops.AnyOp) {
 			continue
 		}
 		wa.Conditions.MustNotExist = false
-		wa.Conditions.FileHash = cache.ComputeSHA256(b)
+		wa.Conditions.FileHash = fsutil.ComputeSHA256(b)
 	}
 }
 

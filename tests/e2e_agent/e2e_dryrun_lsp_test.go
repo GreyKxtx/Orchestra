@@ -12,7 +12,7 @@ import (
 	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol/schema"
 )
 
@@ -28,7 +28,7 @@ func newDryRunLSPFixLLM(initialHash string) *dryRunLSPFixLLM {
 	badContent := "package main\n\nfunc Foo() {}\n\nvar _ = badSymbol\n"
 	return &dryRunLSPFixLLM{
 		initialHash: initialHash,
-		badHash:     cache.ComputeSHA256([]byte(badContent)),
+		badHash:     fsutil.ComputeSHA256([]byte(badContent)),
 	}
 }
 
@@ -112,7 +112,7 @@ func TestAgent_E2E_DryRun_LSPErrorFixApply(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(original), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	initialHash := cache.ComputeSHA256([]byte(original))
+	initialHash := fsutil.ComputeSHA256([]byte(original))
 
 	v, err := schema.NewValidator()
 	if err != nil {

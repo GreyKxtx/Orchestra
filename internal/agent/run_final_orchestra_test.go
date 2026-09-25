@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orchestra/orchestra/internal/agent/guard"
+
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/patches"
@@ -43,7 +45,7 @@ func TestHandleFinalStep_OrchestraBlocksProductionPatches(t *testing.T) {
 		},
 	}
 	history := []llm.Message{}
-	cb := NewCircuitBreaker(2, 6, 6, 3)
+	cb := guard.NewCircuitBreaker(2, 6, 6, 3)
 	emit := func(string) {}
 
 	out, err := ag.handleFinalStep(context.Background(), cb, &history, step, nil, 1, "", emit)

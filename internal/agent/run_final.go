@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	agentformat "github.com/orchestra/orchestra/internal/agent/format"
+	"github.com/orchestra/orchestra/internal/agent/guard"
+
 	"github.com/orchestra/orchestra/internal/plan"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
@@ -65,7 +68,7 @@ type finalStepOutcome struct {
 // Tools always run through staging during the turn; Apply=true writes to disk here.
 func (a *Agent) handleFinalStep(
 	ctx context.Context,
-	cb *CircuitBreaker,
+	cb *guard.CircuitBreaker,
 	history *[]llm.Message,
 	step *Step,
 	llmResp *llm.CompleteResponse,
@@ -76,7 +79,7 @@ func (a *Agent) handleFinalStep(
 	if step.Final == nil {
 		*history = append(*history, llm.Message{
 			Role:    llm.RoleUser,
-			Content: formatValidatorError("Invalid JSON format: final is required", raw),
+			Content: agentformat.ValidatorError("Invalid JSON format: final is required", raw),
 		})
 		emitStepDone("invalid")
 		return finalStepOutcome{Retry: true}, nil
@@ -150,7 +153,7 @@ func (a *Agent) handleFinalStep(
 			a.logf("staged-apply status=error duration_ms=%d err=%v", resolveMS, err)
 			*history = append(*history, llm.Message{
 				Role:    llm.RoleUser,
-				Content: formatResolveErrorCompact(err),
+				Content: agentformat.ResolveErrorCompact(err),
 			})
 			if cbErr := cb.RecordResolveFailure(err); cbErr != nil {
 				return finalStepOutcome{}, cbErr
@@ -215,7 +218,7 @@ func (a *Agent) handleFinalStep(
 			a.logf("staged-fsapply status=recoverable_error duration_ms=%d err=%v", applyMS, err)
 			*history = append(*history, llm.Message{
 				Role:    llm.RoleUser,
-				Content: formatApplyErrorCompact(err, pe.Code),
+				Content: agentformat.ApplyErrorCompact(err, pe.Code),
 			})
 			if cbErr := cb.RecordApplyRecoverable(err); cbErr != nil {
 				return finalStepOutcome{}, cbErr

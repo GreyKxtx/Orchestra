@@ -24,15 +24,6 @@ func TestPromptBudgetTokens(t *testing.T) {
 	}
 }
 
-func TestFitsContext(t *testing.T) {
-	if FitsContext(51200, 40000, 12054) {
-		t.Fatal("40000+12054+2048 > 51200 should not fit")
-	}
-	if !FitsContext(51200, 20000, 8192) {
-		t.Fatal("20000+8192+2048 ? 51200 should fit")
-	}
-}
-
 func TestParseContextOverflow(t *testing.T) {
 	cases := []struct {
 		name   string

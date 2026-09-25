@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	agenthistory "github.com/orchestra/orchestra/internal/agent/history"
+
 	"github.com/orchestra/orchestra/internal/lessons"
 	"github.com/orchestra/orchestra/internal/memory"
 	"github.com/orchestra/orchestra/internal/plan"
@@ -329,7 +331,7 @@ func (a *Agent) buildSystemPromptParts() systemPromptParts {
 	// Orchestra Lead is excluded regardless — its 14-tool schema is small and
 	// its prompt already enumerates the delegation surface.
 	if a.opts.Mode != ModeOrchestra && needsToolCatalog(a.opts.PromptFamily) {
-		p.catalog = formatToolsCatalog(a.buildToolDefs())
+		p.catalog = agenthistory.FormatToolsCatalog(a.buildToolDefs())
 	}
 	// 6: skills advertisement.
 	if a.opts.Mode != ModeOrchestra {
@@ -338,10 +340,6 @@ func (a *Agent) buildSystemPromptParts() systemPromptParts {
 	// 7: who this agent is in the agency and whom it can reach.
 	p.agents = a.agencyAdvertisement()
 	return p
-}
-
-func (a *Agent) buildSystemPrompt() string {
-	return a.assembleSystemPrompt(a.buildSystemPromptParts())
 }
 
 // turnSystemPrompt is buildSystemPrompt built once per Run: what each step

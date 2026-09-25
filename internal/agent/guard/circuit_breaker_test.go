@@ -130,10 +130,6 @@ func TestCircuitBreaker_ReadOnlyDoomLoop(t *testing.T) {
 	if !cb.IsReadOnlyBlocked("read", input) {
 		t.Fatal("expected block at readOnlyBlockRepeats")
 	}
-	cb.ResetReadOnlyCalls()
-	if cb.IsReadOnlyBlocked("read", input) {
-		t.Fatal("ResetReadOnlyCalls should clear counters")
-	}
 }
 
 func TestCircuitBreaker_ReadNotDeduped(t *testing.T) {

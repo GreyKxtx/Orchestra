@@ -153,37 +153,3 @@ func TestQuestion_AFlatQuestionIsNotAskedAsNothing(t *testing.T) {
 		t.Errorf("the refusal should name the argument the model got wrong:\n%s", client.toolResult)
 	}
 }
-
-// plan_enter is defined and offered to no mode. The only way to reach its
-// handler is a model inventing the name, and the stub must then not pretend a
-// switch happened — the build turn goes on in build mode.
-func TestPlanEnter_AnInventedCallDoesNotPretendTheModeChanged(t *testing.T) {
-	client := runOneToolCall(t, ModeBuild, nil, "plan_enter", `{}`)
-	if !strings.Contains(client.toolResult, "not_supported") {
-		t.Errorf("the stub's answer changed; a model must be able to tell nothing happened:\n%s", client.toolResult)
-	}
-	// Tool answers to the model are English; this one was the Russian exception.
-	for _, r := range client.toolResult {
-		if r >= 0x0400 && r <= 0x04FF {
-			t.Errorf("the stub answers the model in Russian:\n%s", client.toolResult)
-			break
-		}
-	}
-}
-
-// Pins that plan_enter stays unoffered. Its description reads "Switch to PLAN
-// mode", and its handler switches nothing: offering it would be the task_result
-// defect again — a tool put in the schema that the runtime then refuses.
-func TestPlanEnter_IsOfferedToNoMode(t *testing.T) {
-	caps := tools.Capabilities{Exec: true, Web: true, Browser: true}
-	for _, mode := range []string{"build", "plan", "explore", "ask", "debug", "architecture",
-		"general", "orchestra", "worker", "verifier", "product", "documentation"} {
-		for _, sub := range []bool{false, true} {
-			for _, d := range tools.ListToolsForMode(mode, caps, sub, true) {
-				if d.Function.Name == "plan_enter" {
-					t.Errorf("mode %q (subtasks=%v) offers plan_enter, whose handler only answers not_supported", mode, sub)
-				}
-			}
-		}
-	}
-}

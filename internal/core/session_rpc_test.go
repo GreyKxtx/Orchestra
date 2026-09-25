@@ -10,7 +10,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/trajectory"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -27,7 +27,7 @@ func TestInitialize_CurrentToolsVersionHandshake(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 	h := NewRPCHandler(c)
 
-	projectID, err := cache.ComputeProjectID(root)
+	projectID, err := fsutil.ComputeProjectID(root)
 	if err != nil {
 		t.Fatalf("ComputeProjectID: %v", err)
 	}

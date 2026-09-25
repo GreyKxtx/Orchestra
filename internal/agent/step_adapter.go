@@ -4,25 +4,13 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/agent/digest"
+
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/schema"
 )
-
-// NormalizeLLM converts an OpenAI-style completion into the Agent's internal Step.
-//
-// Supported inputs:
-// - OpenAI tool calls (message.tool_calls) -> StepToolCall (single or multi-call batch)
-// - Plain JSON (legacy): AgentStep {"type":"tool_call"|"final", ...}
-// - Plain JSON (recommended final): PatchSet {"patches":[...]}
-// - Plain text (no tool_calls, no JSON envelope): treated as final-with-no-patches.
-//
-// Multi-call responses always populate Step.Tools with every call. The agent
-// Run() loop chooses parallel vs serial execution via allParallelSafeCalls.
-func NormalizeLLM(v *schema.Validator, resp *llm.CompleteResponse) (*Step, string, error) {
-	return NormalizeLLMWithDefs(v, resp, nil)
-}
 
 // NormalizeLLMWithDefs is the flag-aware variant used by the agent so it can
 // classify batched tool_calls. defs is passed through to nextStep for parallel
@@ -39,7 +27,7 @@ func NormalizeLLMWithDefs(v *schema.Validator, resp *llm.CompleteResponse, defs 
 		if len(msg.ToolCalls) > 1 {
 			tools := make([]ToolCall, 0, len(msg.ToolCalls))
 			for _, tc := range msg.ToolCalls {
-				name := normalizeToolName(tc.Function.Name)
+				name := digest.NormalizeToolName(tc.Function.Name)
 				if name == "" {
 					continue
 				}
@@ -56,7 +44,7 @@ func NormalizeLLMWithDefs(v *schema.Validator, resp *llm.CompleteResponse, defs 
 		}
 
 		tc := msg.ToolCalls[0]
-		name := normalizeToolName(tc.Function.Name)
+		name := digest.NormalizeToolName(tc.Function.Name)
 		if name == "" {
 			return nil, strings.TrimSpace(msg.Content), protocol.NewError(protocol.InvalidLLMOutput, "tool call name is empty", nil)
 		}

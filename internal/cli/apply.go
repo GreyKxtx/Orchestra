@@ -21,7 +21,6 @@ import (
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/applier"
-	"github.com/orchestra/orchestra/patch/cache"
 	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/ops"
 	"github.com/orchestra/orchestra/patch/patches"
@@ -37,7 +36,6 @@ var (
 	gitCommit           bool
 	planOnly            bool
 	fromPlan            string
-	noDaemon            bool
 	debugMode           bool
 	allowExec           bool
 	allowWeb            bool
@@ -71,7 +69,6 @@ func init() {
 	applyCmd.Flags().BoolVar(&gitCommit, "git-commit", false, "Create git commit after applying changes (requires --apply)")
 	applyCmd.Flags().BoolVar(&planOnly, "plan-only", false, "Show only plan of changes, without generating code")
 	applyCmd.Flags().StringVar(&fromPlan, "from-plan", "", "Apply from a saved plan.json without calling LLM")
-	applyCmd.Flags().BoolVar(&noDaemon, "no-daemon", false, "Deprecated (vNext agent uses tools). Kept for compatibility.")
 	applyCmd.Flags().BoolVar(&debugMode, "debug", false, "Show performance metrics and debug information")
 	applyCmd.Flags().BoolVar(&allowExec, "allow-exec", false, "Allow exec.run tool (DANGEROUS; still sandboxed with limits)")
 	applyCmd.Flags().BoolVar(&allowWeb, "allow-web", false, "Allow webfetch tool (fetches external URLs; private IPs blocked)")
@@ -246,11 +243,6 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			}
 			fmt.Fprintf(os.Stderr, "[orchestra] WARNING: git repo has uncommitted changes:\n%s\n\n", status)
 		}
-	}
-
-	// 2. vNext: the agent uses tools directly; no monolithic context.
-	if noDaemon {
-		fmt.Fprintln(os.Stderr, "[orchestra] NOTE: --no-daemon is deprecated in vNext")
 	}
 
 	// If exec.confirm=false in config, we can allow exec without interactive consent.
@@ -600,7 +592,7 @@ func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string
 
 	rpc := child.Client
 
-	projectID, err := cache.ComputeProjectID(cfg.ProjectRoot)
+	projectID, err := fsutil.ComputeProjectID(cfg.ProjectRoot)
 	if err != nil {
 		return nil, err
 	}

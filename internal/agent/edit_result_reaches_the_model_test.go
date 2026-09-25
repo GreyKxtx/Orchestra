@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 // The tools can describe a change perfectly and the model still never see it:
@@ -48,7 +48,7 @@ func TestEditResult_AWriteOfUnchangedContentDoesNotClaimItChangedSomething(t *te
 		editStep,
 		`{"type":"tool_call","tool":{"name":"write","input":{"path":"math.go",` +
 			`"content":` + jsonString(mathAfterEdit) + `,` +
-			`"file_hash":` + jsonString(cache.ComputeSHA256([]byte(mathAfterEdit))) + `}}}`,
+			`"file_hash":` + jsonString(fsutil.ComputeSHA256([]byte(mathAfterEdit))) + `}}}`,
 		`{"patches":[]}`,
 	})
 

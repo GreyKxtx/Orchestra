@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 func layerRoot(t *testing.T) (*Overlay, string) {
@@ -21,7 +21,7 @@ func layerRoot(t *testing.T) (*Overlay, string) {
 
 func stage(t *testing.T, o *Overlay, path, content string) {
 	t.Helper()
-	if err := o.stageFile(nil, path, content, cache.ComputeSHA256([]byte(content))); err != nil {
+	if err := o.stageFile(nil, path, content, fsutil.ComputeSHA256([]byte(content))); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -59,7 +59,7 @@ func TestLayer_ReadsThroughAndCommits(t *testing.T) {
 	}
 	ops := turn.StagedOps()
 	for _, op := range ops {
-		if op.Path == "a.go" && op.WriteAtomic.Conditions.FileHash != cache.ComputeSHA256([]byte("disk\n")) {
+		if op.Path == "a.go" && op.WriteAtomic.Conditions.FileHash != fsutil.ComputeSHA256([]byte("disk\n")) {
 			t.Error("the merged op still guards against the disk version it was made from")
 		}
 	}
@@ -211,7 +211,7 @@ func TestOverlay_SnapshotRestore(t *testing.T) {
 	stage(t, turn, "a.go", "edited\n")
 	stage(t, turn, "new.go", "fresh\n")
 	snap := turn.SnapshotStaged()
-	if len(snap) != 2 || snap[0].Path != "a.go" || snap[0].DiskHash != cache.ComputeSHA256([]byte("disk\n")) || !snap[1].IsNew {
+	if len(snap) != 2 || snap[0].Path != "a.go" || snap[0].DiskHash != fsutil.ComputeSHA256([]byte("disk\n")) || !snap[1].IsNew {
 		t.Fatalf("snapshot: %+v", snap)
 	}
 
@@ -221,7 +221,7 @@ func TestOverlay_SnapshotRestore(t *testing.T) {
 		t.Fatal("restored content")
 	}
 	for _, op := range fresh.StagedOps() {
-		if op.Path == "a.go" && op.WriteAtomic.Conditions.FileHash != cache.ComputeSHA256([]byte("disk\n")) {
+		if op.Path == "a.go" && op.WriteAtomic.Conditions.FileHash != fsutil.ComputeSHA256([]byte("disk\n")) {
 			t.Errorf("the restored op guards against the disk version the edit was made from: %+v", op.WriteAtomic.Conditions)
 		}
 	}

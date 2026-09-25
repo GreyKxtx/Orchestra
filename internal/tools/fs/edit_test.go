@@ -8,7 +8,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/tools"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 )
 
 func newEditRunner(t *testing.T) (*tools.Runner, string) {
@@ -67,7 +67,7 @@ func TestFSEdit_WithFileHash(t *testing.T) {
 	r, root := newEditRunner(t)
 	content := "package main\n\nconst x = 1\n"
 	writeTestFile(t, root, "b.go", content)
-	fileHash := cache.ComputeSHA256([]byte(content))
+	fileHash := fsutil.ComputeSHA256([]byte(content))
 
 	_, err := r.FSEdit(context.Background(), tools.FSEditRequest{
 		Path:     "b.go",
@@ -142,7 +142,7 @@ func TestFSEdit_NewHashIsCorrect(t *testing.T) {
 		t.Fatalf("FSEdit: %v", err)
 	}
 
-	expected := cache.ComputeSHA256([]byte("world\n"))
+	expected := fsutil.ComputeSHA256([]byte("world\n"))
 	if resp.FileHash != expected {
 		t.Errorf("FileHash after edit: got %s, want %s", resp.FileHash, expected)
 	}

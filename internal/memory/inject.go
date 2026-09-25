@@ -8,11 +8,6 @@ import (
 	"strings"
 )
 
-func (s *Store) FormatInject(maxBytes int) string {
-	block, _, _ := s.FormatInjectReport(maxBytes)
-	return block
-}
-
 // FormatInjectReport is FormatInject plus a compact per-layer byte
 // breakdown, e.g. "orchestra=512B repo=204B global=0B total=716B/2048B" —
 // what /memory refresh in the TUI and llm_log.jsonl's memory.inject event
@@ -255,11 +250,6 @@ func (s *Store) sliceRepoMemory(maxBytes int, includeOtherFiles bool) string {
 		}
 	}
 	return strings.Join(parts, "\n\n---\n\n")
-}
-
-func (s *Store) LazyOrchestra(dir string) string {
-	content, _ := s.LazyOrchestraFile(dir)
-	return content
 }
 
 // LazyOrchestraFile is LazyOrchestra plus the filename that actually

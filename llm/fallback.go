@@ -215,21 +215,3 @@ func providerLabel(cfg LLMConfig) string {
 
 // clientUnwrapper is implemented by the Client decorators (router, fallback).
 type clientUnwrapper interface{ Unwrap() Client }
-
-// AsOpenAIClient finds the concrete OpenAI-compatible client inside any stack
-// of decorators. Code outside this package asks for a capability instead
-// (LoggerOf, ContextTokensOf, DiscoverLimits): a concrete type is a no-op on
-// every other provider.
-func AsOpenAIClient(c Client) (*OpenAIClient, bool) {
-	for i := 0; i < 8 && c != nil; i++ {
-		if oc, ok := c.(*OpenAIClient); ok {
-			return oc, true
-		}
-		u, ok := c.(clientUnwrapper)
-		if !ok {
-			return nil, false
-		}
-		c = u.Unwrap()
-	}
-	return nil, false
-}

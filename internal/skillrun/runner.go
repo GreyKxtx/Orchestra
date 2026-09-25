@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	agenthistory "github.com/orchestra/orchestra/internal/agent/history"
+
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/config"
@@ -161,7 +163,7 @@ func skillReport(name, task string, hist []llm.Message, res *agent.Result, diges
 	if closing == "" {
 		closing = "completed; see the files touched above"
 	}
-	return agent.FormatSubagentResult("skill:"+name, task, hist, closing, digestBudget)
+	return agenthistory.FormatSubagentResult("skill:"+name, task, hist, closing, digestBudget)
 }
 
 // childClosingText is the child's last assistant message as prose. A final

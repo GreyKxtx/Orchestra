@@ -49,8 +49,6 @@ const (
 	// Runtime tools are built by the agent for the turn (skill_invoke carries
 	// the skill names; the agency tools exist only when the agency is on).
 	Runtime
-	// Legacy is answered by a stub and offered nowhere.
-	Legacy
 )
 
 // Spec is one built-in tool.
@@ -135,7 +133,6 @@ var table = []Spec{
 	{Name: "contract_freeze", Offer: LeadOnly, Lead: true, InProcess: true},
 	{Name: "question", Lead: true, InProcess: true},
 	{Name: "plan_exit", InProcess: true},
-	{Name: "plan_enter", Offer: Legacy, InProcess: true},
 
 	// Read-only git.
 	{Name: "git.status", Parallel: true},

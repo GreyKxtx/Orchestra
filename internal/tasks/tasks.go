@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	agenthistory "github.com/orchestra/orchestra/internal/agent/history"
+
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/app"
 	"github.com/orchestra/orchestra/internal/contract"
@@ -1008,7 +1010,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		// Attach what the child did manage to do. Without it the parent sees
 		// only an error string and redoes the whole task from nothing —
 		// including the reads the child already paid for.
-		if progress := agent.FormatSubagentProgress(subagentType, req.Goal, hist, r.child.ToolDigestBytes); progress != "" {
+		if progress := agenthistory.FormatSubagentProgress(subagentType, req.Goal, hist, r.child.ToolDigestBytes); progress != "" {
 			errMsg = errMsg + "\n\n" + progress
 		}
 		out := &agent.SubtaskResult{TaskID: taskID, Status: status, Error: errMsg}
@@ -1038,7 +1040,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	}
 
 	if subagentType == "" || subagentType == "explore" {
-		taskResult = agent.FormatSubagentResult(subagentType, req.Goal, hist, taskResult, r.child.ToolDigestBytes)
+		taskResult = agenthistory.FormatSubagentResult(subagentType, req.Goal, hist, taskResult, r.child.ToolDigestBytes)
 	}
 	// Question Barrier (spec §4.3): relay open_questions[] to the user via
 	// the runtime, append answers to decisions.md, attach them to the result.

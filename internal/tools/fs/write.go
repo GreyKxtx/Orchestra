@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/orchestra/orchestra/patch/applier"
-	"github.com/orchestra/orchestra/patch/cache"
+	"github.com/orchestra/orchestra/patch/fsutil"
 	"github.com/orchestra/orchestra/patch/patches"
 	"github.com/orchestra/orchestra/patch/resolver"
 	"github.com/orchestra/orchestra/protocol"
@@ -77,7 +77,7 @@ func (c *Client) Write(ctx context.Context, req FSWriteRequest) (*FSWriteRespons
 			}
 		}
 
-		contentHash := cache.ComputeSHA256([]byte(req.Content))
+		contentHash := fsutil.ComputeSHA256([]byte(req.Content))
 		if err := c.Overlay.stageFile(c, relSlash, req.Content, contentHash); err != nil {
 			return nil, err
 		}
@@ -137,7 +137,7 @@ func (c *Client) Write(ctx context.Context, req FSWriteRequest) (*FSWriteRespons
 		return nil, err
 	}
 
-	contentHash := cache.ComputeSHA256([]byte(req.Content))
+	contentHash := fsutil.ComputeSHA256([]byte(req.Content))
 
 	var diags []ToolDiagnostic
 	pending := false
