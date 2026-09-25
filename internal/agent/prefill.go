@@ -45,10 +45,14 @@ func (a *Agent) mergeResponsePrefill(resp *llm.CompleteResponse) {
 }
 
 // maxStepsReminder is the step-limit warning in the words that fit this run:
-// a child ends with task_result, not a PatchSet.
+// a child ends with task_result, and a mode that writes nothing ends with its
+// answer — neither with the PatchSet the build reminder asks for (LLM-16).
 func (a *Agent) maxStepsReminder() string {
 	if a.opts.IsChild && a.offersTool("task_result") {
 		return "Few steps remain before the limit. Wrap up now: call task_result with what you have done and what is left."
+	}
+	if a.modeSpec().ReadOnly() {
+		return "Few steps remain before the limit. Wrap up now: answer with what you have found, and say what is left open."
 	}
 	return promptpkg.MaxStepsReminder
 }
