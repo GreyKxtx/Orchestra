@@ -513,16 +513,20 @@ func (p *Provider) explorePackage(ctx context.Context, pkgPath string) (string, 
 	return sb.String(), nil
 }
 
-// Callers returns all nodes that have a "calls" or "instantiates" edge whose
-// target_fqn equals the given fqn.
-func (p *Provider) Callers(ctx context.Context, fqn string) ([]Node, error) {
-	rows, err := p.store.db.QueryContext(ctx, `
+// callersQuery takes the FQN twice.
+const callersQuery = `
         SELECT n.id, n.file_id, n.fqn, n.short_name, n.kind, n.line_start, n.line_end, n.complexity
         FROM edges e
 		JOIN nodes n ON e.source_id = n.id
-		LEFT JOIN nodes t ON e.target_id = t.id
-        WHERE (t.fqn = ? OR e.target_fqn = ?)
-		  AND e.relation IN ('calls','instantiates')`, fqn, fqn)
+        WHERE (e.target_id = (SELECT id FROM nodes WHERE fqn = ? LIMIT 1) OR e.target_fqn = ?)
+		  AND e.relation IN ('calls','instantiates')`
+
+// Callers returns all nodes that have a "calls" or "instantiates" edge whose
+// target_fqn equals the given fqn.
+func (p *Provider) Callers(ctx context.Context, fqn string) ([]Node, error) {
+	// By id once resolved, by FQN before that: two index lookups on edges,
+	// where the join on the target's fqn scanned them all (DATA-6).
+	rows, err := p.store.db.QueryContext(ctx, callersQuery, fqn, fqn)
 	if err != nil {
 		return nil, err
 	}

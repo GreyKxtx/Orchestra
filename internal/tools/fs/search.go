@@ -21,8 +21,6 @@ func (c *Client) SearchText(ctx context.Context, req SearchTextRequest) (*Search
 	if c == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "client is nil", nil)
 	}
-	_ = ctx
-
 	query := strings.TrimSpace(req.Query)
 	if query == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "query cannot be empty", nil)
@@ -64,7 +62,7 @@ func (c *Client) SearchText(ctx context.Context, req SearchTextRequest) (*Search
 		// Every scope exists only in the overlay: nothing on disk to search,
 		// and rg with no path would search the whole project.
 		if stagedOnly == 0 || len(scopePaths) > 0 {
-			m, err := search.SearchWithRipgrep(c.Root, query, exclude, opts, scopePaths)
+			m, err := search.SearchWithRipgrepContext(ctx, c.Root, query, exclude, opts, scopePaths)
 			if err != nil {
 				return nil, err
 			}
@@ -122,19 +120,13 @@ func (c *Client) SearchText(ctx context.Context, req SearchTextRequest) (*Search
 			rel = m.FilePath
 		}
 		rel = filepath.ToSlash(rel)
-		sm := SearchTextMatch{
+		out = append(out, SearchTextMatch{
 			Path:          rel,
 			Line:          m.Line,
 			LineText:      m.LineText,
 			ContextBefore: m.ContextBefore,
 			ContextAfter:  m.ContextAfter,
-		}
-		if strings.HasSuffix(rel, ".go") && c.Hooks.SymbolFQNAtLine != nil {
-			if fqn := c.Hooks.SymbolFQNAtLine(ctx, rel, m.Line); fqn != "" {
-				sm.SymbolFQN = fqn
-			}
-		}
-		out = append(out, sm)
+		})
 	}
 
 	maxOut := req.MaxMatches
@@ -165,6 +157,20 @@ func (c *Client) SearchText(ctx context.Context, req SearchTextRequest) (*Search
 	})
 	if len(out) > maxOut {
 		out = out[:maxOut]
+	}
+
+	// The enclosing symbol is a graph lookup per match; it is done for the
+	// matches that are returned, not for every match the tree had (DATA-6:
+	// a common identifier enriched thousands of lines to return 200).
+	if c.Hooks.SymbolFQNAtLine != nil {
+		for i := range out {
+			if !strings.HasSuffix(out[i].Path, ".go") {
+				continue
+			}
+			if fqn := c.Hooks.SymbolFQNAtLine(ctx, out[i].Path, out[i].Line); fqn != "" {
+				out[i].SymbolFQN = fqn
+			}
+		}
 	}
 
 	return &SearchTextResponse{Matches: out}, nil

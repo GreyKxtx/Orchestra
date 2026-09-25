@@ -3,6 +3,7 @@ package search
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,6 +61,13 @@ type rawEntry struct {
 // scopePaths are absolute paths to scope the search to (files or dirs).
 // Pass nil to search the entire root.
 func SearchWithRipgrep(root, query string, excludeDirs []string, opts Options, scopePaths []string) ([]Match, error) {
+	return SearchWithRipgrepContext(context.Background(), root, query, excludeDirs, opts, scopePaths)
+}
+
+// SearchWithRipgrepContext is SearchWithRipgrep under ctx: rg is killed
+// when the turn that asked is cancelled, instead of running to the end of
+// the tree for an answer nobody reads (DATA-6).
+func SearchWithRipgrepContext(ctx context.Context, root, query string, excludeDirs []string, opts Options, scopePaths []string) ([]Match, error) {
 	if query == "" {
 		return nil, fmt.Errorf("query cannot be empty")
 	}
@@ -88,13 +96,16 @@ func SearchWithRipgrep(root, query string, excludeDirs []string, opts Options, s
 		args = append(args, root)
 	}
 
-	cmd := exec.Command(rgBin, args...)
+	cmd := exec.CommandContext(ctx, rgBin, args...)
 	cmd.Dir = root
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 			return nil, nil // exit 1 = no matches found, not an error
