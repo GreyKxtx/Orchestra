@@ -144,13 +144,13 @@
 | ARCH-1 (CLI ↔ core) | Прямой режим `orchestra apply` запускает `core.Core` в своём процессе: `Options.Config` и `ExecInDryRun`, а также in-process поля `AllowWeb`, `OnAgentEvent`, `UserImages` и `BindInteractive`. Из CLI ушло около 390 строк своей сборки агента. CLI терял `exec.allow`/`exec.deny`, LLM-верификатор и `BytesPerContextToken`; теперь их даёт общая сборка. Инструменты custom-агента берутся с согласием хода | `e2870bc` |
 | ARCH-1, ARCH-10, ARCH-8 (клиенты) | `internal/app`: `Settings`, `TurnOptions`, `ChildOptions`, `ClientFor`. Все дети (задачи, верификатор, навыки, стадии workflow и pipeline) собираются одной функцией. Опции хода в core побайтно совпадают со старыми. Исправлены дефекты: стадии pipeline не были детьми и теряли `task_result`, из-за чего цикл Investigator → Critic не работал; правила `permissions` не действовали на подагентов; дети навыков шли без бюджета и с 25-секундным таймаутом шага; переопределение модели навыка или custom-агента теряло fallback и router | `de18880` |
 
-**Фаза 4 выполнена частично 2026-09-25**, та же ветка. Четыре из пяти сценариев приёмки закрыты тестами:
+**Фаза 4 выполнена 2026-09-25** (PR #8 и #9), та же ветка. Все пять сценариев приёмки закрыты тестами:
 - правки упавшего воркера не попадают в финал: `TestLayer_FailedWorkerEditsDoNotReachTheTurn`;
 - два воркера на одном файле — конфликт при merge, а не порча: `TestLayer_TwoTasksOnOneFileConflict`, `TestLayer_ConcurrentChangeIsAConflict`;
 - смена epoch отменяет воркеров и отбрасывает их слои: `TestEpochChange_CancelsStaleWorkersAndDropsTheirLayers`. Владелец меняет `NFR.md`, коммит его слоя двигает epoch, воркер на старом хеше отменяется, его правка не доходит до хода. На старом коде хук срабатывал только у корня при `apply`;
 - модель не может выдать себе waiver: `TestWaiver_ModelCannotGrantItself`. Lead пытается перейти в delivery с непогашенным `doc_debt` тремя путями: `write` в `state.md`, `update_working_state` и `final.patches`. Все три отклонены, файл на диске не изменился.
 
-Не закрыт сценарий `kill -9` ядра → resume (шаг 4.6: журнал событий, resume после краха).
+- `kill -9` ядра посреди хода → resume с того же состояния графа: `TestResume_AfterACrashTheTurnGoesOnFromTheSameGraph`. Корень запустил задачи A и B и ждёт их; A правит `a.txt` и завершается, B работает. В этот момент ядро «умирает»: его checkpoint возвращается на диск таким, каким был в момент краха. Новое ядро продолжает ход (`resume: last`): staged-правка A возвращается, A не запускается повторно, B стартует заново под тем же id, корень получает оба результата, и ход заканчивается с правками обоих.
 
 Каждое исправление проверено мутацией: без него тест падает.
 
@@ -162,9 +162,10 @@
 | ORC-7 | Ключи `depends_on` — в пространстве имён спавнера; зависимость на предка и на нестартовавшую задачу другой ветки отклоняется при спавне | `e9ab725` |
 | ORC-9 | Барьер до relay; блокирующий вопрос задерживает пачку WorkOrder'ов до ревизии Lead'ом; один раунд к пользователю за раз, повторный вопрос не задаётся; бюджет на фазу; без `QuestionAsker` результат говорит, что ответа не было | `e203076` |
 | SEC-8 | Spotlighting: результаты web, `gh.*`, браузера и MCP — в `<untrusted source="…">`. Taint хода: после недоверенного текста `bash`, `git.push`, `gh.pr.create` требуют «да» пользователя на вызов, `memory_write` не пишет pin/feedback/global. Taint передаётся через результаты детей, `send_message`, `agent_post` и `<upstream_results>` | `58aba45` |
+| §3.4 (resume) | `internal/checkpoint`: атомарный снимок хода `agent.run` после каждого шага агента верхнего уровня и каждого изменения графа задач — история, staged-правки с версией диска, граф (`tasks.Records`). `agent.run {resume}` / `apply --resume`: staged-правки и завершённые задачи возвращаются, прерванные стартуют под своими id, агент продолжает с последнего шага. Согласие — только из нового запроса. Protocol v23. Вместо SQLite-журнала с проекциями — снимок: resume он даёт, а проекции board и дерева по-прежнему строятся из `runs/<id>.events.jsonl` | `5eba668` |
 
 **Осталось по плану (фазы 4–8):**
-- 4.2: `TaskRunner` как адаптер над `Graph`, `StallDetector`; 4.5: типизированная шина артефактов; 4.6: журнал событий (SQLite), resume после краха, OTel-экспорт;
+- 4.2: `TaskRunner` как адаптер над `Graph`, `StallDetector`; 4.5: типизированная шина артефактов; 4.6: OTel-экспорт и resume для `session.message` (сессия сохраняет историю после шагов, но не граф задач и staging);
 - ORC-8 (воркер с goal в прозе без проверок scope; `bash` мимо слоёв), ORC-12 (остаток: `acceptance_checks` и `tsc` в dry-run);
 - LLM-6 и LLM-7 (thinking и мультимодальность Anthropic), LLM-8…LLM-14, LLM-16;
 - DATA-3, DATA-5…DATA-11, ARCH-4…ARCH-7, ARCH-11, ARCH-12 (кроме gofmt);

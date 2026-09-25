@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — a run survives its core (2026-09)
+
+- **`agent.run` keeps a checkpoint and can be resumed** (ProtocolVersion 23). A turn used to live only in memory: a core killed mid-way took every finished task's result and every staged edit with it. Now `.orchestra/runs/<run_id>.checkpoint.json` is rewritten atomically after each step of the top-level agent and each change of its task graph. It holds the history, the turn's staged edits with the disk version each was made against, and the graph. `agent.run {resume: <run_id>|"last"}` — `orchestra apply --resume last` — puts it back: the staged edits return, finished tasks keep their results without running again, interrupted ones start again under the ids their spawner is waiting on, and the agent goes on from its last completed step with a `<resume_notice>` of what came back. A run keeps its own query, mode and `apply`; consent comes only from the resuming request, since a checkpoint is a file in the project. The result carries `run_id`; a failed `orchestra apply` prints the command that resumes it.
+
 ### Added — the agent can look at the page you are on (2026-09)
 
 - **`browser.*` act on the Browser view, not on a browser of their own** (ProtocolVersion 21). Until now those ten tools started `npx @playwright/mcp` — a second browser, its own profile, nothing signed in. A turn sent with `browser_panel: true` gets the panel instead: the page the person is actually looking at, with their session. The core reaches it through a server-initiated request (`browser/call`) on the connection that asked for the turn, which is the same rail `question/ask` and `permission/request` ride. Deliberately not an MCP server in the shell and not the devtools port straight from the core: either would let a model drive a logged-in browser with no window open to show what it was doing.

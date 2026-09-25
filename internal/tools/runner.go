@@ -73,7 +73,10 @@ type Runner struct {
 
 	lspManager     *lsp.Manager
 	lspAutoInstall string
-	lspConsent     permission.Requester
+	// lspConsent is set by each turn and read by LSP warmups still running
+	// from an earlier one: guarded by lspConsentMu.
+	lspConsentMu sync.Mutex
+	lspConsent   permission.Requester
 
 	browserClient    *browser.Client
 	allowBrowserEval bool
@@ -360,7 +363,9 @@ func (r *Runner) SetLSPInstallConsent(req permission.Requester) {
 	if r == nil {
 		return
 	}
+	r.lspConsentMu.Lock()
 	r.lspConsent = req
+	r.lspConsentMu.Unlock()
 	if r.lspManager != nil {
 		r.lspManager.SetInstallConsent(req)
 	}
@@ -383,7 +388,10 @@ func (r *Runner) WarmupLSP(ctx context.Context) {
 	// Prefer silent install after detect when policy is ask but no interactive
 	// consent yet — still no network without consent. With consent (TUI turn),
 	// one batch modal covers all missing servers.
-	installed, skipped, err := provision.EnsureDetected(ctx, r.workspaceRoot, policy, r.lspConsent)
+	r.lspConsentMu.Lock()
+	consent := r.lspConsent
+	r.lspConsentMu.Unlock()
+	installed, skipped, err := provision.EnsureDetected(ctx, r.workspaceRoot, policy, consent)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "orchestra: lsp warmup: %v\n", err)
 		return

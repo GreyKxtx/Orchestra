@@ -35,7 +35,9 @@ type agentLaunchSpec struct {
 	// RecordRun keeps a trajectory for a turn with no session: agent.run's
 	// log goes to .orchestra/runs/<turn_id>.events.jsonl.
 	RecordRun bool
-	Query     string // user turn text; used by mode=agent auto-router
+	// OnGraphChange follows the turn's task graph (the run's checkpoint).
+	OnGraphChange func()
+	Query         string // user turn text; used by mode=agent auto-router
 
 	Apply     bool
 	Backup    bool
@@ -181,7 +183,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	// Warmup is best-effort and must not block the agent loop on npm/go install.
 	if c.tools != nil {
 		c.tools.SetLSPInstallConsent(spec.PermissionRequester)
-		go c.tools.WarmupLSP(context.Background())
+		c.WarmupLSP(context.Background())
 	}
 
 	profileName, err := resolveProfileName(c.cfg, spec.Profile)
@@ -358,6 +360,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	// Question Barrier (spec §4.3) shares the interactive channel with the
 	// question tool; nil (core stdio mode) keeps the barrier off.
 	childCfg.QuestionAsker = spec.QuestionAsker
+	childCfg.OnGraphChange = spec.OnGraphChange
 	if spec.OnEvent != nil {
 		childCfg.NotifyAgentEvent = func(params map[string]any) {
 			if _, ok := params["task_id"]; ok {

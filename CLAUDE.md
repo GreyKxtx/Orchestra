@@ -52,6 +52,7 @@ orchestra apply --apply "..."                # write changes (creates .orchestra
 orchestra apply --via-core "..."             # run agent inside subprocess core
 orchestra apply --plan-only "..."            # plan only, no LLM-driven edits
 orchestra apply --from-plan plan.json        # replay a saved plan with no LLM call
+orchestra apply --resume last                # continue a run its core did not finish, from its checkpoint
 orchestra apply --apply --allow-exec "..."   # allow exec.run (off by default)
 orchestra apply --output-patch [path] "..."  # export unified .patch; do not write workspace
 orchestra apply --profile fast|precision "..." # adaptive execution presets
@@ -64,7 +65,7 @@ orchestra mcp list-tools                     # list tools from configured MCP se
 orchestra trust [--status|--revoke]          # trust this workspace's machine-level settings
 ```
 
-`.orchestra.yml` (created by `init`) configures `project_root`, `exclude_dirs`, `llm.*`, `agent.profile`, `apply.output` / `apply.patch_dir`, `exec.*`, etc. — see `internal/config/config.go` for the full schema. `.orchestra/` is the per-project artifact dir (gitignored): `plan.json`, `diff.txt`, `last_run.jsonl`, `last_result.json`, `llm_log.jsonl`, plus debug discovery files. TUI pipeline audit: `docs/architecture/tui-pipeline.md`.
+`.orchestra.yml` (created by `init`) configures `project_root`, `exclude_dirs`, `llm.*`, `agent.profile`, `apply.output` / `apply.patch_dir`, `exec.*`, etc. — see `internal/config/config.go` for the full schema. `.orchestra/` is the per-project artifact dir (gitignored): `plan.json`, `diff.txt`, `last_run.jsonl`, `last_result.json`, `llm_log.jsonl`, `runs/<run_id>.events.jsonl` and `runs/<run_id>.checkpoint.json` (what `agent.run resume` continues from: history, staged edits, task graph — `internal/checkpoint`), plus debug discovery files. TUI pipeline audit: `docs/architecture/tui-pipeline.md`.
 
 ## Architecture (the bits that need multiple files to understand)
 

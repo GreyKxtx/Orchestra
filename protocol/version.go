@@ -59,7 +59,11 @@ const (
 	//      rules, auth commands, a project endpoint that would receive the
 	//      user's key) take effect only once trusted. session.start refuses a
 	//      session_id that is not a plain name (InvalidParams).
-	ProtocolVersion = 22
+	// v23: agent.run takes resume (a run_id, or "last") and continues a run
+	//      its core did not finish from the run's checkpoint
+	//      (.orchestra/runs/<run_id>.checkpoint.json); the result carries
+	//      run_id.
+	ProtocolVersion = 23
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1

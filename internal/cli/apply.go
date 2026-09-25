@@ -12,6 +12,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/app"
+	"github.com/orchestra/orchestra/internal/checkpoint"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/core"
 	"github.com/orchestra/orchestra/internal/git"
@@ -53,6 +54,7 @@ var (
 	outputPatch         string // --output-patch; NoOptDefVal="AUTO"
 	applyProfile        string // --profile fast|precision
 	applyWorktree       string // --worktree name
+	applyResume         string // --resume run_id|last
 )
 
 var applyCmd = &cobra.Command{
@@ -88,6 +90,7 @@ func init() {
 	applyCmd.Flags().Lookup("output-patch").NoOptDefVal = "AUTO"
 	applyCmd.Flags().StringVar(&applyProfile, "profile", "", "Adaptive execution profile: fast|precision")
 	applyCmd.Flags().StringVar(&applyWorktree, "worktree", "", "Run in orchestra-managed git worktree (name from orchestra worktree list)")
+	applyCmd.Flags().StringVar(&applyResume, "resume", "", "Resume a run that did not finish (a crash, a kill) from its checkpoint: a run id, or \"last\". The run keeps its own query, mode and --apply; consent flags (--allow-exec, --allow-web) come from this command")
 	rootCmd.AddCommand(applyCmd)
 }
 
@@ -96,8 +99,8 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 	if len(args) > 0 {
 		query = strings.TrimSpace(args[0])
 	}
-	if strings.TrimSpace(fromPlan) == "" && query == "" {
-		return fmt.Errorf("missing query (or use --from-plan)")
+	if strings.TrimSpace(fromPlan) == "" && query == "" && strings.TrimSpace(applyResume) == "" {
+		return fmt.Errorf("missing query (or use --from-plan, or --resume)")
 	}
 
 	dryRun := planOnly || !applyFlag
@@ -464,8 +467,10 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 			QuestionAsker:     buildQuestionAsker(agentMode, len(cfg.Orchestra.RequiredGates()) > 0),
 			OnAgentEvent:      buildCLIRenderer(),
 			UserImages:        imageParts,
+			Resume:            strings.TrimSpace(applyResume),
 		})
 		if err != nil {
+			printResumeHint(cfg.ProjectRoot)
 			retErr = err
 			return retErr
 		}
@@ -627,6 +632,7 @@ func runApplyViaCore(cmd *cobra.Command, cfg *config.ProjectConfig, query string
 		ApplyOutput:       applyOutput,
 		PatchPath:         patchPath,
 		Profile:           profile,
+		Resume:            strings.TrimSpace(applyResume),
 	}, &out)
 	if err != nil {
 		if rpcErr, ok := err.(*jsonrpc.RPCError); ok && rpcErr.Data != nil {
@@ -948,4 +954,12 @@ func compactionClientFor(cfg *config.ProjectConfig, logger *llm.Logger) (llm.Cli
 		ctxTok = llm.ContextTokensFromConfig(pcfg)
 	}
 	return client, ctxTok
+}
+
+// printResumeHint tells the user how to go on with a run that ended in an
+// error: it keeps a checkpoint, and resuming continues from its last step.
+func printResumeHint(projectRoot string) {
+	if cp, err := checkpoint.Latest(projectRoot); err == nil {
+		fmt.Fprintf(os.Stderr, "The run can be resumed from its last step: orchestra apply --resume %s\n", cp.RunID)
+	}
 }

@@ -156,6 +156,7 @@ func (r *TaskRunner) setStatus(e *taskEntry, status string) {
 // "done" but whose result is not a success (verification_failed, blocked)
 // shows as failed: the board is where a Lead decides what to redo.
 func (r *TaskRunner) markFinished(e *taskEntry) {
+	defer r.graphChanged()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	e.finished = time.Now()
