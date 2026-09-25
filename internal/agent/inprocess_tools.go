@@ -161,6 +161,9 @@ func (a *Agent) handleTaskTool(ctx context.Context, name string, parentToolCallI
 		if result.Error != "" {
 			out["error"] = result.Error
 		}
+		if result.Tainted != "" {
+			out["tainted"] = result.Tainted
+		}
 		resp, _ := json.Marshal(out)
 		return resp, nil
 

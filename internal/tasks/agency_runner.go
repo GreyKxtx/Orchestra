@@ -289,14 +289,17 @@ const upstreamResultMaxBytes = 1500
 // <upstream_results> block for the child, or a result that ends e without
 // running it: a failed dependency means the dependent would build on
 // something that is not there.
-func (r *TaskRunner) awaitDeps(ctx context.Context, e *taskEntry) (string, *agent.SubtaskResult) {
+//
+// tainted names the first dependency whose result came from untrusted text:
+// its line is marked as such, and the task starts tainted (agent/taint.go).
+func (r *TaskRunner) awaitDeps(ctx context.Context, e *taskEntry) (upstream, tainted string, _ *agent.SubtaskResult) {
 	var b strings.Builder
 	b.WriteString("<upstream_results>\nTasks this one depends on have finished:\n")
 	for _, d := range e.deps {
 		select {
 		case <-d.done:
 		case <-ctx.Done():
-			return "", &agent.SubtaskResult{TaskID: e.id, Status: "timeout", Error: "cancelled while waiting for depends_on"}
+			return "", "", &agent.SubtaskResult{TaskID: e.id, Status: "timeout", Error: "cancelled while waiting for depends_on"}
 		}
 		r.mu.Lock()
 		res := d.result
@@ -319,7 +322,7 @@ func (r *TaskRunner) awaitDeps(ctx context.Context, e *taskEntry) (string, *agen
 				"blocked_reason": "dependency_unmet",
 				"dependency":     name,
 			})
-			return "", &agent.SubtaskResult{
+			return "", "", &agent.SubtaskResult{
 				TaskID: e.id,
 				Status: "error",
 				Result: string(blocked),
@@ -332,10 +335,18 @@ func (r *TaskRunner) awaitDeps(ctx context.Context, e *taskEntry) (string, *agen
 		} else {
 			text = clip(text, upstreamResultMaxBytes)
 		}
-		fmt.Fprintf(&b, "- %s (%s): %s\n", name, addr, strings.TrimSpace(text))
+		text = strings.TrimSpace(text)
+		if res.Tainted != "" {
+			source := name + " (read " + res.Tainted + ")"
+			if tainted == "" {
+				tainted = source
+			}
+			text = agent.Spotlight(source, text)
+		}
+		fmt.Fprintf(&b, "- %s (%s): %s\n", name, addr, text)
 	}
 	b.WriteString("</upstream_results>")
-	return b.String(), nil
+	return b.String(), tainted, nil
 }
 
 // acquireSlot takes one of the per-depth concurrency slots. Per depth, not
@@ -562,7 +573,7 @@ func (r *TaskRunner) sendMessage(ctx context.Context, from agentScope, req agent
 	if err != nil {
 		return nil, fmt.Errorf("send_message: %w", err)
 	}
-	reply := &agent.AgentMessageReply{To: to, TaskID: id, Status: res.Status, Reply: res.Result, Error: res.Error}
+	reply := &agent.AgentMessageReply{To: to, TaskID: id, Status: res.Status, Reply: res.Result, Error: res.Error, Tainted: res.Tainted}
 	if res.Status == "done" && r.child.Agency.Threads {
 		history = append(history, llmMessage{Role: "user", Content: message}, llmMessage{Role: "assistant", Content: res.Result})
 		var trimmed int
@@ -624,7 +635,7 @@ func (r *TaskRunner) post(from agentScope, req agent.AgentPostRequest) (*agent.A
 	if err := r.takeMessage(); err != nil {
 		return nil, err
 	}
-	m := agent.InboxMessage{From: from.address, To: to, Kind: kind, Message: text, Artifact: artifact, At: time.Now().UTC().Format(time.RFC3339)}
+	m := agent.InboxMessage{From: from.address, To: to, Kind: kind, Message: text, Artifact: artifact, At: time.Now().UTC().Format(time.RFC3339), Tainted: req.Tainted}
 	receipt := &agent.AgentPostReceipt{To: to, Delivered: "live"}
 	switch {
 	case to == config.AgencyRootName:

@@ -602,11 +602,11 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 			}
 		}()
 
-		upstream := ""
+		upstream, upstreamTaint := "", ""
 		if len(deps) > 0 {
 			r.setStatus(entry, "waiting_deps")
 			var res *agent.SubtaskResult
-			upstream, res = r.awaitDeps(taskCtx, entry)
+			upstream, upstreamTaint, res = r.awaitDeps(taskCtx, entry)
 			if res != nil {
 				r.mu.Lock()
 				entry.result = res
@@ -647,7 +647,7 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		defer release()
 		r.setStatus(entry, "running")
 
-		result := r.runChild(taskCtx, taskID, req, target, childScope, maxSteps, extra.history, upstream)
+		result := r.runChild(taskCtx, taskID, req, target, childScope, maxSteps, extra.history, upstream, upstreamTaint)
 
 		r.mu.Lock()
 		entry.result = result
@@ -779,7 +779,33 @@ func (r *TaskRunner) resolveChildLLM(req agent.SubtaskSpawnRequest, subagentType
 	return r.llmClient, pl, ml
 }
 
-func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.SubtaskSpawnRequest, target spawnTarget, scope agentScope, maxSteps int, history []llm.Message, upstream string) *agent.SubtaskResult {
+func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.SubtaskSpawnRequest, target spawnTarget, scope agentScope, maxSteps int, history []llm.Message, upstream, upstreamTaint string) (out *agent.SubtaskResult) {
+	// A child that read untrusted text hands its parent an untrusted result,
+	// however it ended (SEC-8): its error carries its progress too.
+	var taintMu sync.Mutex
+	tainted := ""
+	onTaint := func(source string) {
+		taintMu.Lock()
+		if tainted == "" {
+			tainted = source
+		}
+		taintMu.Unlock()
+	}
+	startTaint := func() string {
+		taintMu.Lock()
+		defer taintMu.Unlock()
+		return tainted
+	}
+	defer func() {
+		taintMu.Lock()
+		defer taintMu.Unlock()
+		if out != nil && tainted != "" {
+			out.Tainted = tainted
+		}
+	}()
+	// What the child is handed before its first step can be untrusted too:
+	// a tainted dependency's result, a tainted agent's note.
+	onTaint(upstreamTaint)
 	subagentType := target.role
 	childTools := r.childToolsForTarget(target, scope)
 	var workOrder *WorkOrder
@@ -818,6 +844,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		o.CustomTools = childTools
 		o.Mode = mode
 		o.Dept = scope.dept
+		o.OnTaint = onTaint
 		o.UsageTracker = r.child.UsageTracker
 		// Children run on their own tier model, which may be a different
 		// family from the parent's; ChildOptions takes the prompt family from
@@ -902,6 +929,12 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	// for the Lead.
 	if mode != agent.ModeWorker {
 		if notes := r.takeInbox(scope.address); len(notes) > 0 {
+			for _, n := range notes {
+				if n.Tainted != "" {
+					onTaint("a note from " + n.From + " (read " + n.Tainted + ")")
+					break
+				}
+			}
 			text, rest := agent.FitAgentMessages(notes, agencyInboxInjectMaxBytes)
 			childGoal = text + "\n\n" + childGoal
 			// What did not fit goes to the child's live inbox: it reads
@@ -927,6 +960,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		// (spec checklist 31, local L3/L1 drift protection).
 		opts.WorkerStrictResult = true
 	}
+	opts.Tainted = startTaint()
 	var hist []llm.Message
 	var res *agent.Result
 	var runErr error

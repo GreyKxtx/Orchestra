@@ -66,6 +66,15 @@ type Spec struct {
 	// InProcess tools are handled by the agent (session state, delegation,
 	// questions) rather than by tools.Runner.
 	InProcess bool
+	// Untrusted tools return third-party text — a web page, a PR, what the
+	// browser shows — that may carry instructions. The agent hands their
+	// results to the model marked as data, and the turn that read one is
+	// tainted (SEC-8).
+	Untrusted bool
+	// ActsForUser tools act with the user's authority beyond the staged
+	// workspace: they run commands or publish. In a tainted turn each call
+	// needs the user's yes, blanket consent or not (SEC-8).
+	ActsForUser bool
 }
 
 // Mutating reports whether the tool must run serially. Every built-in tool is
@@ -135,39 +144,39 @@ var table = []Spec{
 	{Name: "git.worktree.list", Parallel: true},
 
 	// Exec.
-	{Name: "bash", Group: GroupExec},
+	{Name: "bash", Group: GroupExec, ActsForUser: true},
 	{Name: "bash.output", Group: GroupExec},
 	{Name: "bash.kill", Group: GroupExec},
-	{Name: "gh.pr.list", Parallel: true, Group: GroupExec},
-	{Name: "gh.pr.view", Parallel: true, Group: GroupExec},
-	{Name: "gh.issue.list", Parallel: true, Group: GroupExec},
-	{Name: "gh.issue.view", Parallel: true, Group: GroupExec},
+	{Name: "gh.pr.list", Parallel: true, Group: GroupExec, Untrusted: true},
+	{Name: "gh.pr.view", Parallel: true, Group: GroupExec, Untrusted: true},
+	{Name: "gh.issue.list", Parallel: true, Group: GroupExec, Untrusted: true},
+	{Name: "gh.issue.view", Parallel: true, Group: GroupExec, Untrusted: true},
 
 	// History-mutating git and publishing.
 	{Name: "git.commit", Group: GroupRepoMutating},
 	{Name: "git.branch", Group: GroupRepoMutating},
 	{Name: "git.checkout", Group: GroupRepoMutating},
-	{Name: "git.push", Group: GroupRepoMutating},
+	{Name: "git.push", Group: GroupRepoMutating, ActsForUser: true},
 	{Name: "git.worktree.add", Group: GroupRepoMutating},
 	{Name: "git.worktree.remove", Group: GroupRepoMutating},
 	{Name: "git.worktree.prune", Group: GroupRepoMutating},
-	{Name: "gh.pr.create", Group: GroupRepoMutating},
+	{Name: "gh.pr.create", Group: GroupRepoMutating, ActsForUser: true},
 
 	// Web.
-	{Name: "webfetch", Parallel: true, Group: GroupWeb},
-	{Name: "websearch", Parallel: true, Group: GroupWeb},
+	{Name: "webfetch", Parallel: true, Group: GroupWeb, Untrusted: true},
+	{Name: "websearch", Parallel: true, Group: GroupWeb, Untrusted: true},
 
 	// Browser.
-	{Name: "browser.navigate", Group: GroupBrowser},
-	{Name: "browser.snapshot", Parallel: true, Group: GroupBrowser},
-	{Name: "browser.screenshot", Parallel: true, Group: GroupBrowser},
-	{Name: "browser.click", Group: GroupBrowser},
-	{Name: "browser.type", Group: GroupBrowser},
-	{Name: "browser.fill", Group: GroupBrowser},
-	{Name: "browser.select", Group: GroupBrowser},
-	{Name: "browser.eval", Group: GroupBrowser},
-	{Name: "browser.wait", Group: GroupBrowser},
-	{Name: "browser.close", Group: GroupBrowser},
+	{Name: "browser.navigate", Group: GroupBrowser, Untrusted: true},
+	{Name: "browser.snapshot", Parallel: true, Group: GroupBrowser, Untrusted: true},
+	{Name: "browser.screenshot", Parallel: true, Group: GroupBrowser, Untrusted: true},
+	{Name: "browser.click", Group: GroupBrowser, Untrusted: true},
+	{Name: "browser.type", Group: GroupBrowser, Untrusted: true},
+	{Name: "browser.fill", Group: GroupBrowser, Untrusted: true},
+	{Name: "browser.select", Group: GroupBrowser, Untrusted: true},
+	{Name: "browser.eval", Group: GroupBrowser, Untrusted: true},
+	{Name: "browser.wait", Group: GroupBrowser, Untrusted: true},
+	{Name: "browser.close", Group: GroupBrowser, Untrusted: true},
 
 	// Delegation.
 	{Name: "task", Group: GroupSubtasks, Lead: true, InProcess: true},
@@ -251,4 +260,22 @@ func IsInProcess(name string) bool {
 func IsLead(name string) bool {
 	s, ok := byName[name]
 	return ok && s.Lead
+}
+
+// ResultUntrusted reports whether a tool's result is third-party text: a
+// built-in marked Untrusted, or any MCP tool — its server is not ours, and
+// neither is what it returns.
+func ResultUntrusted(name string) bool {
+	if len(name) > len("mcp:") && name[:len("mcp:")] == "mcp:" {
+		return true
+	}
+	s, ok := byName[name]
+	return ok && s.Untrusted
+}
+
+// ActsForUser reports whether a tool acts with the user's authority beyond
+// the staged workspace (Spec.ActsForUser).
+func ActsForUser(name string) bool {
+	s, ok := byName[name]
+	return ok && s.ActsForUser
 }
