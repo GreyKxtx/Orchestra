@@ -3,7 +3,6 @@ package config
 import (
 	"context"
 	"fmt"
-	"github.com/orchestra/orchestra/internal/execpolicy"
 	"net"
 	neturl "net/url"
 	"os"
@@ -12,7 +11,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orchestra/orchestra/internal/execpolicy"
 	"github.com/orchestra/orchestra/internal/llmauth"
+	"github.com/orchestra/orchestra/internal/toolspec"
 	llmpkg "github.com/orchestra/orchestra/llm"
 	"gopkg.in/yaml.v3"
 )
@@ -426,48 +427,17 @@ var builtInAgentModes = map[string]ModeKind{
 	"summary":       ModeKindInternal,
 }
 
-// validAgentToolNames lists all short tool names that are valid in
-// AgentDefinition.Tools. Hardcoded here to avoid an import cycle between
-// config and tools (tools → llm → config).
-var validAgentToolNames = map[string]bool{
-	"ls": true, "read": true, "glob": true, "write": true, "edit": true, "fs.delete": true, "fs.rename": true,
-	"grep": true, "symbols": true, "explore": true, "bash": true,
-	"webfetch": true, "todowrite": true, "todoread": true,
-	"bash.output": true, "bash.kill": true,
-	"semantic_search": true, "repo_map": true, "ast_rename": true,
-	"memory_write": true, "memory_read": true, "memory_search": true, "runtime_query": true,
-	"lesson_promote": true, "playbook_promote": true,
-	"task": true, "task_spawn": true, "task_wait": true, "task_cancel": true, "task_result": true,
-	"plan_exit": true, "question": true,
-	"lsp.definition": true, "lsp.references": true, "lsp.hover": true,
-	"lsp.diagnostics": true, "lsp.rename": true,
-	"diff.preview": true,
-	"git.status":   true, "git.log": true, "git.diff": true,
-	"git.worktree.list": true, "git.worktree.add": true, "git.worktree.remove": true, "git.worktree.prune": true,
-	"git.commit": true, "git.branch": true, "git.checkout": true, "git.push": true,
-	"gh.pr.list": true, "gh.pr.create": true, "gh.pr.view": true,
-	"gh.issue.list": true, "gh.issue.view": true,
-	"browser.navigate": true, "browser.snapshot": true, "browser.screenshot": true,
-	"browser.click": true, "browser.type": true, "browser.fill": true,
-	"browser.select": true, "browser.eval": true, "browser.wait": true, "browser.close": true,
-	"websearch": true,
-}
-
 // ValidAgentTool reports whether name is a valid short tool name usable
-// in AgentDefinition.Tools or in a skill's tools: list. Exported so the
-// skills loader (outside this package) can validate without forking the
-// allow-list.
+// in AgentDefinition.Tools or in a skill's tools: list. The names come from
+// toolspec, the table the tool registry is built from.
 func ValidAgentTool(name string) bool {
-	return validAgentToolNames[name]
+	return toolspec.Nameable(name)
 }
 
 // ValidAgentToolNames returns every short tool name allowed in AgentDefinition.Tools,
 // sorted for stable UI / RPC catalogs.
 func ValidAgentToolNames() []string {
-	out := make([]string, 0, len(validAgentToolNames))
-	for name := range validAgentToolNames {
-		out = append(out, name)
-	}
+	out := toolspec.NameableNames()
 	sort.Strings(out)
 	return out
 }
@@ -1584,7 +1554,7 @@ func (c *ProjectConfig) validateAgents() error {
 			return fmt.Errorf("agents[%d] (%q): tools list is empty; omit the field to inherit the build toolset", i, a.Name)
 		}
 		for _, t := range a.Tools {
-			if !validAgentToolNames[t] {
+			if !ValidAgentTool(t) {
 				return fmt.Errorf("agents[%d] (%q): unknown tool name %q", i, a.Name, t)
 			}
 		}

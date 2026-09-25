@@ -194,6 +194,7 @@ func TestConfigStaysALeaf(t *testing.T) {
 		modulePath + "/internal/execpolicy": true,
 		modulePath + "/internal/authstore":  true,
 		modulePath + "/internal/llmauth":    true,
+		modulePath + "/internal/toolspec":   true,
 	}
 	for _, dep := range listDeps(t, root, "./internal/config") {
 		if strings.HasPrefix(dep, modulePath+"/internal/") && !allowed[dep] {

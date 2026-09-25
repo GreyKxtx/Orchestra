@@ -9,21 +9,15 @@ import (
 	"unicode/utf8"
 
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/internal/toolspec"
 	"github.com/orchestra/orchestra/llm"
 )
 
 // isAgentInProcessTool reports tools handled in the agent serial pipeline
-// (session state, subtasks, skills, plan mode) rather than tools.Runner.Call.
+// (session state, subtasks, skills, agency, plan mode) rather than
+// tools.Runner.Call.
 func isAgentInProcessTool(name string) bool {
-	switch normalizeToolName(name) {
-	case "todowrite", "todoread", "update_working_state", "contract_freeze",
-		"lesson_promote", "playbook_promote",
-		"task", "task_spawn", "task_wait", "task_cancel", "task_result",
-		"plan_enter", "plan_exit", "question", "skill_invoke":
-		return true
-	default:
-		return false
-	}
+	return toolspec.IsInProcess(normalizeToolName(name))
 }
 
 // resolveToolCalls returns the tool calls for this step, preferring Step.Tools
@@ -57,7 +51,7 @@ func (a *Agent) resolveToolCalls(step *Step, llmResp *llm.CompleteResponse) []To
 // isWebTool is a tool that reaches the network on the model's behalf and needs
 // web consent: webfetch sends the URL, websearch sends the query.
 func isWebTool(name string) bool {
-	return name == "webfetch" || name == "websearch"
+	return toolspec.IsWeb(name)
 }
 
 // batchNeedsSerialGates reports whether a call in the batch has a gate that
