@@ -35,6 +35,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, userQuery string
 }
 
 func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string) (outHistory []llm.Message, result *Result, err error) {
+	a.opts.AgentLogger = a.baseLogger.For(ctx)
 	userQuery = strings.TrimSpace(userQuery)
 	if userQuery == "" {
 		return nil, nil, fmt.Errorf("user query is empty")

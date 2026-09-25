@@ -12,16 +12,26 @@ func PromoteHintsFromTaskResult(taskResult string) (lessonHint, playbookHint str
 	return extractPromoteHintForTest(taskResult), extractPlaybookPromoteHintForTest(taskResult)
 }
 
-func (r *TaskRunner) notifyChildDone(taskID, parentToolCallID, subagentType string, result *agent.SubtaskResult) {
-	if r == nil || r.child.NotifyAgentEvent == nil || result == nil {
+// notifyChildDone announces the end of e. Like child_started it names the
+// task's parent and depth, so the delegation tree can be rebuilt from the
+// event log alone.
+func (r *TaskRunner) notifyChildDone(e *taskEntry, parentToolCallID, subagentType string, result *agent.SubtaskResult) {
+	if r == nil || r.child.NotifyAgentEvent == nil || e == nil {
 		return
+	}
+	if result == nil {
+		result = &agent.SubtaskResult{TaskID: e.id, Status: "error", Error: "task ended without a result"}
 	}
 	params := map[string]any{
 		"type":                "child_done",
-		"task_id":             taskID,
+		"task_id":             e.id,
 		"parent_tool_call_id": parentToolCallID,
 		"subagent_type":       subagentType,
 		"status":              result.Status,
+		"depth":               e.depth,
+	}
+	if e.parentTaskID != "" {
+		params["parent_task_id"] = e.parentTaskID
 	}
 	if result.Error != "" {
 		params["error"] = result.Error

@@ -138,6 +138,10 @@ type ChildAgentConfig struct {
 	LLMStepTimeout time.Duration
 	// MaxStepsCap clamps child MaxSteps (default 12). Parent may request less.
 	MaxStepsCap int
+	// RunID is the turn the tasks belong to (its turn_id). With each task's
+	// identity it attributes the children's llm_log lines; when empty the
+	// run id is taken from the spawner's ctx.
+	RunID string
 	// AgentLogger writes the children's tool_call / tool_result events to
 	// llm_log.jsonl. Without it a worker's writes were invisible: the log
 	// showed the child's LLM requests and nothing it did with the answers.
@@ -486,6 +490,19 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		entry.parent = extra.owner.address
 		entry.parentTaskID = extra.owner.taskID
 	}
+	// The child's model calls and tool calls are logged under its own
+	// identity (llm.Trace), not its parent's: llm_log.jsonl is shared by the
+	// whole tree, and this is what tells its lines apart.
+	runID := r.child.RunID
+	if runID == "" {
+		runID = llm.TraceFrom(parent).RunID
+	}
+	taskCtx = llm.WithTrace(taskCtx, llm.Trace{
+		RunID:        runID,
+		TaskID:       taskID,
+		ParentTaskID: entry.parentTaskID,
+		Depth:        entry.depth,
+	})
 
 	// Disjoint check (spec §5.6): collect running worker tasks whose edit
 	// scope intersects ours. Registration and conflict collection happen
@@ -523,6 +540,17 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		defer close(entry.done)
 		defer cancel(nil)
 		defer r.markFinished(entry)
+		// Every task closes with exactly one child_done, however it ended:
+		// ran to a result, failed a dependency, was cancelled while queued
+		// behind a conflict or waiting for a slot, or panicked. A task that
+		// never announced its end stayed "running" in the UI forever and left
+		// a hole in the tree the log is read back into.
+		defer func() {
+			r.mu.Lock()
+			res := entry.result
+			r.mu.Unlock()
+			r.notifyChildDone(entry, req.ParentToolCallID, target.name, res)
+		}()
 		// Resilience audit P1: a panic escaping runChild (agent loop, prompt
 		// assembly, verification pipeline) in this goroutine would kill the
 		// whole core process — parent orchestrator, sibling workers and the
@@ -539,16 +567,6 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 					}
 				}
 				r.mu.Unlock()
-				if r.child.NotifyAgentEvent != nil {
-					r.child.NotifyAgentEvent(map[string]any{
-						"type":                "child_done",
-						"task_id":             taskID,
-						"parent_tool_call_id": req.ParentToolCallID,
-						"subagent_type":       target.name,
-						"status":              "error",
-						"error":               fmt.Sprintf("child agent panicked: %v", rec),
-					})
-				}
 			}
 		}()
 
@@ -558,7 +576,6 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 			var res *agent.SubtaskResult
 			upstream, res = r.awaitDeps(taskCtx, entry)
 			if res != nil {
-				r.notifyChildDone(taskID, req.ParentToolCallID, target.name, res)
 				r.mu.Lock()
 				entry.result = res
 				r.mu.Unlock()
@@ -599,7 +616,6 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		r.setStatus(entry, "running")
 
 		result := r.runChild(taskCtx, taskID, req, target, childScope, maxSteps, extra.history, upstream)
-		r.notifyChildDone(taskID, req.ParentToolCallID, target.name, result)
 
 		r.mu.Lock()
 		entry.result = result

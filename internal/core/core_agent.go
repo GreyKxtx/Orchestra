@@ -186,6 +186,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		MaxPromptBytes:      params.MaxPromptBytes,
 		AutoSessionMemory:   false,
 		UsageLabel:          "agent.run",
+		RecordRun:           true,
 		OnEvent:             params.OnEvent,
 		EventEnvelope:       EventEnvelope{TurnID: NewTurnID()},
 		PermissionRequester: params.PermissionRequester,
@@ -220,6 +221,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		return nil, err
 	}
 
+	ctx = launch.RunContext(ctx)
 	outHistory, res, err := ag.Run(ctx, nil, agentQuery)
 	if err != nil {
 		return nil, err

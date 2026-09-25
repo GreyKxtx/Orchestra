@@ -524,6 +524,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		return nil, err
 	}
 
+	turnCtx = launch.RunContext(turnCtx)
 	outHistory, res, err := ag.Run(turnCtx, inHistory, agentQuery)
 	if err == nil {
 		outHistory, res, err = maybeContinueBuildAfterPlan(turnCtx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
@@ -1151,7 +1152,7 @@ func (c *Core) SessionCompact(ctx context.Context, params SessionCompactParams) 
 		goal = "Summarize the session so far"
 	}
 	before := len(hist)
-	compacted, cerr := ag.CompactNow(ctx, goal, hist)
+	compacted, cerr := ag.CompactNow(launch.RunContext(ctx), goal, hist)
 	if cerr != nil {
 		return nil, protocol.NewError(protocol.ExecFailed, cerr.Error(), nil)
 	}

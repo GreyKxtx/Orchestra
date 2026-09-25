@@ -563,8 +563,12 @@ type Agent struct {
 	validator      *schema.Validator
 	tools          *tools.Runner
 	opts           Options
-	todos          []tools.TodoItem // current turn's working todo list
-	ckgContext     string           // pre-fetched CKG nodes block, empty if unavailable
+	// baseLogger is opts.AgentLogger as constructed. Each Run attributes it
+	// to the run and task its ctx carries (llm.Trace) and puts the result in
+	// opts.AgentLogger, so every line the turn writes says whose it is.
+	baseLogger *llm.Logger
+	todos      []tools.TodoItem // current turn's working todo list
+	ckgContext string           // pre-fetched CKG nodes block, empty if unavailable
 	// queryInstructions is the nested ORCHESTRA.md text for the directories the
 	// turn's query references (@-mentions and attachments). Computed once per
 	// Run, not per step: discoverInstructions dedupes by directory for the life
@@ -683,6 +687,7 @@ func New(llmClient llm.Client, v *schema.Validator, toolRunner *tools.Runner, op
 		validator:            v,
 		tools:                toolRunner,
 		opts:                 opts,
+		baseLogger:           opts.AgentLogger,
 		justSwitchedFromPlan: opts.JustSwitchedFromPlan,
 		diags:                newDiagTracker(),
 	}, nil

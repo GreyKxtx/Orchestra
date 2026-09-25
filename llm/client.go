@@ -946,9 +946,7 @@ func (c *OpenAIClient) CompleteStream(ctx context.Context, req CompleteRequest) 
 			if fixed, ok := c.fixMaxTokensFromError(err.Error()); ok {
 				ctxFixed = true
 				maxTok = fixed
-				if c.logger != nil {
-					c.logger.LogError(400, fmt.Sprintf("context overflow — retrying stream with max_tokens=%d", fixed), 0)
-				}
+				c.logger.For(ctx).LogError(400, fmt.Sprintf("context overflow — retrying stream with max_tokens=%d", fixed), 0)
 				continue
 			}
 		}
@@ -974,11 +972,12 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 	// drain — and until this was added none of them was logged: llm_log.jsonl
 	// carried tool calls and results, never what the model was asked or what
 	// it answered. Reading an eval failure meant guessing at the model's
-	// words from the tools it reached for. The non-streaming path has logged
-	// both since the file existed; this puts the stream on the same footing.
+	// words from the tools it reached for.
 	startTime := time.Now()
-	if c.logger != nil {
-		c.logger.LogRequest(url, c.model, int(c.streamClient.Timeout.Seconds()), len(jsonData), len(req.Tools), len(req.Messages), messageRolesFor(req), string(jsonData))
+	// Attributed to the run and task in ctx: parallel agents share c.logger.
+	logger := c.logger.For(ctx)
+	if logger != nil {
+		logger.LogRequest(url, c.model, int(c.streamClient.Timeout.Seconds()), len(jsonData), len(req.Tools), len(req.Messages), messageRolesFor(req), string(jsonData))
 	}
 
 	// Derived context lets the watchdog abort a stalled body read: cancelling
@@ -1002,8 +1001,8 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 	resp, err := c.streamClient.Do(httpReq)
 	if err != nil {
 		cancelStream()
-		if c.logger != nil {
-			c.logger.LogError(0, err.Error(), time.Since(startTime).Milliseconds())
+		if logger != nil {
+			logger.LogError(0, err.Error(), time.Since(startTime).Milliseconds())
 		}
 		return nil, fmt.Errorf("failed to send stream request: %w", err)
 	}
@@ -1011,8 +1010,8 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		cancelStream()
-		if c.logger != nil {
-			c.logger.LogError(resp.StatusCode, string(body), time.Since(startTime).Milliseconds())
+		if logger != nil {
+			logger.LogError(resp.StatusCode, string(body), time.Since(startTime).Milliseconds())
 		}
 		return nil, formatAPIError(resp.StatusCode, string(body))
 	}
@@ -1052,17 +1051,17 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 						nameMapper.RestoreResponse(ev.Response)
 					}
 				}
-				if c.logger != nil {
+				if logger != nil {
 					switch ev.Kind {
 					case StreamEventDone:
 						// The assembled answer, as the agent will see it: text
 						// and tool calls with their arguments. Usage rides along
 						// so a step's cost can be read next to its words.
 						preview := streamResponsePreview(ev.Response)
-						c.logger.LogResponse(len(preview), time.Since(startTime).Milliseconds(), preview)
+						logger.LogResponse(len(preview), time.Since(startTime).Milliseconds(), preview)
 					case StreamEventError:
 						if ev.Err != nil {
-							c.logger.LogError(0, ev.Err.Error(), time.Since(startTime).Milliseconds())
+							logger.LogError(0, ev.Err.Error(), time.Since(startTime).Milliseconds())
 						}
 					}
 				}
@@ -1075,8 +1074,8 @@ func (c *OpenAIClient) streamOnce(ctx context.Context, url string, req CompleteR
 				}
 				stallErr := fmt.Errorf(
 					"stream stalled: no data from server for %s (connection to vLLM/tunnel lost?)", stall)
-				if c.logger != nil {
-					c.logger.LogError(0, stallErr.Error(), time.Since(startTime).Milliseconds())
+				if logger != nil {
+					logger.LogError(0, stallErr.Error(), time.Since(startTime).Milliseconds())
 				}
 				out <- StreamEvent{Kind: StreamEventError, Err: stallErr}
 				return

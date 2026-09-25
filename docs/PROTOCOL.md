@@ -600,11 +600,14 @@ Response `result`:
 - `switch_to_build` (optional, legacy) — true если `plan_exit` одобрен; core обычно уже выполнил build-продолжение in-process
 - `usage` (optional) — token summary
 
+Журнал хода. `agent.run` пишет те же события, что сессия пишет в свой `session.trajectory`, в `.orchestra/runs/<turn_id>.events.jsonl` (хранятся последние 50 файлов). Строки `.orchestra/llm_log.jsonl` любого хода несут `run_id` (его `turn_id`), а строки подагентов ещё `task_id`, `parent_task_id` и `depth`: один файл пишут все агенты дерева параллельно, и эти поля говорят, чья строка.
+
 > Важно: по умолчанию `apply=false` — это dry-run (core ничего не пишет на диск, возвращает diff/план). `apply_output=patch` всегда dry-run для workspace и дополнительно пишет unified diff.
 
 События агентства (`agent/event`, tools v16; клиент, который их не знает, может их пропускать):
 
 - `child_started` дополнительно несёт `agent` (адрес: отдел, custom-агент или роль), `depth` (дети корня — 1) и, для вложенных детей, `parent_agent` / `parent_task_id` — по ним дерево строится без `parent_tool_call_id`, который у внуков принадлежит вызову Lead'а, а не корня.
+- `child_done` несёт те же `depth` и `parent_task_id`, что и `child_started`, и приходит ровно один раз на каждую задачу — в том числе на отменённую до старта (в очереди за конфликтующей WorkOrder, в ожидании слота, при проваленной зависимости). По парам `child_started` / `child_done` дерево делегирования восстанавливается из лога целиком.
 - `child_queued` может прийти с `reason` о занятых слотах (`agency.max_parallel`) — без `waiting_for`.
 - `agent_message` — `{channel: send|reply|post, from, to, kind, content, task_id?}`: переписка между агентами (`content` урезан до 600 байт).
 - `workorders_relayed` — `{agent, task_ids[], rejected}`: рантайм раздал `batch_workorders[]` Lead'а.
