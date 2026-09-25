@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -109,6 +110,12 @@ func (a *Agent) handleFinalStep(
 			)
 			*history = append(*history, llm.Message{Role: llm.RoleUser, Content: msg})
 			emitStepDone("invalid")
+			// Refused finals count against MaxFinalFailures like failed
+			// ones: a lead that keeps patching production code would
+			// otherwise loop until MaxSteps (LLM-9).
+			if cbErr := cb.RecordResolveFailure(errors.New(msg)); cbErr != nil {
+				return finalStepOutcome{}, cbErr
+			}
 			return finalStepOutcome{Retry: true}, nil
 		}
 	}
@@ -129,6 +136,9 @@ func (a *Agent) handleFinalStep(
 		a.logf("final rejected: a patch restates a change already staged this turn")
 		*history = append(*history, llm.Message{Role: llm.RoleUser, Content: hint})
 		emitStepDone("invalid")
+		if cbErr := cb.RecordResolveFailure(errors.New("final restates a change already staged")); cbErr != nil {
+			return finalStepOutcome{}, cbErr
+		}
 		return finalStepOutcome{Retry: true}, nil
 	}
 

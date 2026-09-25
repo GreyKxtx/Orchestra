@@ -130,9 +130,19 @@ func (a *Agent) countMutatingTool(name string) {
 	if a == nil {
 		return
 	}
-	switch normalizeToolName(name) {
-	case "write", "edit", "fs.delete", "fs.rename", "ast_rename", "lsp.rename", "memory_write",
-		"browser.click", "browser.type", "browser.fill", "browser.select":
+	if changesWorkspace(name) || normalizeToolName(name) == "memory_write" {
 		a.turnMutatingTools++
 	}
+}
+
+// changesWorkspace reports whether a successful call of the tool changed the
+// files or the page the turn works on — progress a failed final can be
+// retried from.
+func changesWorkspace(name string) bool {
+	switch normalizeToolName(name) {
+	case "write", "edit", "fs.delete", "fs.rename", "ast_rename", "lsp.rename",
+		"browser.click", "browser.type", "browser.fill", "browser.select":
+		return true
+	}
+	return false
 }
