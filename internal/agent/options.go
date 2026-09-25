@@ -564,6 +564,11 @@ type ActiveProviderReporter interface {
 }
 
 type Agent struct {
+	// stageCtx carries the run's task layer (tools.WithLayer) for the staging
+	// calls made outside a tool call: a child's staged ops and final patches
+	// are its own layer's, not the turn's.
+	stageCtx context.Context
+
 	llm llm.Client
 	// activeProvider is set when llm can move between providers; nil otherwise.
 	activeProvider ActiveProviderReporter

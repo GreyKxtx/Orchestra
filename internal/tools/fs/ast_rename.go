@@ -10,6 +10,7 @@ import (
 )
 
 func (c *Client) ASTRename(ctx context.Context, req ASTRenameRequest) (*ASTRenameResponse, error) {
+	c = c.at(ctx)
 	if c == nil {
 		return nil, fmt.Errorf("client is nil")
 	}

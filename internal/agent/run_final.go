@@ -16,10 +16,18 @@ import (
 	"github.com/orchestra/orchestra/protocol"
 )
 
+// staging is the context the run stages under: its task layer, if it has one.
+func (a *Agent) staging() context.Context {
+	if a.stageCtx == nil {
+		return context.Background()
+	}
+	return a.stageCtx
+}
+
 // finalizeOnMaxSteps flushes staged changes when the step budget is exhausted
 // so dry-run/preview runs do not lose write/edit progress made via tools.
 func (a *Agent) finalizeOnMaxSteps(ctx context.Context, history []llm.Message, steps int) (*Result, bool) {
-	stagedOps := a.tools.StagedOps()
+	stagedOps := a.tools.StagedOps(a.staging())
 	if len(stagedOps) == 0 {
 		return nil, false
 	}
@@ -127,7 +135,7 @@ func (a *Agent) handleFinalStep(
 	if len(finalPatches) > 0 {
 		a.logf("final received patches=%d -> applying to staging overlay", len(finalPatches))
 		start := time.Now()
-		if err := a.tools.ApplyPatchesToStaged(finalPatches); err != nil {
+		if err := a.tools.ApplyPatchesToStaged(a.staging(), finalPatches); err != nil {
 			resolveMS := time.Since(start).Milliseconds()
 			a.logf("staged-apply status=error duration_ms=%d err=%v", resolveMS, err)
 			*history = append(*history, llm.Message{
@@ -154,7 +162,7 @@ func (a *Agent) handleFinalStep(
 		}
 	}
 
-	stagedOps := a.tools.StagedOps()
+	stagedOps := a.tools.StagedOps(a.staging())
 	if len(stagedOps) == 0 {
 		a.logf("final: no staged ops (no changes needed)")
 		if llmResp != nil {
@@ -280,7 +288,7 @@ func (a *Agent) commitStagedAfterMutatingTool(ctx context.Context, steps int, to
 		}
 	}
 	a.logf("incremental commit path=%s files=%d", toolPath, len(resp.ChangedFiles))
-	a.emitPendingOpsEvent(steps, a.tools.StagedOps(), resp.Diffs, true)
+	a.emitPendingOpsEvent(steps, a.tools.StagedOps(a.staging()), resp.Diffs, true)
 }
 
 // previewStagedAfterMutatingTool emits pending_ops (dry-run) after each successful
@@ -290,7 +298,7 @@ func (a *Agent) previewStagedAfterMutatingTool(ctx context.Context, steps int) {
 	if a.opts.Apply || a.opts.OnEvent == nil {
 		return
 	}
-	stagedOps := a.tools.StagedOps()
+	stagedOps := a.tools.StagedOps(a.staging())
 	if len(stagedOps) == 0 {
 		return
 	}
@@ -336,7 +344,7 @@ func (a *Agent) maybeHintStagedReady(history *[]llm.Message, toolPath string) {
 	if a.turnMutatingTools < 1 {
 		return
 	}
-	if a.tools == nil || len(a.tools.StagedOps()) == 0 {
+	if a.tools == nil || len(a.tools.StagedOps(a.staging())) == 0 {
 		return
 	}
 	*history = append(*history, llm.Message{

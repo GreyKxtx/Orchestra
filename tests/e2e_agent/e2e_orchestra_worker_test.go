@@ -124,7 +124,10 @@ func TestOrchestra_E2E_LeadSpawnsWorker_LSPIterations(t *testing.T) {
 		t.Fatalf("NewValidator: %v", err)
 	}
 
+	// The worker reports success: only a worker that verified gets its edits
+	// into the turn (a worker that reports nothing is discarded).
 	workerLLM := newWorkerLSPFixLLM(initialHash)
+	workerLLM.reportSuccess = true
 	workerMetrics := eval.NewLoopMetrics()
 
 	taskRunner := tasks.New(workerLLM, v, tr, tasks.ChildAgentConfig{
@@ -158,7 +161,7 @@ func TestOrchestra_E2E_LeadSpawnsWorker_LSPIterations(t *testing.T) {
 	if got := workerMetrics.LSPIterationCount(); got > eval.MaxLSPIterations {
 		t.Fatalf("Worker LSP iterations = %d, want ≤ %d", got, eval.MaxLSPIterations)
 	}
-	if len(tr.StagedOps()) == 0 {
+	if len(tr.StagedOps(context.Background())) == 0 {
 		t.Fatal("expected staged ops from Worker")
 	}
 }

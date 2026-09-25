@@ -9,6 +9,7 @@ import (
 )
 
 func (c *Client) List(ctx context.Context, req FSListRequest) (*FSListResponse, error) {
+	c = c.at(ctx)
 	if c == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "client is nil", nil)
 	}

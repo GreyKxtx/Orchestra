@@ -19,6 +19,7 @@ import (
 	"github.com/orchestra/orchestra/internal/orchestrastate"
 	"github.com/orchestra/orchestra/internal/roles"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/internal/tools/fs"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
 )
@@ -504,6 +505,12 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		ParentTaskID: entry.parentTaskID,
 		Depth:        entry.depth,
 	})
+	// The task writes into its own layer over its spawner's view (ORC-1): the
+	// edits reach the spawner only when the task succeeds (commitLayer), and
+	// go with it otherwise. Reads see the spawner's view live, so a task
+	// waiting on dependencies sees what they committed.
+	layer := r.toolRunner.ForkLayer(parent)
+	taskCtx = tools.WithLayer(taskCtx, layer)
 
 	// Disjoint check (spec §5.6): collect running worker tasks whose edit
 	// scope intersects ours. Registration and conflict collection happen
@@ -545,6 +552,9 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 
 	go func() {
 		defer close(entry.done)
+		// Before done closes: whoever waits for the task sees its edits
+		// committed, or gone. A task that committed has nothing left to drop.
+		defer r.toolRunner.DropLayer(tools.LayerContext(parent), layer)
 		defer cancel(nil)
 		defer r.markFinished(entry)
 		// Every task closes with exactly one child_done, however it ended:
@@ -944,6 +954,15 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		return out
 	}
 
+	// A task that is not a worker has succeeded once its run did: its edits go
+	// to its owner now, before anything it relays (a Lead's WorkOrders) starts
+	// on top of them.
+	if mode != agent.ModeWorker {
+		if err := commitLayer(ctx); err != nil {
+			return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: err.Error()}
+		}
+	}
+
 	taskResult := ""
 	if res != nil {
 		taskResult = res.SubtaskResult
@@ -971,7 +990,7 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 
 	// Re-check contract_refs on success (spec §5.3): the contract may have
 	// changed while the worker ran; a stale result must not reach the Lead
-	// as success — staged patches are dropped with the dry-run overlay.
+	// as success, and its edits are dropped with its layer.
 	if mode == agent.ModeWorker && workOrder != nil && r.child.GuardContractRefs != nil {
 		if err := r.child.GuardContractRefs(workOrder.ContractRefs); err != nil {
 			msg := "stale_contract: contract changed during execution — result discarded, Lead must regenerate the WorkOrder; " + err.Error()
@@ -983,6 +1002,16 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 				}
 			}
 			return out
+		}
+	}
+
+	// A worker's edits reach its owner only when it verified: a failed,
+	// blocked or unverified worker's layer is dropped (ORC-1).
+	if mode == agent.ModeWorker && workerOutcomeSucceeded(taskResult) {
+		if err := commitLayer(ctx); err != nil {
+			msg := err.Error() + " — the worker's edits were discarded; re-plan the WorkOrder against the current files"
+			r.recordWorkerToDeptScratchpad(workOrder, "", "error", msg)
+			return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: msg}
 		}
 	}
 
@@ -1001,6 +1030,24 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		}
 	}
 	return &agent.SubtaskResult{TaskID: taskID, Status: "done", Result: taskResult}
+}
+
+// commitLayer merges the layer of the task behind ctx into its owner's. A
+// conflict — a file another task committed a change to since this one first
+// wrote it — is the task's error, and its layer is dropped.
+func commitLayer(ctx context.Context) error {
+	layer := fs.OverlayFrom(ctx)
+	if layer == nil {
+		return nil
+	}
+	if _, err := layer.Commit(); err != nil {
+		var conflict *fs.MergeConflict
+		if errors.As(err, &conflict) {
+			return fmt.Errorf("merge_conflict: %w", err)
+		}
+		return err
+	}
+	return nil
 }
 
 // classifyChildRunErr maps a child run error to a SubtaskResult status,

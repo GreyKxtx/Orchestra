@@ -19,7 +19,7 @@ func (a *Agent) rejectPrematureFinal(userQuery string, step *Step, raw string, s
 	if len(step.Final.Patches) > 0 {
 		return "", false
 	}
-	if a.tools != nil && len(a.tools.StagedOps()) > 0 {
+	if a.tools != nil && len(a.tools.StagedOps(a.staging())) > 0 {
 		return "", false
 	}
 

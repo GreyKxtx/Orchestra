@@ -10,7 +10,7 @@ import (
 
 func stagedPaths(ag *Agent) []string {
 	var out []string
-	for _, op := range ag.tools.StagedOps() {
+	for _, op := range ag.tools.StagedOps(context.Background()) {
 		out = append(out, op.Path)
 	}
 	return out

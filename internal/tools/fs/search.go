@@ -16,6 +16,7 @@ import (
 const defaultGrepMaxMatches = 200
 
 func (c *Client) SearchText(ctx context.Context, req SearchTextRequest) (*SearchTextResponse, error) {
+	c = c.at(ctx)
 	if c == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "client is nil", nil)
 	}

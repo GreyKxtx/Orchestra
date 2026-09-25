@@ -121,7 +121,7 @@ func TestEval_AmbiguousMatchRate_WithTargetSymbol(t *testing.T) {
 				t.Fatalf("scoped edit failed: %v", err)
 			}
 
-			staged := r.StagedFileContent()
+			staged := r.StagedFileContent(context.Background())
 			got, ok := staged[tc.relPath]
 			if !ok || !strings.Contains(got, tc.replace) {
 				t.Fatalf("staged content missing replace %q: %q", tc.replace, got)

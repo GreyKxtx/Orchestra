@@ -139,11 +139,11 @@ func TestRealLLMWorker_LSPIterationsLeq3(t *testing.T) {
 			iterations, eval.MaxLSPIterations, getLLMModel())
 	}
 
-	staged := tr.StagedOps()
+	staged := tr.StagedOps(context.Background())
 	if len(staged) == 0 {
 		t.Fatal("expected staged ops after successful worker run")
 	}
-	stagedFiles := tr.StagedFileContent()
+	stagedFiles := tr.StagedFileContent(context.Background())
 	content, ok := stagedFiles["main.go"]
 	if !ok || strings.Contains(content, "badSymbol") {
 		t.Fatal("staged main.go still references badSymbol or is missing")

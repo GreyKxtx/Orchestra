@@ -11,6 +11,7 @@ import (
 )
 
 func (c *Client) Delete(ctx context.Context, req FSDeleteRequest) (*FSDeleteResponse, error) {
+	c = c.at(ctx)
 	if c == nil {
 		return nil, fmt.Errorf("client is nil")
 	}
@@ -57,6 +58,7 @@ func (c *Client) Delete(ctx context.Context, req FSDeleteRequest) (*FSDeleteResp
 }
 
 func (c *Client) Rename(ctx context.Context, req FSRenameRequest) (*FSRenameResponse, error) {
+	c = c.at(ctx)
 	if c == nil {
 		return nil, fmt.Errorf("client is nil")
 	}

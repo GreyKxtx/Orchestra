@@ -159,7 +159,7 @@ func TestAgent_E2E_DryRun_LSPErrorFixApply(t *testing.T) {
 		t.Fatalf("dry-run must not modify disk; got %q", string(onDisk))
 	}
 
-	staged := tr.StagedOps()
+	staged := tr.StagedOps(context.Background())
 	if len(staged) == 0 {
 		t.Fatal("expected staged ops after fix edit")
 	}
