@@ -119,7 +119,17 @@ type serverEntry struct {
 	client       *Client
 	restartCount int // H6 in audit ledger: bounded lazy restart on crash
 	lastActivity time.Time
+
+	// recent is the documents this server has open, least recently touched
+	// first. Past maxOpenDocs the oldest that is not staged is closed: a
+	// document opened for one edit used to stay open for the life of the
+	// server, so its memory grew with every file a session touched (DATA-8).
+	docsMu sync.Mutex
+	recent []string
 }
+
+// DefaultMaxOpenDocs is how many documents a server keeps open at once.
+const DefaultMaxOpenDocs = 64
 
 // Manager manages one LSP client per language, routing by file extension.
 type Manager struct {
@@ -142,6 +152,8 @@ type Manager struct {
 	installing  atomic.Bool
 
 	ensureSyncBudget time.Duration // see LSPConfig.EnsureSyncBudgetMS
+	// maxOpenDocs caps the documents open per server (DefaultMaxOpenDocs).
+	maxOpenDocs int
 
 	progressMu sync.Mutex
 	progress   *InstallProgress // last/current install progress for health/UI
@@ -205,6 +217,7 @@ func NewManager(workspaceRoot string, cfg LSPConfig) (*Manager, []error) {
 		initTimeoutMS:    cfg.InitializeTimeoutMS,
 		lazyStart:        cfg.lazyStartEnabled(),
 		idleTTL:          cfg.idleTTLDuration(),
+		maxOpenDocs:      DefaultMaxOpenDocs,
 		autoInstall:      cfg.effectiveAutoInstall(),
 		ensureSyncBudget: cfg.ensureSyncBudget(),
 		pendingEnsures:   make(map[string]*ensureJob),
@@ -591,6 +604,7 @@ func ForTest(workspaceRoot string, c *Client, extensions []string, diagTimeoutMS
 		workspaceRoot: workspaceRoot,
 		diagTimeoutMS: diagTimeoutMS,
 		lazyStart:     false,
+		maxOpenDocs:   DefaultMaxOpenDocs,
 		stopCh:        make(chan struct{}),
 	}
 	m.servers = append(m.servers, &serverEntry{
@@ -730,9 +744,11 @@ func (m *Manager) reopenStaged(s *serverEntry) {
 		uri := PathToURI(absPath)
 		if c.IsOpen(uri) {
 			_ = c.DidChange(ctx, uri, content)
+			s.touch(uri)
 			continue
 		}
 		_ = c.DidOpen(ctx, uri, langIDFromExt(ext), content)
+		s.touch(uri)
 	}
 }
 
@@ -840,6 +856,7 @@ func (m *Manager) DidClose(ctx context.Context, relPath string) {
 			continue
 		}
 		_ = s.client.DidClose(ctx, uri)
+		s.forget(uri)
 		if s.diags != nil {
 			s.diags.Forget(uri)
 		}
@@ -1059,13 +1076,82 @@ func (m *Manager) SyncStaged(ctx context.Context, relPath, content string) error
 		if err := s.client.DidChange(ctx, uri, content); err != nil {
 			return fmt.Errorf("lsp: SyncStaged DidChange %s: %w", relPath, err)
 		}
+		s.touch(uri)
 		return nil
 	}
 	langID := langIDFromExt(filepath.Ext(relPath))
 	if err := s.client.DidOpen(ctx, uri, langID, content); err != nil {
 		return fmt.Errorf("lsp: SyncStaged DidOpen %s: %w", relPath, err)
 	}
+	s.touch(uri)
+	m.evictOpenDocs(ctx, s)
 	return nil
+}
+
+// touch marks uri as the document most recently used on s.
+func (s *serverEntry) touch(uri string) {
+	s.docsMu.Lock()
+	defer s.docsMu.Unlock()
+	s.forgetLocked(uri)
+	s.recent = append(s.recent, uri)
+}
+
+func (s *serverEntry) forget(uri string) {
+	s.docsMu.Lock()
+	defer s.docsMu.Unlock()
+	s.forgetLocked(uri)
+}
+
+func (s *serverEntry) forgetLocked(uri string) {
+	for i, u := range s.recent {
+		if u == uri {
+			s.recent = append(s.recent[:i], s.recent[i+1:]...)
+			return
+		}
+	}
+}
+
+// evictOpenDocs closes the least recently used documents past maxOpenDocs,
+// staged ones excepted: their content exists only in the overlay, and a
+// server that closed them would read the disk instead.
+func (m *Manager) evictOpenDocs(ctx context.Context, s *serverEntry) {
+	limit := m.maxOpenDocs
+	if limit <= 0 {
+		return
+	}
+	keep := map[string]bool{}
+	if sp, ok := m.content.(StagedPathsProvider); ok {
+		for _, rel := range sp.ListStagedPaths() {
+			keep[PathToURI(filepath.Join(m.workspaceRoot, filepath.FromSlash(rel)))] = true
+		}
+	}
+	var victims []string
+	s.docsMu.Lock()
+	open := len(s.recent)
+	for i := 0; i < len(s.recent) && open > limit; {
+		uri := s.recent[i]
+		if keep[uri] {
+			i++
+			continue
+		}
+		s.recent = append(s.recent[:i], s.recent[i+1:]...)
+		victims = append(victims, uri)
+		open--
+	}
+	s.docsMu.Unlock()
+	for _, uri := range victims {
+		_ = s.client.DidClose(ctx, uri)
+		if s.diags != nil {
+			s.diags.Forget(uri)
+		}
+	}
+}
+
+// SetMaxOpenDocsForTest caps the open documents per server (tests only).
+func (m *Manager) SetMaxOpenDocsForTest(n int) {
+	if m != nil {
+		m.maxOpenDocs = n
+	}
 }
 
 // SyncAndDiagnose notifies the server of new file content and waits for diagnostics.

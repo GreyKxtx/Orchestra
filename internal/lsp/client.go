@@ -318,6 +318,17 @@ func (c *Client) IsOpen(uri string) bool {
 	return ok
 }
 
+// OpenDocuments lists the documents the server has open.
+func (c *Client) OpenDocuments() []string {
+	c.docMu.Lock()
+	defer c.docMu.Unlock()
+	out := make([]string, 0, len(c.docVersions))
+	for uri := range c.docVersions {
+		out = append(out, uri)
+	}
+	return out
+}
+
 // DocVersion returns the current document version (0 if not open).
 func (c *Client) DocVersion(uri string) int {
 	c.docMu.Lock()

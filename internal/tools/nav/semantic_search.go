@@ -11,6 +11,7 @@ import (
 	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/embed"
+	"github.com/orchestra/orchestra/internal/embedindex"
 	"github.com/orchestra/orchestra/protocol"
 )
 
@@ -273,96 +274,24 @@ func (c *Client) RunCKGEmbed(ctx context.Context, rebuild bool, limit int) (*CKG
 		return nil, fmt.Errorf("embed.model is empty in .orchestra.yml")
 	}
 
-	client := embed.New(c.EmbedCfg)
-	model := client.Model()
-
-	if rebuild {
-		if _, err := snap.Store.DB().ExecContext(ctx, `DELETE FROM node_embeddings WHERE model = ?`, model); err != nil {
-			return nil, fmt.Errorf("rebuild: clear embeddings: %w", err)
-		}
-	}
-
-	pending, err := snap.Store.MissingEmbeddings(ctx, model, limit)
-	if err != nil {
-		return nil, fmt.Errorf("list missing: %w", err)
-	}
-	if len(pending) == 0 {
-		total, _ := snap.Store.CountEmbeddings(ctx, model)
-		return &CKGEmbedResult{Model: model, Total: total, Remaining: 0, Elapsed: "0s"}, nil
-	}
-
 	start := time.Now()
-	batch := c.EmbedCfg.BatchSize
-	if batch <= 0 {
-		batch = 32
+	res, err := embedindex.Run(ctx, embedindex.Options{
+		ProjectRoot: c.Root,
+		Store:       snap.Store,
+		Embed:       c.EmbedCfg,
+		Limit:       limit,
+		Rebuild:     rebuild,
+	})
+	if err != nil {
+		return nil, err
 	}
-	embedded := 0
-
-	for i := 0; i < len(pending); i += batch {
-		end := i + batch
-		if end > len(pending) {
-			end = len(pending)
-		}
-		chunk := pending[i:end]
-		inputs := make([]string, 0, len(chunk))
-		valid := make([]ckg.MissingEmbedding, 0, len(chunk))
-		for _, m := range chunk {
-			text, err := readNodeSourceForEmbed(c.Root, m)
-			if err != nil {
-				continue
-			}
-			if strings.TrimSpace(text) == "" {
-				continue
-			}
-			inputs = append(inputs, text)
-			valid = append(valid, m)
-		}
-		if len(inputs) == 0 {
-			continue
-		}
-		vecs, err := client.Embed(ctx, inputs)
-		if err != nil {
-			return nil, fmt.Errorf("embed batch [%d:%d]: %w", i, end, err)
-		}
-		items := make([]ckg.EmbeddingItem, len(valid))
-		for j, m := range valid {
-			items[j] = ckg.EmbeddingItem{NodeID: m.NodeID, Vector: vecs[j]}
-		}
-		if err := snap.Store.SaveEmbeddings(ctx, model, items); err != nil {
-			return nil, fmt.Errorf("save batch [%d:%d]: %w", i, end, err)
-		}
-		embedded += len(valid)
-	}
-
-	total, _ := snap.Store.CountEmbeddings(ctx, model)
-	missing, _ := snap.Store.MissingEmbeddings(ctx, model, 0)
+	total, _ := snap.Store.CountEmbeddings(ctx, res.Model)
+	missing, _ := snap.Store.MissingEmbeddings(ctx, res.Model, 0)
 	return &CKGEmbedResult{
-		Model:     model,
-		Embedded:  embedded,
+		Model:     res.Model,
+		Embedded:  res.Indexed,
 		Total:     total,
 		Remaining: len(missing),
 		Elapsed:   time.Since(start).Round(time.Millisecond).String(),
 	}, nil
-}
-
-func readNodeSourceForEmbed(projectRoot string, m ckg.MissingEmbedding) (string, error) {
-	full := filepath.Join(projectRoot, m.Path)
-	data, err := os.ReadFile(full)
-	if err != nil {
-		return "", err
-	}
-	if m.LineStart <= 0 || m.LineEnd < m.LineStart {
-		return fmt.Sprintf("%s (%s)\n", m.FQN, m.Path), nil
-	}
-	lines := strings.Split(string(data), "\n")
-	start := m.LineStart - 1
-	end := m.LineEnd
-	if start >= len(lines) {
-		return fmt.Sprintf("%s (%s)\n", m.FQN, m.Path), nil
-	}
-	if end > len(lines) {
-		end = len(lines)
-	}
-	body := strings.Join(lines[start:end], "\n")
-	return fmt.Sprintf("// %s\n%s\n", m.FQN, body), nil
 }

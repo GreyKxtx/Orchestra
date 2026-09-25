@@ -197,41 +197,16 @@ type neighbor struct {
 }
 
 func (s *Store) neighbors(ctx context.Context, fqn string, downstream bool, rels []string) ([]neighbor, error) {
-	placeholders := strings.TrimRight(strings.Repeat("?,", len(rels)), ",")
 	args := make([]any, 0, 2+len(rels))
-	var q string
 	if downstream {
 		args = append(args, fqn)
-		for _, r := range rels {
-			args = append(args, r)
-		}
-		q = fmt.Sprintf(`
-			SELECT COALESCE(n.id, 0), COALESCE(n.file_id, 0), e.target_fqn,
-			       COALESCE(n.short_name, e.target_fqn), COALESCE(n.kind, CASE WHEN e.is_external = 1 THEN 'external' ELSE 'symbol' END),
-			       COALESCE(n.line_start, 0), COALESCE(n.line_end, 0), COALESCE(n.complexity, 0),
-			       COALESCE(n.package, ''), COALESCE(f.path, ''),
-			       src.fqn, e.target_fqn, e.relation, e.is_external
-			FROM edges e
-			JOIN nodes src ON src.id = e.source_id
-			LEFT JOIN nodes n ON n.id = e.target_id OR n.fqn = e.target_fqn
-			LEFT JOIN files f ON f.id = n.file_id
-			WHERE src.fqn = ? AND e.relation IN (%s)`, placeholders)
 	} else {
 		args = append(args, fqn, fqn)
-		for _, r := range rels {
-			args = append(args, r)
-		}
-		q = fmt.Sprintf(`
-			SELECT src.id, src.file_id, src.fqn, src.short_name, src.kind,
-			       src.line_start, src.line_end, src.complexity, src.package, COALESCE(f.path, ''),
-			       src.fqn, e.target_fqn, e.relation, e.is_external
-			FROM edges e
-			JOIN nodes src ON src.id = e.source_id
-			LEFT JOIN nodes tgt ON tgt.id = e.target_id
-			LEFT JOIN files f ON f.id = src.file_id
-			WHERE (tgt.fqn = ? OR e.target_fqn = ?) AND e.relation IN (%s)`, placeholders)
 	}
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	for _, r := range rels {
+		args = append(args, r)
+	}
+	rows, err := s.db.QueryContext(ctx, neighborsQuery(downstream, len(rels)), args...)
 	if err != nil {
 		return nil, fmt.Errorf("neighbors: %w", err)
 	}
@@ -257,6 +232,44 @@ func (s *Store) neighbors(ctx context.Context, fqn string, downstream bool, rels
 		out = append(out, neighbor{node: &cp, edge: e})
 	}
 	return out, rows.Err()
+}
+
+// neighborsQuery is the one-hop query: the args are the FQN (twice for
+// upstream) followed by relCount relation names. Every lookup in it is
+// served by an index; a test reads the query plan to keep it so.
+func neighborsQuery(downstream bool, relCount int) string {
+	placeholders := strings.TrimRight(strings.Repeat("?,", relCount), ",")
+	if downstream {
+		// The target row is the edge's resolved node, or the node whose FQN
+		// the edge names when it is not resolved; both lookups are indexed.
+		// The join used to say `n.id = e.target_id OR n.fqn = e.target_fqn`,
+		// which no index serves, so every hop walked the nodes table.
+		return fmt.Sprintf(`
+			SELECT COALESCE(n.id, 0), COALESCE(n.file_id, 0), e.target_fqn,
+			       COALESCE(n.short_name, e.target_fqn), COALESCE(n.kind, CASE WHEN e.is_external = 1 THEN 'external' ELSE 'symbol' END),
+			       COALESCE(n.line_start, 0), COALESCE(n.line_end, 0), COALESCE(n.complexity, 0),
+			       COALESCE(n.package, ''), COALESCE(f.path, ''),
+			       src.fqn, e.target_fqn, e.relation, e.is_external
+			FROM edges e
+			JOIN nodes src ON src.id = e.source_id
+			LEFT JOIN nodes n ON n.id = COALESCE(e.target_id, (SELECT id FROM nodes WHERE fqn = e.target_fqn LIMIT 1))
+			LEFT JOIN files f ON f.id = n.file_id
+			WHERE src.fqn = ? AND e.relation IN (%s)`, placeholders)
+	}
+	// Callers point at the node by id once resolved and by FQN before
+	// that. Both terms index the edges table (target_id, target_fqn), so
+	// SQLite takes the union of two index lookups. The condition used to
+	// be `tgt.fqn = ? OR e.target_fqn = ?` across a join, which scanned
+	// every edge on every hop (DATA-6).
+	return fmt.Sprintf(`
+			SELECT src.id, src.file_id, src.fqn, src.short_name, src.kind,
+			       src.line_start, src.line_end, src.complexity, src.package, COALESCE(f.path, ''),
+			       src.fqn, e.target_fqn, e.relation, e.is_external
+			FROM edges e
+			JOIN nodes src ON src.id = e.source_id
+			LEFT JOIN files f ON f.id = src.file_id
+			WHERE (e.target_id = (SELECT id FROM nodes WHERE fqn = ? LIMIT 1) OR e.target_fqn = ?)
+			  AND e.relation IN (%s)`, placeholders)
 }
 
 func (s *Store) getNodeByFQN(ctx context.Context, fqn string) (*Node, error) {

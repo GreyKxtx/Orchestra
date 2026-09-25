@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -14,10 +15,98 @@ import (
 
 type Store struct {
 	db *sql.DB
-	// indexMu serializes full-graph rebuilds (write) vs worker queries (read).
-	// Do not lock it inside SaveFileNodes/GetAllFiles — Orchestrator.UpdateGraph
-	// already holds the write lock and Scanner reads the store under it.
+	// indexMu holds readers (traversals, stats, step-1 context) out while a
+	// refresh writes the graph. Do not lock it inside SaveFileNodes /
+	// GetAllFiles — the orchestrator holds it around them.
 	indexMu sync.RWMutex
+	// refreshMu serializes refreshes with each other. A refresh scans and
+	// parses under it alone, and takes indexMu only to write, so readers
+	// wait for the writes and not for the walk (DATA-3).
+	refreshMu sync.Mutex
+	// refreshing is set while RefreshInBackground has a pass in flight, so
+	// concurrent callers do not queue up passes behind it.
+	refreshing atomic.Bool
+
+	statsMu     sync.Mutex
+	lastRefresh RefreshStats
+	// refreshHooks run after a pass that changed the graph, outside its
+	// locks: the embeddings pass re-indexes what changed (DATA-5).
+	hooksMu      sync.Mutex
+	refreshHooks []func(RefreshStats)
+
+	// The semantic index: the model's vectors in memory, normalized, rebuilt
+	// when embedGen moves (a vector saved or cleared, a file's nodes
+	// rewritten). embedLoads counts the rebuilds, for tests.
+	embedGen   atomic.Uint64
+	embedMu    sync.Mutex
+	embedIdx   *embedIndex
+	embedLoads atomic.Int64
+}
+
+// OnRefresh registers fn to run after every pass that changed the graph
+// (parsed or deleted a file), once the pass has released its locks.
+func (s *Store) OnRefresh(fn func(RefreshStats)) {
+	if s == nil || fn == nil {
+		return
+	}
+	s.hooksMu.Lock()
+	s.refreshHooks = append(s.refreshHooks, fn)
+	s.hooksMu.Unlock()
+}
+
+func (s *Store) fireRefresh(st RefreshStats) {
+	s.hooksMu.Lock()
+	hooks := make([]func(RefreshStats), len(s.refreshHooks))
+	copy(hooks, s.refreshHooks)
+	s.hooksMu.Unlock()
+	for _, fn := range hooks {
+		fn(st)
+	}
+}
+
+// RefreshStats describes the last UpdateGraph pass.
+type RefreshStats struct {
+	// Seen is how many indexable files the walk found.
+	Seen int
+	// Hashed is how many of them had to be read and hashed: their stamp
+	// (mtime, size) was unknown or had changed.
+	Hashed int
+	// Parsed and Deleted are the files whose graph rows changed.
+	Parsed  int
+	Deleted int
+	// Candidates is how many dangling edges the pass looked at for
+	// relinking, Relinked how many it resolved. Both are 0 on an empty pass.
+	Candidates int
+	Relinked   int
+	// Elapsed is the whole pass; Locked is how long readers were held out.
+	Elapsed time.Duration
+	Locked  time.Duration
+}
+
+// LastRefresh is what the last UpdateGraph pass did.
+func (s *Store) LastRefresh() RefreshStats {
+	if s == nil {
+		return RefreshStats{}
+	}
+	s.statsMu.Lock()
+	defer s.statsMu.Unlock()
+	return s.lastRefresh
+}
+
+func (s *Store) setLastRefresh(st RefreshStats) {
+	s.statsMu.Lock()
+	s.lastRefresh = st
+	s.statsMu.Unlock()
+}
+
+// FileStamp is what the scanner keeps about an indexed file: the content
+// hash the graph was built from, and the mtime and size it had, which say
+// whether the file has to be read again (DATA-3: every pass hashed every
+// file).
+type FileStamp struct {
+	Hash    string
+	MTimeNS int64
+	Size    int64
 }
 
 type Node struct {
@@ -51,7 +140,12 @@ func NewStore(dbPath string) (*Store, error) {
 	if strings.Contains(dbPath, "?") {
 		sep = "&"
 	}
-	db, err := sql.Open("sqlite", dbPath+sep+"_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
+	// WAL lets the TUI, the extension and ckg-ui read while a refresh
+	// writes, instead of queueing on the rollback journal's lock; NORMAL
+	// syncs the WAL at checkpoints rather than at every file's commit — the
+	// graph is a cache rebuilt from the tree, a lost last transaction costs a
+	// rescan. A memory database ignores both. (DATA-7)
+	db, err := sql.Open("sqlite", dbPath+sep+"_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, err
 	}
@@ -89,8 +183,18 @@ func (s *Store) migrate() error {
 		return err
 	}
 
+	// The embedding cache is keyed by content, not by node id, so it is
+	// created beside the versioned schema and never dropped by it: a graph
+	// rebuild renumbers every node, and the vectors cost real calls.
+	if err := s.ensureEmbeddingCache(); err != nil {
+		return err
+	}
+
 	if version >= targetVersion {
-		return nil
+		if err := s.ensureFileStamps(); err != nil {
+			return err
+		}
+		return s.ensureEmbeddingHashColumn()
 	}
 
 	// Local cache: any older user_version (including v4 without package /
@@ -112,7 +216,9 @@ func (s *Store) migrate() error {
         language    TEXT NOT NULL,
         module_path TEXT,
         package     TEXT,
-        updated_at  DATETIME NOT NULL
+        updated_at  DATETIME NOT NULL,
+        mtime_ns    INTEGER NOT NULL DEFAULT 0,
+        size        INTEGER NOT NULL DEFAULT -1
     );
     CREATE INDEX idx_files_path ON files(path);
 
@@ -184,10 +290,11 @@ func (s *Store) migrate() error {
     CREATE INDEX idx_spans_code_file   ON spans(code_file);
 
     CREATE TABLE node_embeddings (
-        node_id INTEGER PRIMARY KEY,
-        model   TEXT NOT NULL,
-        dim     INTEGER NOT NULL,
-        vector  BLOB NOT NULL,
+        node_id      INTEGER PRIMARY KEY,
+        model        TEXT NOT NULL,
+        dim          INTEGER NOT NULL,
+        vector       BLOB NOT NULL,
+        content_hash TEXT NOT NULL DEFAULT '',
         FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
     );
     CREATE INDEX idx_node_embeddings_model ON node_embeddings(model);
@@ -209,6 +316,78 @@ func (s *Store) migrate() error {
 	}
 	if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", targetVersion)); err != nil {
 		return fmt.Errorf("migrate v%d: set user_version: %w", targetVersion, err)
+	}
+	return nil
+}
+
+// ensureFileStamps adds the mtime and size columns to a files table from
+// before they existed. Additive, so a v5 database keeps its graph; rows from
+// before carry a zero stamp and are hashed once more, then restamped.
+func (s *Store) ensureFileStamps() error {
+	for col, ddl := range map[string]string{
+		"mtime_ns": "ALTER TABLE files ADD COLUMN mtime_ns INTEGER NOT NULL DEFAULT 0",
+		"size":     "ALTER TABLE files ADD COLUMN size INTEGER NOT NULL DEFAULT -1",
+	} {
+		has, err := s.columnExists("files", col)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := s.db.Exec(ddl); err != nil {
+			return fmt.Errorf("ckg store: add files.%s: %w", col, err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) columnExists(table, column string) (bool, error) {
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, fmt.Errorf("ckg store: table_info %s: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+// ensureEmbeddingCache creates the content-hash vector cache if absent.
+func (s *Store) ensureEmbeddingCache() error {
+	_, err := s.db.Exec(`
+        CREATE TABLE IF NOT EXISTS embedding_cache (
+            model        TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            dim          INTEGER NOT NULL,
+            vector       BLOB NOT NULL,
+            PRIMARY KEY (model, content_hash)
+        )`)
+	if err != nil {
+		return fmt.Errorf("ckg store: embedding_cache: %w", err)
+	}
+	return nil
+}
+
+// ensureEmbeddingHashColumn adds content_hash to a node_embeddings table from
+// before it existed; those rows keep their vectors and carry no hash.
+func (s *Store) ensureEmbeddingHashColumn() error {
+	has, err := s.columnExists("node_embeddings", "content_hash")
+	if err != nil || has {
+		return err
+	}
+	if _, err := s.db.Exec("ALTER TABLE node_embeddings ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("ckg store: add node_embeddings.content_hash: %w", err)
 	}
 	return nil
 }
@@ -335,13 +514,84 @@ func (s *Store) GetAllFiles(ctx context.Context) (map[string]string, error) {
 	return m, nil
 }
 
-// SaveFileNodes upserts a single file's nodes/edges atomically.
+// FileStamps returns every indexed file's stamp, keyed by path. It takes
+// the read lock: the scanner runs outside the write lock now, and Close
+// must not pull the database from under it.
+func (s *Store) FileStamps(ctx context.Context) (map[string]FileStamp, error) {
+	s.indexMu.RLock()
+	defer s.indexMu.RUnlock()
+	return s.fileStampsUnlocked(ctx)
+}
+
+func (s *Store) fileStampsUnlocked(ctx context.Context) (map[string]FileStamp, error) {
+	if s.db == nil {
+		return nil, errStoreClosed
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT path, hash, mtime_ns, size FROM files")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := make(map[string]FileStamp)
+	for rows.Next() {
+		var path string
+		var st FileStamp
+		if err := rows.Scan(&path, &st.Hash, &st.MTimeNS, &st.Size); err != nil {
+			return nil, err
+		}
+		m[path] = st
+	}
+	return m, rows.Err()
+}
+
+// errStoreClosed is what a refresh gets when Close won the race.
+var errStoreClosed = fmt.Errorf("ckg store is closed")
+
+// restampFiles records the stamps of files whose content the pass found
+// unchanged but whose mtime or size moved (a touch, a checkout of the same
+// bytes, a row from before stamps existed), so the next pass does not hash
+// them again.
+func (s *Store) restampFiles(ctx context.Context, stamps map[string]FileStamp) error {
+	if len(stamps) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("restamp: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	upd, err := tx.PrepareContext(ctx, `UPDATE files SET mtime_ns = ?, size = ? WHERE path = ? AND hash = ?`)
+	if err != nil {
+		return fmt.Errorf("restamp: prepare: %w", err)
+	}
+	defer upd.Close()
+	for path, st := range stamps {
+		if _, err := upd.ExecContext(ctx, st.MTimeNS, st.Size, path, st.Hash); err != nil {
+			return fmt.Errorf("restamp %s: %w", path, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// SaveFileNodes upserts a single file's nodes/edges atomically, with no
+// stamp: the next scan hashes the file once and restamps it. The
+// orchestrator uses SaveFileNodesStamped.
 //
 // Edges may target symbols not yet indexed; their target_id will be NULL until
 // the matching FQN is indexed (then a follow-up UPDATE in this same call
 // resolves any previously-NULL edges whose target_fqn matches a freshly-inserted
 // node — see step 5 below).
 func (s *Store) SaveFileNodes(ctx context.Context, path, hash, lang, modulePath, pkgName string, nodes []Node, edges []Edge) error {
+	return s.SaveFileNodesStamped(ctx, path, FileStamp{Hash: hash, Size: -1}, lang, modulePath, pkgName, nodes, edges)
+}
+
+// SaveFileNodesStamped is SaveFileNodes with the file's stamp, so the next
+// scan can tell the file is unchanged from its mtime and size alone.
+func (s *Store) SaveFileNodesStamped(ctx context.Context, path string, stamp FileStamp, lang, modulePath, pkgName string, nodes []Node, edges []Edge) error {
+	if s.db == nil {
+		return errStoreClosed
+	}
+	hash := stamp.Hash
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("save file nodes: begin tx: %w", err)
@@ -357,9 +607,9 @@ func (s *Store) SaveFileNodes(ctx context.Context, path, hash, lang, modulePath,
 
 	// 2. Insert new files row.
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO files (path, hash, language, module_path, package, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-		path, hash, lang, modulePath, pkgName, time.Now())
+		`INSERT INTO files (path, hash, language, module_path, package, updated_at, mtime_ns, size)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		path, hash, lang, modulePath, pkgName, time.Now(), stamp.MTimeNS, stamp.Size)
 	if err != nil {
 		return fmt.Errorf("insert file: %w", err)
 	}
@@ -521,12 +771,20 @@ func (s *Store) SaveFileNodes(ctx context.Context, path, hash, lang, modulePath,
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// The file's old nodes took their vectors with them (ON DELETE CASCADE).
+	s.embedGen.Add(1)
+	return nil
 }
 
 // DeleteFile deletes a file and cascades its deletion to nodes and edges.
 func (s *Store) DeleteFile(ctx context.Context, path string) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM files WHERE path = ?", path)
+	if err == nil {
+		s.embedGen.Add(1)
+	}
 	return err
 }
 

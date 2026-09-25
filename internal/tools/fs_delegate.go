@@ -283,9 +283,22 @@ func (r *Runner) RestoreStaged(files []fs.StagedSnapshot) {
 	}
 }
 
+// ClearStaged drops the turn's staged edits, and closes their documents in
+// the language servers: they were opened with the staged content, and a
+// server that kept them would answer from a draft that no longer exists
+// (DATA-8). The file is what the disk says again.
 func (r *Runner) ClearStaged() {
-	if r.fsTools != nil && r.fsTools.Overlay != nil {
-		r.fsTools.Overlay.ClearStaged()
+	if r.fsTools == nil || r.fsTools.Overlay == nil {
+		return
+	}
+	paths := r.fsTools.Overlay.ListStagedPaths()
+	r.fsTools.Overlay.ClearStaged()
+	if len(paths) == 0 || r.lspManager == nil || r.lspManager.IsEmpty() {
+		return
+	}
+	ctx := context.Background()
+	for _, p := range paths {
+		r.lspManager.DidClose(ctx, p)
 	}
 }
 

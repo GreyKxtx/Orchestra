@@ -146,3 +146,40 @@ func TestWarmupEmbeddings_RespectsExplicitOptOut(t *testing.T) {
 		t.Fatalf("embed.auto_index: false still indexed %d node(s)", n)
 	}
 }
+
+// After the warmup, a refresh that changes the graph re-indexes what it
+// changed, so semantic_search follows the tree (DATA-5).
+func TestWarmupEmbeddings_ReindexesAfterARefresh(t *testing.T) {
+	r, store := newWarmupRunner(t, config.EmbedConfig{
+		Model: "nomic-embed-text", APIBase: fakeEmbedBase(t), TimeoutS: 5,
+	})
+	ctx := context.Background()
+	select {
+	case <-r.WarmupEmbeddings(ctx, closedGraphUpdate()):
+	case <-time.After(20 * time.Second):
+		t.Fatal("warmup never finished")
+	}
+	if n, _ := store.CountEmbeddings(ctx, "nomic-embed-text"); n != 2 {
+		t.Fatalf("warmup indexed %d", n)
+	}
+
+	if err := os.WriteFile(filepath.Join(r.workspaceRoot, "beta.go"), []byte("package pkg\n\nfunc Beta() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ckg.NewOrchestrator(store, r.workspaceRoot).UpdateGraph(ctx); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		n, _ := store.CountEmbeddings(ctx, "nomic-embed-text")
+		var beta int
+		_ = store.DB().QueryRow(`SELECT COUNT(*) FROM node_embeddings e JOIN nodes n ON n.id = e.node_id WHERE n.short_name = 'Beta'`).Scan(&beta)
+		if beta == 1 && n >= 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Beta was never embedded after the refresh: total=%d beta=%d", n, beta)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

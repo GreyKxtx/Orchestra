@@ -130,19 +130,54 @@ func isExternalTarget(fqn, modulePath string) bool {
 	return false
 }
 
-// RelinkUnresolvedEdges fills target_id / canonical target_fqn for dangling
-// calls/instantiates after an index pass. Safe under indexMu write lock.
+// RelinkUnresolvedEdges re-resolves every dangling call / instantiates edge
+// in one transaction. It is the whole-graph pass; a refresh uses
+// RelinkEdgesTo with the nodes it inserted, which on an unchanged tree is no
+// work at all. Safe under indexMu write lock.
 func (s *Store) RelinkUnresolvedEdges(ctx context.Context) error {
-	if s == nil || s.db == nil {
-		return nil
+	_, err := s.relinkDangling(ctx, nil)
+	return err
+}
+
+// RelinkEdgesTo re-resolves the dangling edges that could now reach one of
+// nodes — those whose target names a node's FQN, or ends in its short name.
+// Before, every pass re-resolved every dangling edge with up to three
+// queries each in autocommit: on this repository 33K edges, 10K of them
+// external and never resolvable, 3 s per empty refresh (DATA-3). Returns how
+// many edges were looked at and how many resolved.
+func (s *Store) RelinkEdgesTo(ctx context.Context, nodes []Node) (candidates, relinked int, err error) {
+	if len(nodes) == 0 {
+		return 0, 0, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT e.id, e.target_fqn, e.relation, COALESCE(src.package, '')
-		FROM edges e
-		JOIN nodes src ON src.id = e.source_id
-		WHERE e.target_id IS NULL AND e.relation IN ('calls', 'instantiates')`)
-	if err != nil {
-		return fmt.Errorf("relink: list dangling: %w", err)
+	names := make(map[string]bool, 2*len(nodes))
+	for _, n := range nodes {
+		if n.FQN != "" {
+			names[n.FQN] = true
+		}
+		if seg := lastDotSegment(n.ShortName); seg != "" {
+			names[seg] = true
+		}
+	}
+	stats, err := s.relinkDangling(ctx, func(target string) bool {
+		return names[target] || names[lastDotSegment(target)]
+	})
+	return stats[0], stats[1], err
+}
+
+// lastDotSegment is the identifier after the last dot: "Agent.Run" → "Run",
+// "pkg/path.Run" → "Run", "Run" → "Run".
+func lastDotSegment(name string) string {
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		return name[i+1:]
+	}
+	return name
+}
+
+// relinkDangling resolves the dangling edges that want says (all of them
+// when want is nil), in one transaction with prepared statements.
+func (s *Store) relinkDangling(ctx context.Context, want func(target string) bool) (stats [2]int, err error) {
+	if s == nil || s.db == nil {
+		return stats, nil
 	}
 	type dang struct {
 		id  int64
@@ -151,36 +186,64 @@ func (s *Store) RelinkUnresolvedEdges(ctx context.Context) error {
 		pkg string
 	}
 	var pending []dang
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT e.id, e.target_fqn, e.relation, COALESCE(src.package, '')
+		FROM edges e
+		JOIN nodes src ON src.id = e.source_id
+		WHERE e.target_id IS NULL AND e.relation IN ('calls', 'instantiates')`)
+	if err != nil {
+		return stats, fmt.Errorf("relink: list dangling: %w", err)
+	}
 	for rows.Next() {
 		var d dang
 		if err := rows.Scan(&d.id, &d.tgt, &d.rel, &d.pkg); err != nil {
 			rows.Close()
-			return fmt.Errorf("relink: scan: %w", err)
+			return stats, fmt.Errorf("relink: scan: %w", err)
 		}
-		pending = append(pending, d)
+		if want == nil || want(d.tgt) {
+			pending = append(pending, d)
+		}
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		return err
+		return stats, err
+	}
+	stats[0] = len(pending)
+	if len(pending) == 0 {
+		return stats, nil
 	}
 
-	upd, err := s.db.PrepareContext(ctx, `UPDATE edges SET target_id = ?, target_fqn = ?, is_external = 0 WHERE id = ?`)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("relink: prepare: %w", err)
+		return stats, fmt.Errorf("relink: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	sel, err := tx.PrepareContext(ctx, `SELECT id FROM nodes WHERE fqn = ?`)
+	if err != nil {
+		return stats, fmt.Errorf("relink: prepare select: %w", err)
+	}
+	defer sel.Close()
+	upd, err := tx.PrepareContext(ctx, `UPDATE OR IGNORE edges SET target_id = ?, target_fqn = ?, is_external = 0 WHERE id = ?`)
+	if err != nil {
+		return stats, fmt.Errorf("relink: prepare: %w", err)
 	}
 	defer upd.Close()
 
 	for _, d := range pending {
-		tid, canon, err := resolveEdgeTarget(ctx, s.db, nil, d.tgt, d.rel, d.pkg)
+		tid, canon, err := resolveEdgeTarget(ctx, tx, sel, d.tgt, d.rel, d.pkg)
 		if err != nil || tid == nil {
 			continue
 		}
 		if _, err := upd.ExecContext(ctx, tid, canon, d.id); err != nil {
-			return fmt.Errorf("relink: update %d: %w", d.id, err)
+			return stats, fmt.Errorf("relink: update %d: %w", d.id, err)
 		}
+		stats[1]++
 	}
-	return nil
+	if err := tx.Commit(); err != nil {
+		return stats, fmt.Errorf("relink: commit: %w", err)
+	}
+	return stats, nil
 }
 
 var goBuiltins = map[string]bool{
