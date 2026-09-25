@@ -74,6 +74,15 @@ type SubtaskSpawnRequest struct {
 	TaskType string
 	// ParentToolCallID is the parent agent's tool_call_id for task/task_spawn.
 	ParentToolCallID string
+	// Dept is the department instance the child works for (backend,
+	// frontend@web): its address in the agency, the scratchpad its
+	// WorkOrders default to, the inbox its notes are read from.
+	Dept string
+	// Key names the task for depends_on (a WorkOrder's task_id when unset).
+	Key string
+	// DependsOn lists task_ids or keys of this turn that must finish
+	// successfully before the child starts; their results are handed to it.
+	DependsOn []string
 }
 
 // SkillSpec is a thin summary of a discovered skill, used for system-prompt
@@ -128,6 +137,7 @@ const (
 	ModeVerifier     Mode = "verifier"      // goal-backward read-only verification (child only)
 	ModeProduct      Mode = "product"       // Product Lead: PRD/user stories in .orchestra/product/ only (child only)
 	ModeDocs         Mode = "documentation" // Docs Lead: L1 conventions.md, MANIFEST, docs/ scaffold+content (child only)
+	ModeScout        Mode = "scout"         // Market Scout: competitor/market research on the web + repo reads (child only)
 	ModeCompaction   Mode = "compaction"    // internal: compresses history into a summary.
 	ModeTitle        Mode = "title"         // internal: generates a short task title from the user query.
 	ModeSummary      Mode = "summary"       // internal: produces a brief summary of completed work.

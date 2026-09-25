@@ -129,6 +129,16 @@ var (
 	ToolTaskResult  = task.ToolTaskResult
 )
 
+// Agency tool defs. send_message, agent_post and task_board are on no static
+// mode list: the agent layer appends them when its SubtaskRunner reports the
+// agency enabled for the turn (agent.withAgencyTools).
+var (
+	ToolSendMessage  = task.ToolSendMessage
+	ToolAgentPost    = task.ToolAgentPost
+	ToolTaskBoard    = task.ToolTaskBoard
+	WithSubagentEnum = task.WithSubagentEnum
+)
+
 // Session types (backward compat).
 type (
 	TodoStatus           = session.TodoStatus

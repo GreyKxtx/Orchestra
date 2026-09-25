@@ -88,7 +88,14 @@ type agentLaunch struct {
 // Callers own the turn, so they own this: prepareAgentLaunch returns before
 // the first event exists and cannot defer it itself.
 func (l *agentLaunch) Close() {
-	if l == nil || l.Trajectory == nil {
+	if l == nil {
+		return
+	}
+	// Children nobody waited for — a task_spawn the turn ended without
+	// collecting, workers relayed from a Lead's batch — stop with the turn
+	// instead of editing the workspace after it has been reported done.
+	l.TaskRunner.Close()
+	if l.Trajectory == nil {
 		return
 	}
 	// Best-effort, like every other write to the log: a boundary that cannot
@@ -297,6 +304,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	}
 	usageTracker := newAgentUsageTracker(c.cfg, usageLabel)
 	childCfg := c.buildChildAgentConfig(maxPromptBytes, usageTracker, allowExec, agentLogger)
+	childCfg.Agency, childCfg.Agents = tasks.AgencyFromConfig(c.cfg, effectiveMode)
 	// Subagents get the browser when the turn has it; the agent refuses
 	// browser.* to any run without it, children included.
 	childCfg.Caps.Browser = allowBrowser

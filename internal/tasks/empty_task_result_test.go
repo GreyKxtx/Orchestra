@@ -61,7 +61,7 @@ func (s *silentChildLLM) Complete(ctx context.Context, req llm.CompleteRequest) 
 
 func TestWorker_AResultTheAgentCouldNotReadIsNotReportedAsSuccess(t *testing.T) {
 	root := t.TempDir()
-	const before = "package main\n\nfunc Width() int {\n\treturn 640\n}\n"
+	const before = "package width\n\nfunc Width() int {\n\treturn 640\n}\n"
 	if err := os.WriteFile(filepath.Join(root, "width.go"), []byte(before), 0o644); err != nil {
 		t.Fatal(err)
 	}

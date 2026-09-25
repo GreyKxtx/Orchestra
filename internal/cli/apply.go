@@ -640,7 +640,10 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 
 		workerVerifyEnabled := cfg.Orchestra.ResolvedWorkerVerifyEnabled()
 		cliQuestionAsker := buildQuestionAsker(agentMode, len(cfg.Orchestra.RequiredGates()) > 0)
+		agency, agencyProfiles := tasks.AgencyFromConfig(cfg, agentMode)
 		taskRunner := tasks.New(llmClient, validator, runner, tasks.ChildAgentConfig{
+			Agency:                        agency,
+			Agents:                        agencyProfiles,
 			MaxPromptBytes:                cfg.EffectiveMaxPromptBytes(),
 			CompactThresholdPct:           cfg.EffectiveCompactThresholdPct(),
 			ModelContextTokens:            int(cfg.EffectiveNumCtx()),
@@ -722,6 +725,9 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 				return route, true
 			},
 		})
+		// Before runner.Close (deferred earlier, so it runs later): children
+		// still writing under .orchestra/ must stop first.
+		defer taskRunner.Close()
 		var hooksRunner agent.HooksRunner
 		if hr := hooks.New(cfg.Hooks, cfg.ProjectRoot); hr != nil {
 			hooksRunner = hr

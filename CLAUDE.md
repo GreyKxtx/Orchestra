@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Orchestra is a Go CLI ("local AI coding assistant core") that lets an LLM read a project, plan edits, and apply them safely. The primary protocol surface is **JSON-RPC 2.0 over stdio** (LSP-style framing); a CLI wraps it. See `docs/PROTOCOL.md` for the wire contract and `.cursor/rules/projectrules.mdc` for hard architectural constraints.
 
-The repo is mid-transition to "vNext" — git status shows large deletions of v0.2 packages (`pkg/cli/...`, `internal/context/...`, `internal/gitutil/...`) and additions of vNext packages (`internal/core`, `internal/agent`, `internal/protocol`, `internal/jsonrpc`, etc.). When something feels duplicated (e.g. `internal/git` vs the now-empty `internal/gitutil`, or `pkg/cli/*` references in old docs), the new path under `internal/` is authoritative.
+The v0.2 → vNext move is finished. Application code lives under `internal/`; three sub-modules are importable on their own: `llm` (provider clients), `patch` (`patches`, `ops`, `resolver`, `applier`, `fsutil`) and `protocol` (`jsonrpc`, `schema`, versions). Old docs that mention `pkg/cli`, `internal/context`, `internal/gitutil`, `internal/patches` or `internal/applier` predate that move — the paths above are authoritative.
 
 ## Build & test
 
@@ -60,9 +60,9 @@ orchestra mcp list-tools                     # list tools from configured MCP se
 
 **Two patch layers — keep them separate.** This is the central abstraction:
 
-- **External Patches** (`internal/patches`): the *flexible*, LLM-facing format. The agent only ever returns `final.patches` of type `file.search_replace`, `file.unified_diff`, or `file.write_atomic`. Each carries a `file_hash` (sha256) of the version the LLM read.
-- **Internal Ops** (`internal/ops`): the *strict*, deterministic format that actually mutates disk — `file.replace_range`, `file.write_atomic`, `file.mkdir_all`. Coordinates are 0-based, end-exclusive. Every mutating op carries `conditions.file_hash` and the applier (`internal/applier`) re-checks before writing.
-- `internal/resolver` is the bridge: `ResolveExternalPatches` turns external patches into internal ops by re-reading files and locating the search string via three-pass matching (exact → line-trimmed → indent-flexible). On ambiguity or no match it returns `AmbiguousMatch` / `StaleContent` errors that the agent loop feeds back as hints. The agent loop never emits internal ops directly.
+- **External Patches** (`patch/patches`): the *flexible*, LLM-facing format. The agent only ever returns `final.patches` of type `file.search_replace`, `file.unified_diff`, or `file.write_atomic`. Each carries a `file_hash` (sha256) of the version the LLM read.
+- **Internal Ops** (`patch/ops`): the *strict*, deterministic format that actually mutates disk — `file.replace_range`, `file.write_atomic`, `file.mkdir_all`. Coordinates are 0-based, end-exclusive. Every mutating op carries `conditions.file_hash` and the applier (`patch/applier`) re-checks before writing.
+- `patch/resolver` is the bridge: `ResolveExternalPatches` turns external patches into internal ops by re-reading files and locating the search string via three-pass matching (exact → line-trimmed → indent-flexible). On ambiguity or no match it returns `AmbiguousMatch` / `StaleContent` errors that the agent loop feeds back as hints. The agent loop never emits internal ops directly.
 
 **Agent loop** (`internal/agent/agent.go`, `Agent.Run`): system+user prompt → call `llm.Complete` with OpenAI-style tool defs (`internal/tools/registry.go`) → handle either `tool_call` (execute via `tools.Runner.Call`, append assistant+tool messages to history, loop) or `final` (resolve patches → `tools.FSApplyOps` with dry-run flag). Recoverable errors (`StaleContent`, `AmbiguousMatch`) feed compact hints back into history and the loop continues. Hard caps: `MaxSteps` (default 24), `MaxInvalidRetries` (3), `MaxFinalFailures` (6), `MaxDeniedToolRepeats` (2), `MaxToolErrorRepeats` (6), `LLMStepTimeout` (per step). `truncateMessages` keeps assistant+tool pairs together when shrinking history.
 
@@ -73,7 +73,7 @@ orchestra mcp list-tools                     # list tools from configured MCP se
 
 **Core / RPC** (`internal/core`, `protocol/jsonrpc`, `protocol`): `Core` owns `cfg`, `llmClient`, `tools.Runner`, `schema.Validator`. `RPCHandler` exposes `core.health`, `initialize`, `agent.run`, `tool.call`. Pre-`initialize`, only `core.health` and `initialize` are allowed (others return `NotInitialized`). `initialize` is idempotent for the same params and hard-fails on mismatched `protocol_version` / `ops_version` / `tools_version` / `project_root` / `project_id`. Versions live in `protocol/version.go` — bump them together when the contract changes and update `docs/PROTOCOL.md`.
 
-**Tools** (`internal/tools`): the model-facing surface is large and grows by feature flag. `ListTools(allowExec, allowWeb, allowBrowser)` in `registry.go` is the single source of truth; per-mode variants (`ListToolsForMode`, `ListToolsWithSubtasks`, `ListToolsForChild`, …) layer on top. Full per-tool status: `docs/tools-status.md`. Headline groups:
+**Tools** (`internal/tools`): the model-facing surface is large and grows by feature flag. `ListTools(caps Capabilities)` in `registry.go` is the single source of truth; per-mode variants (`ListToolsForMode`, `ListToolsWithSubtasks`, `ListToolsForChild`, …) layer on top. Full per-tool status: `docs/tools-status.md`. Headline groups:
 
 - **Filesystem**: `ls/read/glob/write/edit/fs.delete/fs.rename/diff.preview`. `write`/`edit` write to a per-run **staging overlay** in dry-run mode (`internal/tools/staging.go`) — disk is only touched when `--apply` is set or `agent.run apply: true`.
 - **Search/nav**: `grep` (auto-fallback to `rg`), `symbols`, `explore` (CKG: package / type / symbol level).
@@ -82,6 +82,7 @@ orchestra mcp list-tools                     # list tools from configured MCP se
 - **Git / GitHub**: read-only `git.status/log/diff`, mutating `git.commit/branch/checkout/push` (allowExec-gated), `gh.pr.list/view/create`, `gh.issue.list/view`.
 - **Browser**: 10 Playwright-MCP tools registered only under `--allow-browser`.
 - **Subagents/session**: `task_spawn/wait/cancel/result`, `todowrite/todoread`, `memory_write`, `plan_exit` (plan mode), legacy `plan_enter` stub, `question`, `runtime_query`.
+- **Agency** (`agency:` config, on by default in `mode=orchestra`; `internal/tasks/agency*.go`, `internal/agent/agency.go`, `docs/agency.md`): children delegate along `agency.flows` down to `max_depth` through a `scopedRunner`; `send_message` (threaded conversations in `.orchestra/agency/threads/`), `agent_post` (live or `.orchestra/agency/inbox/`), `task_board`, `task_wait{task_ids}` with an integration check; a Lead's `batch_workorders[]` are spawned by the runtime (`batch_relay.go`); `depends_on` and per-depth `max_parallel`. Custom `agents:` run as subagents by `base` role; `scout` is the built-in market-research role.
 - **Skills** (`internal/skills/`): file-based agent bundles in `~/.orchestra/skills/` (user-global) and `<project>/.orchestra/skills/` (project overrides user). Invokable two ways — CLI `apply --skill <name>` (whole run uses the skill), or in-process `skill_invoke{skill, task}` (model delegates a subtask synchronously). When any skill is discovered, the agent advertises them in a `<available_skills>` block and gets the `skill_invoke` tool. `$ARGUMENTS` in a skill body is substituted with the user query / task arg. See `docs/skills.md`.
 - **MCP**: external server tools appear as `mcp:<server>:<tool>`; `orchestra mcp list-tools` introspects.
 
@@ -105,5 +106,5 @@ orchestra mcp list-tools                     # list tools from configured MCP se
 ## Conventions to preserve
 
 - Idiomatic Go, no panics for expected failures, errors wrap with `fmt.Errorf("...: %w", err)`. Concurrency uses `context.Context` + `sync.Mutex/RWMutex`; goroutines must have a stop path.
-- Don't reintroduce the v0.2 patterns being deleted: `pkg/cli`, `internal/context` builder, the old `daemon.json`/`cache.json` discovery dance. The HTTP debug endpoint on `core --http` is debug-only; the supported transport is stdio JSON-RPC. **`internal/daemon` and `orchestra daemon` are removed** — see `docs/architecture/paths.md`.
+- Don't reintroduce the removed v0.2 patterns: `pkg/cli`, `internal/context` builder, the old `daemon.json`/`cache.json` discovery dance. The HTTP debug endpoint on `core --http` is debug-only; the supported transport is stdio JSON-RPC. **`internal/daemon` and `orchestra daemon` are removed** — see `docs/architecture/paths.md`.
 - Public CLI flags and the JSON-RPC method names/params are part of the contract. Bump `ProtocolVersion` / `OpsVersion` / `ToolsVersion` rather than silently changing them.

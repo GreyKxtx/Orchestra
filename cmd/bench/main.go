@@ -5,17 +5,29 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 )
 
 func main() {
-	projectRoot := "D:\\CursorProjects\\Orchestra"
+	root := flag.String("root", "", "Orchestra repo root (default: current directory)")
+	flag.Parse()
+	projectRoot := *root
+	if projectRoot == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Printf("ERROR: %v\n", err)
+			os.Exit(1)
+		}
+		projectRoot = wd
+	}
 	testDir := filepath.Join(projectRoot, "testdata", "small")
 	query := "add logging to main.go"
 	iterations := 11
@@ -25,9 +37,13 @@ func main() {
 	fmt.Printf("Query: %s\n", query)
 	fmt.Printf("Iterations: %d (1 warmup + 10 measurements)\n\n", iterations)
 
-	orchestraExe := filepath.Join(projectRoot, "orchestra.exe")
+	exeName := "orchestra"
+	if runtime.GOOS == "windows" {
+		exeName += ".exe"
+	}
+	orchestraExe := filepath.Join(projectRoot, exeName)
 	if _, err := os.Stat(orchestraExe); os.IsNotExist(err) {
-		fmt.Printf("ERROR: %s not found. Run 'go build -o orchestra.exe ./cmd/orchestra' first\n", orchestraExe)
+		fmt.Printf("ERROR: %s not found. Run 'go build -o %s ./cmd/orchestra' first\n", orchestraExe, exeName)
 		os.Exit(1)
 	}
 

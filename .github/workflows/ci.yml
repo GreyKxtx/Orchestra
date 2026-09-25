@@ -31,8 +31,29 @@ jobs:
       - name: Vet
         run: go vet ./... ./protocol/... ./patch/... ./llm/...
 
-      - name: Test
-        run: go test ./... ./protocol/... ./patch/... ./llm/...
+      - name: Test (coverage)
+        run: go test -coverprofile=coverage.out ./... ./protocol/... ./patch/... ./llm/...
+
+      # A floor, not a target: it catches a change that lands a package of
+      # untested code, and moves up by hand as coverage does. Measured with
+      # ORCHESTRA_LSP_AUTO_INSTALL=false, as above — tests that need gopls
+      # skip here, so the number is lower than on a laptop that has it.
+      - name: Coverage floor
+        env:
+          COVERAGE_FLOOR: "58"
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ { sub("%", "", $3); print $3 }')
+          echo "Go statement coverage: ${total}% (floor ${COVERAGE_FLOOR}%)" | tee -a "$GITHUB_STEP_SUMMARY"
+          awk -v t="$total" -v min="$COVERAGE_FLOOR" 'BEGIN { exit !(t + 0 >= min + 0) }' \
+            || { echo "::error::coverage ${total}% is below the ${COVERAGE_FLOOR}% floor"; exit 1; }
+
+      - name: Upload coverage profile
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: ignore
 
       - name: Import rules
         run: go test ./tests/importrules/... -count=1

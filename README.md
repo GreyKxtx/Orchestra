@@ -16,7 +16,7 @@ Primary transport: **JSON-RPC 2.0 over stdio** (LSP-style); the CLI sits on top 
 | Streaming | SSE streaming, tool-call chunk accumulator | ✅ |
 | Grammar | Structured output, retry/circuit-breaker, prompt families | ✅ |
 | Session | Conversation history, todo list, `agent.run` over JSON-RPC | ✅ |
-| Subagents | `task.spawn/wait/cancel`, child agents with read-only tools | ✅ |
+| Subagents | `task.spawn/wait/cancel`; `explore`/`ask`/`verifier` children are read-only, `worker` writes only its WorkOrder `target_files` | ✅ |
 | Hooks | Pre/post-tool shell hooks, `TOOL_DENIED` on nonzero exit | ✅ |
 | Memory | `~/.orchestra/ORCHESTRA.md` → `ORCHESTRA.md` → `.orchestra/memory/*.md` → `~/.orchestra/memory.md` | ✅ |
 | MCP | JSON-RPC 2.0 stdio MCP client, multi-server manager | ✅ |
@@ -36,6 +36,7 @@ Primary transport: **JSON-RPC 2.0 over stdio** (LSP-style); the CLI sits on top 
 | Reasoning Stream | Parses `delta.reasoning_content` / `delta.thinking_content` (Qwen3, DeepSeek-R1 via LM Studio); auto-wraps into `<think>…</think>` for `ReasoningSplitter`; SSE tap behind the `ORCH_STREAM_DEBUG` env flag | ✅ |
 | TUI (Phase 0-5) | Bubbletea + lipgloss; inline tool list, OpenCode-style busy indicator in the status bar, mouse wheel scroll, "Thinking:" block with a `┃` border, render-cache invalidation on Ctrl+T, mode-aware accent colors | ✅ |
 | Planner–Worker | `mode=orchestra` Lead + `subagent_type=worker`, WorkOrder JSON, `target_symbol` scoping, LSP E2E | ✅ |
+| Agency | Dept Leads spawn their own scouts and workers along `agency.flows`; `send_message` conversations that persist, `agent_post` notes between departments, `batch_workorders[]` relayed by the runtime, `depends_on`, per-depth `max_parallel`, `task_board`, integration check across workers (dry-run builds via `go build -overlay`), custom `agents:` as subagents, `scout` for competitor research — [docs/agency.md](docs/agency.md) | ✅ |
 | Orchestra Lead surface | Strict allowlist of **16 tools** (`listToolsOrchestra`); no edit/LSP/bash; Step-1 prompt **≤ 8k tokens** | ✅ |
 | CKG v5 | Multi-hop explore (`depth`/`direction`), subgraph cap 1500 tokens, protocol **ToolsVersion 14** | ✅ |
 | Learning stack | Dept lessons + playbooks with inject quotas; `lesson_promote` / `playbook_promote`; a single-agent turn that repeats the same anti-pattern 3× on one file offers a human `[y/n]` rule suggestion for `ORCHESTRA.md` | ✅ |
@@ -71,7 +72,7 @@ Check the install:
 ```bash
 orchestra version
 # orchestra vnext (a1b2c3d)
-# protocol 20 · ops 1 · tools 15
+# protocol 21 · ops 1 · tools 16
 
 orchestra version --check   # compare against the latest GitHub release
 ```
@@ -524,7 +525,7 @@ Installers and auto-update are not built yet.
 
 ## Requirements
 
-- Go 1.22+
+- Go 1.25+
 - LLM API: an OpenAI-compatible provider (LM Studio, vLLM, OpenAI, Anthropic…)
 
 ## License

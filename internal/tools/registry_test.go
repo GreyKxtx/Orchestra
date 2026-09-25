@@ -261,10 +261,20 @@ func TestListToolsForMode_ProductSurface(t *testing.T) {
 			t.Fatalf("product mode missing tool %q", want)
 		}
 	}
-	// No code execution, no git mutation, no nested spawn.
-	for _, forbid := range []string{"bash", "git.commit", "git.push", "task", "task_spawn", "plan_enter"} {
+	// No code execution, no git mutation.
+	for _, forbid := range []string{"bash", "git.commit", "git.push", "plan_enter"} {
 		if names[forbid] {
 			t.Fatalf("product mode must not expose %q", forbid)
+		}
+	}
+	// Spawn only with subtasks: stage 0 pairs the Product Lead with Market
+	// Scouts (spec §2.1), and the agency grants it the product > scout edge.
+	if !names["task_spawn"] || !names["task_wait"] {
+		t.Fatal("with subtasks, product mode must be able to run its scouts in parallel")
+	}
+	for _, d := range ListToolsForMode("product", Capabilities{}, false, true) {
+		if n := d.Function.Name; n == "task" || n == "task_spawn" {
+			t.Fatalf("without subtasks, product mode must not expose %q", n)
 		}
 	}
 }

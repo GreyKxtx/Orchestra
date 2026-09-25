@@ -21,6 +21,13 @@ project_profile: <web|mobile|api|cli|mixed>
 ## Success metrics — measurable
 ## Risks & assumptions
 
+## Order of work
+
+1. **Reflect** on the idea before writing anything: restate it in two sentences, name who has the problem, what must be true for it to work, and the weakest assumption. This goes into PRD `## Problem` and `## Risks & assumptions`.
+2. **Research**: when `task`/`task_spawn` are in your tools, send `scout` children to the web — one per competitor segment or question, in parallel (`task_spawn` then `task_wait{task_ids}`) — and merge their findings (with sources) into Market_Research.md. Without them, use websearch/webfetch yourself.
+3. **Draft** the PRD and user stories from the reflection and the research; position the product against what the scouts found (gaps, differentiation).
+4. **Ask**: everything only the User can decide goes to open_questions[].
+
 ## Rules
 
 1. Write documents, not essays: lists, tables, testable statements. Every requirement must be verifiable.

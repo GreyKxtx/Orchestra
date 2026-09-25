@@ -83,6 +83,21 @@ func workerTaskResultSuccess(raw string) bool {
 	return false
 }
 
+// workerOutcomeSucceeded reads a worker result after the runtime has wrapped
+// it. workerTaskResultSuccess reads the worker's own answer, and to it
+// "verified_success" is an unknown status — so every consumer of the final
+// result that used it (doc debt among them) saw a verified worker as failed.
+func workerOutcomeSucceeded(raw string) bool {
+	st, _ := ParseWorkerTaskResult(raw)
+	switch st {
+	case "verified_success":
+		return true
+	case "verification_failed", "llm_verification_failed", "needs_review", "no_changes", "no_result":
+		return false
+	}
+	return workerTaskResultSuccess(raw)
+}
+
 // CollectEditedPaths returns unique relative paths touched by edit/write in history.
 func CollectEditedPaths(hist []llm.Message, primaryPath string) []string {
 	seen := make(map[string]struct{})
@@ -125,6 +140,11 @@ func CollectEditedPaths(hist []llm.Message, primaryPath string) []string {
 type WorkerVerifyOptions struct {
 	AffectedTests     bool
 	FrontendTypecheck bool
+	// AllowExec is the turn's exec consent. `go test` runs the code the
+	// worker just wrote, so it needs the same consent as bash; without it the
+	// affected tests are reported skipped. `go build` only compiles and runs
+	// either way.
+	AllowExec bool
 }
 
 // VerifyWorkerOutcome runs deterministic checks before Lead sees worker success.
@@ -146,23 +166,115 @@ func VerifyWorkerOutcome(ctx context.Context, runner *tools.Runner, paths []stri
 	if runner != nil && !runner.DryRun() {
 		root := runner.WorkspaceRoot()
 		for _, pkg := range goBuildPackages(paths) {
-			record(verifyWorkerGoBuild(ctx, root, pkg))
+			record(verifyWorkerGoBuild(ctx, root, pkg, ""))
 			if opts.AffectedTests {
-				record(verifyWorkerGoTest(ctx, root, pkg))
+				record(verifyWorkerGoTest(ctx, root, pkg, "", opts.AllowExec))
 			}
 		}
 		if opts.FrontendTypecheck && hasFrontendFile(paths) {
 			record(verifyWorkerFrontendTypecheck(ctx, root))
 		}
-	} else if runner != nil && hasGoFile(paths) {
-		checks = append(checks, WorkerVerifyCheck{
-			Name:   "go_build",
-			OK:     true,
-			Skip:   true,
-			Detail: "skipped in dry-run (staging overlay; LSP gate covers compile errors)",
-		})
+	} else if runner != nil {
+		// Every core turn runs in dry-run — edits live in the staging
+		// overlay until the turn is applied — so this is the branch real
+		// workers take. go build and go test read the overlay through
+		// -overlay; tsc has no such flag and stays skipped.
+		if hasGoFile(paths) {
+			for _, c := range verifyStagedGo(ctx, runner, paths, opts) {
+				record(c)
+			}
+		}
+		if opts.FrontendTypecheck && hasFrontendFile(paths) {
+			checks = append(checks, WorkerVerifyCheck{
+				Name:   "frontend_typecheck",
+				OK:     true,
+				Skip:   true,
+				Detail: "skipped in dry-run: tsc cannot read the staging overlay (LSP gate covers type errors)",
+			})
+		}
 	}
 	return WorkerVerifyReport{Passed: allOK, Checks: checks}
+}
+
+// verifyStagedGo builds — and, with exec consent, tests — the packages a
+// worker touched as they will be once the turn is applied: `go build
+// -overlay` swaps each staged .go file in for its disk copy without writing
+// the workspace. Until this, a dry-run worker (every worker of every core
+// turn) was verified by LSP alone, and "the pieces build together" was never
+// checked by anything.
+func verifyStagedGo(ctx context.Context, runner *tools.Runner, paths []string, opts WorkerVerifyOptions) []WorkerVerifyCheck {
+	root := runner.WorkspaceRoot()
+	skip := func(detail string) []WorkerVerifyCheck {
+		return []WorkerVerifyCheck{{Name: "go_build", OK: true, Skip: true, Detail: detail}}
+	}
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		return skip("no go.mod")
+	}
+	staged := runner.StagedFileContent()
+	for rel := range staged {
+		switch filepath.Base(rel) {
+		case "go.mod", "go.sum", "go.work":
+			return skip("skipped in dry-run: " + rel + " is staged and go -overlay cannot replace module files (LSP gate covers compile errors)")
+		}
+	}
+	overlay, cleanup, err := writeGoOverlay(root, staged)
+	if err != nil {
+		return skip("skipped in dry-run: overlay: " + err.Error())
+	}
+	defer cleanup()
+	var out []WorkerVerifyCheck
+	for _, pkg := range goBuildPackages(paths) {
+		out = append(out, verifyWorkerGoBuild(ctx, root, pkg, overlay))
+		if opts.AffectedTests {
+			out = append(out, verifyWorkerGoTest(ctx, root, pkg, overlay, opts.AllowExec))
+		}
+	}
+	return out
+}
+
+// goOverlayDirRel is where overlay files for dry-run builds are written.
+// Inside .orchestra/ (ignored by `go ... ./...` for its leading dot) so the
+// runtime never writes outside the workspace.
+const goOverlayDirRel = ".orchestra/tmp"
+
+// writeGoOverlay writes every staged .go file to a scratch directory and the
+// -overlay JSON that maps each workspace path to its staged copy. The caller
+// must run cleanup.
+func writeGoOverlay(root string, staged map[string]string) (string, func(), error) {
+	base := filepath.Join(root, filepath.FromSlash(goOverlayDirRel))
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return "", func() {}, err
+	}
+	dir, err := os.MkdirTemp(base, "goverlay-")
+	if err != nil {
+		return "", func() {}, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	replace := map[string]string{}
+	i := 0
+	for rel, content := range staged {
+		if !strings.HasSuffix(strings.ToLower(rel), ".go") {
+			continue
+		}
+		i++
+		tmp := filepath.Join(dir, fmt.Sprintf("f%d.go", i))
+		if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+			cleanup()
+			return "", func() {}, err
+		}
+		replace[filepath.Join(root, filepath.FromSlash(rel))] = tmp
+	}
+	data, err := json.Marshal(map[string]any{"Replace": replace})
+	if err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	overlay := filepath.Join(dir, "overlay.json")
+	if err := os.WriteFile(overlay, data, 0o644); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return overlay, cleanup, nil
 }
 
 func verifyWorkerLSP(ctx context.Context, runner *tools.Runner, relPath string) WorkerVerifyCheck {
@@ -194,16 +306,20 @@ func verifyWorkerLSP(ctx context.Context, runner *tools.Runner, relPath string) 
 	return check
 }
 
-func verifyWorkerGoBuild(ctx context.Context, root, pkg string) WorkerVerifyCheck {
+func verifyWorkerGoBuild(ctx context.Context, root, pkg, overlay string) WorkerVerifyCheck {
 	check := WorkerVerifyCheck{Name: "go_build", Path: pkg, OK: true}
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		check.Skip = true
 		check.Detail = "no go.mod"
 		return check
 	}
+	args := []string{"build", "-o", goBuildDevNull()}
+	if overlay != "" {
+		args = append(args, "-overlay", overlay)
+	}
 	resp, err := exec.Run(ctx, root, workerVerifyBuildTimeout, 32*1024, exec.RunRequest{
 		Command:   "go",
-		Args:      []string{"build", "-o", goBuildDevNull(), pkg},
+		Args:      append(args, pkg),
 		TimeoutMS: int(workerVerifyBuildTimeout / time.Millisecond),
 	})
 	if err != nil {
@@ -228,16 +344,25 @@ func verifyWorkerGoBuild(ctx context.Context, root, pkg string) WorkerVerifyChec
 // verifyWorkerGoTest runs the tests of one edited package (affected tests,
 // checklist 23). Whole-repo test runs stay on the Platform stage; the worker
 // gate covers only the packages the worker touched.
-func verifyWorkerGoTest(ctx context.Context, root, pkg string) WorkerVerifyCheck {
+func verifyWorkerGoTest(ctx context.Context, root, pkg, overlay string, allowExec bool) WorkerVerifyCheck {
 	check := WorkerVerifyCheck{Name: "go_test", Path: pkg, OK: true}
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		check.Skip = true
 		check.Detail = "no go.mod"
 		return check
 	}
+	if !allowExec {
+		check.Skip = true
+		check.Detail = "needs exec consent (--allow-exec or exec.confirm: false): go test runs the code the worker wrote"
+		return check
+	}
+	args := []string{"test", "-count=1"}
+	if overlay != "" {
+		args = append(args, "-overlay", overlay)
+	}
 	resp, err := exec.Run(ctx, root, workerVerifyBuildTimeout, 32*1024, exec.RunRequest{
 		Command:   "go",
-		Args:      []string{"test", "-count=1", pkg},
+		Args:      append(args, pkg),
 		TimeoutMS: int(workerVerifyBuildTimeout / time.Millisecond),
 	})
 	if err != nil {
@@ -669,7 +794,7 @@ func (r *TaskRunner) resolvedWorkerVerifyEnabled() bool {
 // frontend typecheck too — both self-gate on project shape (go.mod /
 // tsconfig.json) and dry-run.
 func (r *TaskRunner) resolvedWorkerVerifyOptions() WorkerVerifyOptions {
-	opts := WorkerVerifyOptions{AffectedTests: true, FrontendTypecheck: true}
+	opts := WorkerVerifyOptions{AffectedTests: true, FrontendTypecheck: true, AllowExec: r.child.Caps.Exec}
 	if r.child.WorkerVerifyAffectedTests != nil {
 		opts.AffectedTests = *r.child.WorkerVerifyAffectedTests
 	}

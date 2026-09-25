@@ -149,10 +149,24 @@ type ChildAgentConfig struct {
 	ChildEventSink func(taskID, parentToolCallID, subagentType string) func(agent.AgentEvent)
 	// NotifyAgentEvent emits arbitrary agent/event payloads (child lifecycle).
 	NotifyAgentEvent func(params map[string]any)
+	// Agency is the resolved agency: section (AgencyFromConfig): who may
+	// delegate to or message whom, nesting depth, concurrency, budgets. The
+	// zero value keeps the one-level runner (no nested spawn, no messages)
+	// with no concurrency cap.
+	Agency AgencySettings
+	// Agents are the custom agents (agents: in .orchestra.yml) a parent may
+	// start by name as subagent_type.
+	Agents []AgentProfile
 }
 
 // TaskRunner implements agent.SubtaskRunner using real child agents.
-// Child agents cannot spawn further subtasks (hasSubtasks=false).
+//
+// Without the agency (ChildAgentConfig.Agency.Enabled=false) children cannot
+// spawn further subtasks. With it, a child delegates and talks along the
+// agency flows down to Agency.MaxDepth — the Orchestrator → Dept Lead →
+// Worker shape of the spec — through a scopedRunner that carries its place
+// in the tree. Every task of the turn, at any depth, is registered here: one
+// board, one disjoint-scope check, one set of concurrency slots.
 type TaskRunner struct {
 	llmClient  llm.Client
 	validator  *schema.Validator
@@ -162,6 +176,19 @@ type TaskRunner struct {
 	mu    sync.Mutex
 	tasks map[string]*taskEntry
 	seq   int
+
+	// all keeps every task of the turn, collected ones included, for
+	// task_board and for depends_on on a task that was already waited for.
+	all   []*taskEntry
+	byKey map[string]*taskEntry
+	// slots are the per-depth concurrency semaphores (Agency.MaxParallel).
+	slots map[int]chan struct{}
+	// messages counts send_message + agent_post against Agency.MaxMessages.
+	messages int
+	// rootInbox holds notes for the top-level agent, drained on its next step.
+	rootInbox []agent.InboxMessage
+	// storeMu serialises the inbox and thread files under .orchestra/agency.
+	storeMu sync.Mutex
 }
 
 // Cancellation causes (resilience audit P4): recorded via
@@ -195,6 +222,22 @@ type taskEntry struct {
 	// contractRefs pins the running worker to contract artifact versions;
 	// used by InvalidateStaleContractTasks on epoch change (spec §5.3).
 	contractRefs []contract.Ref
+
+	// Agency bookkeeping, guarded by TaskRunner.mu.
+	key          string       // name for depends_on (WorkOrder task_id)
+	address      string       // who the child is: department, custom agent or role
+	role         string       // built-in role it runs as
+	parent       string       // address of the spawner
+	parentTaskID string       // task of the spawner ("" = the root)
+	depth        int          // root children = 1
+	deps         []*taskEntry // must succeed before this one starts
+	goal         string       // first line of the goal, for the board
+	status       string       // queued|waiting_deps|running|done|error|timeout|cancelled
+	started      time.Time
+	finished     time.Time
+	worker       bool
+	edited       []string             // files a successful worker changed
+	inbox        []agent.InboxMessage // live notes for the running child
 }
 
 // New creates a new TaskRunner.
@@ -205,6 +248,8 @@ func New(llmClient llm.Client, validator *schema.Validator, toolRunner *tools.Ru
 		toolRunner: toolRunner,
 		child:      child,
 		tasks:      make(map[string]*taskEntry),
+		byKey:      make(map[string]*taskEntry),
+		slots:      make(map[int]chan struct{}),
 	}
 }
 
@@ -255,6 +300,8 @@ func modeForSubagent(subagentType string) agent.Mode {
 		return agent.ModeProduct
 	case "documentation":
 		return agent.ModeDocs
+	case "scout":
+		return agent.ModeScout
 	default:
 		return agent.Mode(subagentType)
 	}
@@ -269,12 +316,61 @@ const DefaultChildMaxSteps = 12
 // applies it (agent.Options.ChildTimeoutMS, from agent.child_timeout_s).
 const DefaultTaskTimeoutMS = agent.DefaultChildTimeoutMS
 
-// Spawn creates a new child agent task and starts it in a goroutine.
+// Spawn creates a new child agent task and starts it in a goroutine. Called
+// on the TaskRunner itself it spawns as the root agent (the hub); children
+// spawn through their scopedRunner.
 func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (string, error) {
+	return r.spawnFrom(ctx, rootScope(), req, spawnExtra{})
+}
+
+// spawnExtra carries what only the runtime sets on a spawn.
+type spawnExtra struct {
+	// history is the recipient's earlier conversation with the sender
+	// (send_message threads); nil for a fresh child.
+	history []llm.Message
+	// verb names the act in refusals ("delegate to", "message").
+	verb string
+	// owner, when set, is the agent the task belongs to — who may wait for
+	// and cancel it — in place of the spawner. The batch relay spawns as the
+	// Lead (its flows, its department) on behalf of the Lead's parent.
+	owner *agentScope
+}
+
+func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.SubtaskSpawnRequest, extra spawnExtra) (string, error) {
 	r.mu.Lock()
 	r.seq++
 	taskID := fmt.Sprintf("task_%d_%d", r.seq, time.Now().UnixNano()%100000)
 	r.mu.Unlock()
+
+	r.applyTaskTypeRoute(&req)
+	dept := strings.TrimSpace(req.Dept)
+	target, err := r.resolveTarget(req.SubagentType, dept)
+	if err != nil {
+		return "", err
+	}
+	// A Lead's workers work for the Lead's department unless told otherwise:
+	// its scratchpad, playbook and lessons are theirs too. Only workers — a
+	// scout the Lead sends out is not the department, and must not answer to
+	// its address or read its inbox.
+	if dept == "" && from.dept != "" && strings.EqualFold(target.role, "worker") {
+		dept = from.dept
+		target.address = dept
+	}
+	verb := extra.verb
+	if verb == "" {
+		verb = "delegate to"
+	}
+	if err := r.checkReach(from, target, verb); err != nil {
+		return "", err
+	}
+	if p := target.profile; p != nil {
+		if strings.TrimSpace(req.Provider) == "" && strings.TrimSpace(req.Model) == "" && strings.TrimSpace(req.Tier) == "" {
+			req.Provider, req.Model, req.Tier = p.Provider, p.Model, p.Tier
+		}
+		if req.MaxSteps <= 0 && p.MaxSteps > 0 {
+			req.MaxSteps = p.MaxSteps
+		}
+	}
 
 	capSteps := r.child.MaxStepsCap
 	if capSteps <= 0 {
@@ -285,21 +381,21 @@ func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (
 		maxSteps = capSteps
 	}
 
-	r.applyTaskTypeRoute(&req)
-	subagentType := req.SubagentType
-	if subagentType == "" {
-		subagentType = "explore"
-	}
 	if r.child.GuardSpawn != nil {
-		if err := r.child.GuardSpawn(subagentType); err != nil {
+		if err := r.child.GuardSpawn(target.role); err != nil {
 			return "", err
 		}
 	}
+	isWorker := strings.EqualFold(target.role, "worker")
+	key := strings.TrimSpace(req.Key)
+	dependsOn := append([]string(nil), req.DependsOn...)
 	var editPaths map[string]struct{}
 	var contractRefs []contract.Ref
-	if strings.EqualFold(subagentType, "worker") {
+	if isWorker {
 		goal := strings.TrimSpace(req.Goal)
 		if goal != "" && json.Valid([]byte(goal)) {
+			goal = withDefaultScratchpad(goal, dept)
+			req.Goal = goal
 			wo, err := ParseWorkOrderJSON(goal)
 			if err != nil {
 				return "", err
@@ -316,9 +412,12 @@ func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (
 			}
 			editPaths = normalizeEditPathSet(EditScopePaths(wo))
 			contractRefs = wo.ContractRefs
+			if key == "" {
+				key = strings.TrimSpace(wo.TaskID)
+			}
+			dependsOn = append(dependsOn, wo.DependsOn...)
 		}
 	}
-	childTools := childToolsForSubagent(subagentType, r.child.Caps)
 
 	// Inherit parent cancellation so finishing/cancelling the parent turn
 	// stops orphaned children. Timeout still applies when TimeoutMS > 0.
@@ -330,7 +429,7 @@ func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (
 	var cancel context.CancelCauseFunc
 	// lead_brief_s (spec §4.5): architecture children without an explicit
 	// timeout get the Lead brief wall-clock cap in orchestrated sessions.
-	effectiveTimeoutMS := r.leadBriefTimeoutMS(subagentType, req.TimeoutMS)
+	effectiveTimeoutMS := r.leadBriefTimeoutMS(target.role, req.TimeoutMS)
 	if effectiveTimeoutMS > 0 {
 		var tcancel context.CancelFunc
 		taskCtx, tcancel = context.WithTimeout(parent, time.Duration(effectiveTimeoutMS)*time.Millisecond)
@@ -350,21 +449,53 @@ func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (
 		done:         make(chan struct{}),
 		editPaths:    editPaths,
 		contractRefs: contractRefs,
+		key:          key,
+		address:      target.address,
+		role:         target.role,
+		parent:       from.address,
+		parentTaskID: from.taskID,
+		depth:        from.depth + 1,
+		goal:         firstLine(req.Goal, 120),
+		status:       "queued",
+		started:      time.Now(),
+		worker:       isWorker,
+	}
+	if extra.owner != nil {
+		entry.parent = extra.owner.address
+		entry.parentTaskID = extra.owner.taskID
 	}
 
 	// Disjoint check (spec §5.6): collect running worker tasks whose edit
 	// scope intersects ours. Registration and conflict collection happen
 	// under one lock, so two overlapping spawns cannot both see a clear
 	// field. Each task waits only for tasks registered before it — the
-	// wait graph is acyclic by construction.
+	// wait graph is acyclic by construction, and so is the depends_on
+	// graph: a dependency must already be registered.
 	r.mu.Lock()
+	deps, depErr := r.resolveDepsLocked(dependsOn)
+	if depErr != nil {
+		r.mu.Unlock()
+		cancel(nil)
+		return "", depErr
+	}
+	entry.deps = deps
 	conflicts := r.conflictingTasksLocked(editPaths)
 	r.tasks[taskID] = entry
+	r.all = append(r.all, entry)
+	if key != "" {
+		// A re-spawned WorkOrder takes its key over: later dependents mean
+		// the attempt that is still to come, not the one that failed.
+		r.byKey[key] = entry
+	}
 	r.mu.Unlock()
+
+	childScope := from.child(target.address, target.role, target.name, taskID)
+	childScope.dept = dept
 
 	go func() {
 		defer close(entry.done)
 		defer cancel(nil)
+		defer r.markFinished(entry)
 		// Resilience audit P1: a panic escaping runChild (agent loop, prompt
 		// assembly, verification pipeline) in this goroutine would kill the
 		// whole core process — parent orchestrator, sibling workers and the
@@ -386,13 +517,27 @@ func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (
 						"type":                "child_done",
 						"task_id":             taskID,
 						"parent_tool_call_id": req.ParentToolCallID,
-						"subagent_type":       subagentType,
+						"subagent_type":       target.name,
 						"status":              "error",
 						"error":               fmt.Sprintf("child agent panicked: %v", rec),
 					})
 				}
 			}
 		}()
+
+		upstream := ""
+		if len(deps) > 0 {
+			r.setStatus(entry, "waiting_deps")
+			var res *agent.SubtaskResult
+			upstream, res = r.awaitDeps(taskCtx, entry)
+			if res != nil {
+				r.notifyChildDone(taskID, req.ParentToolCallID, target.name, res)
+				r.mu.Lock()
+				entry.result = res
+				r.mu.Unlock()
+				return
+			}
+		}
 
 		if len(conflicts) > 0 {
 			r.notifyQueued(taskID, req.ParentToolCallID, conflicts)
@@ -412,8 +557,22 @@ func (r *TaskRunner) Spawn(ctx context.Context, req agent.SubtaskSpawnRequest) (
 			}
 		}
 
-		result := r.runChild(taskCtx, taskID, req, subagentType, maxSteps, childTools)
-		r.notifyChildDone(taskID, req.ParentToolCallID, subagentType, result)
+		release, err := r.acquireSlot(taskCtx, entry, req.ParentToolCallID)
+		if err != nil {
+			r.mu.Lock()
+			entry.result = &agent.SubtaskResult{
+				TaskID: taskID,
+				Status: "timeout",
+				Error:  "cancelled while waiting for a free slot (agency.max_parallel)",
+			}
+			r.mu.Unlock()
+			return
+		}
+		defer release()
+		r.setStatus(entry, "running")
+
+		result := r.runChild(taskCtx, taskID, req, target, childScope, maxSteps, extra.history, upstream)
+		r.notifyChildDone(taskID, req.ParentToolCallID, target.name, result)
 
 		r.mu.Lock()
 		entry.result = result
@@ -555,7 +714,9 @@ func (r *TaskRunner) resolveChildLLM(req agent.SubtaskSpawnRequest, subagentType
 	return r.llmClient, pl, ml
 }
 
-func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.SubtaskSpawnRequest, subagentType string, maxSteps int, childTools []llm.ToolDef) *agent.SubtaskResult {
+func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.SubtaskSpawnRequest, target spawnTarget, scope agentScope, maxSteps int, history []llm.Message, upstream string) *agent.SubtaskResult {
+	subagentType := target.role
+	childTools := r.childToolsForTarget(target, scope)
 	var workOrder *WorkOrder
 	if strings.EqualFold(subagentType, "worker") {
 		goal := strings.TrimSpace(req.Goal)
@@ -619,20 +780,32 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	if r.child.ChildEventSink != nil {
 		opts.OnEvent = r.child.ChildEventSink(taskID, req.ParentToolCallID, subagentType)
 	}
+	if r.child.Agency.Enabled {
+		opts.SubtaskRunner = &scopedRunner{r: r, s: scope}
+	}
 	if r.child.NotifyAgentEvent != nil {
 		eventTier := strings.TrimSpace(req.Tier)
 		if eventTier == "" && isLeadGradeSubagent(subagentType) {
 			eventTier = "lead" // L4 badge in UI even without explicit spawn tier
 		}
-		r.child.NotifyAgentEvent(map[string]any{
+		ev := map[string]any{
 			"type":                "child_started",
 			"task_id":             taskID,
 			"parent_tool_call_id": req.ParentToolCallID,
-			"subagent_type":       subagentType,
+			"subagent_type":       target.name,
 			"tier":                eventTier,
 			"model":               modelLabel,
 			"content":             req.Goal,
-		})
+			"agent":               scope.address,
+			"depth":               scope.depth,
+		}
+		if len(scope.chain) > 1 {
+			ev["parent_agent"] = scope.chain[len(scope.chain)-2]
+		}
+		if scope.parentTaskID != "" {
+			ev["parent_task_id"] = scope.parentTaskID
+		}
+		r.child.NotifyAgentEvent(ev)
 	}
 	if mode == agent.ModeWorker && r.child.MaxWorkerRetries > 0 {
 		opts.MaxFinalFailures = r.child.MaxWorkerRetries
@@ -655,6 +828,26 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	if pb := loadDeptPlaybook(r.toolRunner.WorkspaceRoot(), mode, workOrder); pb != "" {
 		childGoal = pb + "\n\n" + childGoal
 	}
+	// Agency context, outermost first in reading order: who the child is,
+	// what its department already knows, what it was told while idle, and
+	// what the tasks it waited for produced.
+	if upstream != "" {
+		childGoal = upstream + "\n\n" + childGoal
+	}
+	// A department's inbox and scratchpad are its Lead's: workers share the
+	// address to hear each other live, but must not consume the notes left
+	// for the Lead.
+	if mode != agent.ModeWorker {
+		if notes := r.takeInbox(scope.address); len(notes) > 0 {
+			childGoal = agent.FormatAgentMessages(notes, agencyInboxInjectMaxBytes) + "\n\n" + childGoal
+		}
+		if sp := loadDeptScratchpadForLead(r.toolRunner.WorkspaceRoot(), scope.dept); sp != "" {
+			childGoal = sp + "\n\n" + childGoal
+		}
+	}
+	if target.profile != nil && target.profile.SystemPrompt != "" {
+		childGoal = formatAgentRole(target.profile) + "\n\n" + childGoal
+	}
 	if mode == agent.ModeWorker && workOrder != nil {
 		opts.WorkerEditPaths = EditScopePaths(workOrder)
 		// WorkOrder-driven worker → schema-enforced task_result
@@ -671,7 +864,16 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		if err != nil {
 			return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: err.Error()}
 		}
-		hist, res, runErr = ag.Run(ctx, nil, childGoal)
+		hist, res, runErr = ag.Run(ctx, append([]llm.Message(nil), history...), childGoal)
+	}
+	// Notes that arrived after the child's last step would be lost with it;
+	// they go to its inbox for the next agent at this address. A worker's
+	// leftovers are sibling chatter about a batch that is over — dropped
+	// rather than handed to the department's next Lead.
+	if mode != agent.ModeWorker {
+		r.flushLiveInbox(taskID, scope.address)
+	} else {
+		r.drainTaskInbox(taskID)
 	}
 	status := "done"
 	errMsg := ""
@@ -706,6 +908,10 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	if subagentType == "" || subagentType == "explore" {
 		taskResult = agent.FormatSubagentResult(subagentType, req.Goal, hist, taskResult, r.child.ToolDigestBytes)
 	}
+	// A Dept Lead that returns batch_workorders[] hands them to the runtime
+	// (spec §3.7, §5.6): the workers are spawned, run and verified here, and
+	// the Lead's result carries their outcome up.
+	taskResult = r.relayBatchWorkOrders(ctx, scope, target, taskResult)
 
 	// Question Barrier (spec §4.3): relay open_questions[] to the user via
 	// the runtime, append answers to decisions.md, attach them to the result.
@@ -735,8 +941,10 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 
 	// Doc debt (spec §2.3.2): verified worker edits that hit a MANIFEST
 	// trigger put the mapped doc into state.md doc_debt for 6b.
-	if mode == agent.ModeWorker && workerTaskResultSuccess(taskResult) {
-		recordDocDebt(r.toolRunner.WorkspaceRoot(), CollectEditedPaths(hist, ""))
+	if mode == agent.ModeWorker && workerOutcomeSucceeded(taskResult) {
+		edited := CollectEditedPaths(hist, "")
+		recordDocDebt(r.toolRunner.WorkspaceRoot(), edited)
+		r.recordEdited(taskID, edited)
 	}
 
 	r.recordWorkerToDeptScratchpad(workOrder, taskResult, "done", "")
