@@ -24,7 +24,7 @@ func (a *Agent) contextBreakdownFixed() []ctxCategory {
 		if bpt <= 0 {
 			bpt = DefaultBytesPerContextToken
 		}
-		parts := a.buildSystemPromptParts()
+		parts := a.turnSystemPromptParts()
 		toolBytes := len(parts.catalog)
 		if b, err := json.Marshal(a.buildToolDefs()); err == nil {
 			toolBytes += len(b)

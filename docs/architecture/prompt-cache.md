@@ -12,11 +12,19 @@ roughly an order of magnitude in cost, plus a large cut in time-to-first-token.
 `Agent.nextStep` (`internal/agent/agent_step.go`) builds every request as:
 
 ```
-system            ← buildSystemPrompt: base + project memory + tool catalog
+system            ← turnSystemPrompt: base + project memory + tool catalog, built once per run
 user  (stable)    ← BuildUserPrompt(query, snapshot) [+ CKG context on step 1]
 …history…         ← append-only: assistant tool_calls + tool results
-user  (volatile)  ← todos, <working_state>, turn digests, mode reminder
+user  (volatile)  ← todos, <working_state>, turn digests, mode reminder, lessons of a new department
 ```
+
+The system prompt carries injected memory, and it used to be rebuilt on every
+step. A `memory_write` mid-turn — the model's own, or the session auto-note
+after an `explore` — changed it, so in session mode every later step missed
+the cache (DATA-2 in the 2026-09 audit). It is now built on the run's first
+step and kept (`Agent.turnSystemPromptParts`): what the model wrote is in its
+history anyway, and when the files it works on point at another department,
+that department's lessons come in the volatile tail (`Agent.lessonsUpdate`).
 
 The volatile block changes on nearly every step — `working.ObserveTool` updates
 it after each tool call. It therefore goes **last**, after the history. Placed
