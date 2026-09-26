@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"path/filepath"
 
+	"github.com/orchestra/orchestra/internal/ckg"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/lsp"
 	"github.com/orchestra/orchestra/internal/tools/nav"
@@ -23,7 +25,30 @@ func (r *Runner) navClient() *nav.Client {
 		r.embedCfg,
 		r.snapshotCKG,
 		func() *lsp.Manager { return r.lspManager },
-	)
+	).WithStaged(r.stagedFilesAt)
+}
+
+// stagedFilesAt is the staged files of the view behind ctx — the task's
+// layer over the turn's overlay — and a reader of them, for the code graph
+// to answer from (LLM-11).
+func (r *Runner) stagedFilesAt(ctx context.Context) ([]ckg.StagedFile, func(string) ([]byte, bool)) {
+	o := r.overlayAt(ctx)
+	if o == nil {
+		return nil, nil
+	}
+	var out []ckg.StagedFile
+	for _, p := range o.ListStagedPaths() {
+		if c, ok := o.EffectiveContent(p); ok {
+			out = append(out, ckg.StagedFile{Path: p, Content: []byte(c)})
+		}
+	}
+	return out, func(rel string) ([]byte, bool) {
+		c, ok := o.EffectiveContent(filepath.ToSlash(rel))
+		if !ok {
+			return nil, false
+		}
+		return []byte(c), true
+	}
 }
 
 func (r *Runner) ExploreCodebase(ctx context.Context, req ExploreCodebaseRequest) (*ExploreCodebaseResponse, error) {

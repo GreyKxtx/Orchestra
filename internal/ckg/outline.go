@@ -43,7 +43,7 @@ func BuildFileOutline(ctx context.Context, store *Store, filePath string) (*File
 
 	var fileID int64
 	var lang string
-	row := store.db.QueryRowContext(ctx, "SELECT id, language FROM files WHERE path = ?", clean)
+	row := store.q(ctx).QueryRowContext(ctx, "SELECT id, language FROM files WHERE path = ?", clean)
 	if err := row.Scan(&fileID, &lang); err != nil {
 		// No such file in the store is an answer, not an error.
 		return out, nil
@@ -51,7 +51,7 @@ func BuildFileOutline(ctx context.Context, store *Store, filePath string) (*File
 	out.Available = true
 	out.Language = lang
 
-	rows, err := store.db.QueryContext(ctx,
+	rows, err := store.q(ctx).QueryContext(ctx,
 		"SELECT id, fqn, short_name, kind, line_start, line_end FROM nodes WHERE file_id = ?", fileID)
 	if err != nil {
 		return nil, err
@@ -90,7 +90,7 @@ func BuildFileOutline(ctx context.Context, store *Store, filePath string) (*File
 		}
 		q := "SELECT " + column + ", COUNT(*) FROM edges WHERE " + column + " IN (" +
 			strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + ") GROUP BY " + column
-		r, err := store.db.QueryContext(ctx, q, args...)
+		r, err := store.q(ctx).QueryContext(ctx, q, args...)
 		if err != nil {
 			return err
 		}

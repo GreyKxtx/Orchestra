@@ -206,7 +206,7 @@ func (s *Store) neighbors(ctx context.Context, fqn string, downstream bool, rels
 	for _, r := range rels {
 		args = append(args, r)
 	}
-	rows, err := s.db.QueryContext(ctx, neighborsQuery(downstream, len(rels)), args...)
+	rows, err := s.q(ctx).QueryContext(ctx, neighborsQuery(downstream, len(rels)), args...)
 	if err != nil {
 		return nil, fmt.Errorf("neighbors: %w", err)
 	}
@@ -274,7 +274,7 @@ func neighborsQuery(downstream bool, relCount int) string {
 
 func (s *Store) getNodeByFQN(ctx context.Context, fqn string) (*Node, error) {
 	var n Node
-	err := s.db.QueryRowContext(ctx, `
+	err := s.q(ctx).QueryRowContext(ctx, `
 		SELECT n.id, n.file_id, n.fqn, n.short_name, n.kind, n.line_start, n.line_end, n.complexity, n.package, COALESCE(f.path, '')
 		FROM nodes n LEFT JOIN files f ON f.id = n.file_id
 		WHERE n.fqn = ?`, fqn).Scan(

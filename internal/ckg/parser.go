@@ -154,7 +154,13 @@ func ParseFile(ctx context.Context, modulePath, rootDir, filePath string) ([]Nod
 	if err != nil {
 		return nil, nil, "", err
 	}
+	return ParseSource(ctx, modulePath, rootDir, filePath, src)
+}
 
+// ParseSource is ParseFile for content that is not on disk — a turn's staged
+// version of filePath (LLM-11). filePath still names the file: its extension
+// picks the language, its directory the package.
+func ParseSource(ctx context.Context, modulePath, rootDir, filePath string, src []byte) ([]Node, []Edge, string, error) {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	lang := sitterLanguageFor(ext)
 	if lang == nil {

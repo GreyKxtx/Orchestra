@@ -43,6 +43,11 @@ func (c *Client) CKGFileOutline(ctx context.Context, path string) (*ckg.FileOutl
 	if snap.Store == nil {
 		return nil, false, nil
 	}
-	o, err := ckg.BuildFileOutline(ctx, snap.Store, path)
+	octx, release, err := c.overlayCtx(ctx, ckg.NewOrchestratorWithIgnores(snap.Store, c.Root, c.ExcludeDirs))
+	if err != nil {
+		return nil, true, err
+	}
+	defer release()
+	o, err := ckg.BuildFileOutline(octx, snap.Store, path)
 	return o, true, err
 }

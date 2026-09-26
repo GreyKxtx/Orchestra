@@ -37,29 +37,29 @@ func (s *Store) IndexStats(ctx context.Context, model string) (IndexStats, error
 		return st, nil
 	}
 
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM files`).Scan(&st.Files); err != nil {
+	if err := s.q(ctx).QueryRowContext(ctx, `SELECT COUNT(*) FROM files`).Scan(&st.Files); err != nil {
 		return st, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes`).Scan(&st.Nodes); err != nil {
+	if err := s.q(ctx).QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes`).Scan(&st.Nodes); err != nil {
 		return st, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM edges`).Scan(&st.Edges); err != nil {
+	if err := s.q(ctx).QueryRowContext(ctx, `SELECT COUNT(*) FROM edges`).Scan(&st.Edges); err != nil {
 		return st, err
 	}
-	if err := s.db.QueryRowContext(ctx,
+	if err := s.q(ctx).QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM nodes WHERE kind IN ('func','method')`).Scan(&st.Funcs); err != nil {
 		return st, err
 	}
-	if err := s.db.QueryRowContext(ctx,
+	if err := s.q(ctx).QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM nodes WHERE kind IN ('struct','interface','type')`).Scan(&st.Types); err != nil {
 		return st, err
 	}
-	if err := s.db.QueryRowContext(ctx,
+	if err := s.q(ctx).QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM nodes WHERE kind = 'package'`).Scan(&st.Packages); err != nil {
 		return st, err
 	}
 	// Tests: functions/methods living in test files (Go/TS/JS/Python naming) or Go Test* funcs in _test.go.
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.q(ctx).QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM nodes n
 		JOIN files f ON f.id = n.file_id
 		WHERE n.kind IN ('func','method') AND (
@@ -71,7 +71,7 @@ func (s *Store) IndexStats(ctx context.Context, model string) (IndexStats, error
 		)`).Scan(&st.Tests); err != nil {
 		return st, err
 	}
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.q(ctx).QueryContext(ctx,
 		`SELECT language, COUNT(*) FROM files WHERE language != '' GROUP BY language`)
 	if err != nil {
 		return st, err

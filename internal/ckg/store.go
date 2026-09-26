@@ -482,7 +482,7 @@ func (s *Store) DB() *sql.DB { return s.db }
 // GetFileHash returns the hash of the file if it exists, otherwise an empty string.
 func (s *Store) GetFileHash(ctx context.Context, path string) (string, error) {
 	var hash string
-	err := s.db.QueryRowContext(ctx, "SELECT hash FROM files WHERE path = ?", path).Scan(&hash)
+	err := s.q(ctx).QueryRowContext(ctx, "SELECT hash FROM files WHERE path = ?", path).Scan(&hash)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "", nil
@@ -494,7 +494,7 @@ func (s *Store) GetFileHash(ctx context.Context, path string) (string, error) {
 
 // GetAllFiles returns a map of path -> hash for all files currently in the database.
 func (s *Store) GetAllFiles(ctx context.Context) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT path, hash FROM files")
+	rows, err := s.q(ctx).QueryContext(ctx, "SELECT path, hash FROM files")
 	if err != nil {
 		return nil, err
 	}
@@ -527,7 +527,7 @@ func (s *Store) fileStampsUnlocked(ctx context.Context) (map[string]FileStamp, e
 	if s.db == nil {
 		return nil, errStoreClosed
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT path, hash, mtime_ns, size FROM files")
+	rows, err := s.q(ctx).QueryContext(ctx, "SELECT path, hash, mtime_ns, size FROM files")
 	if err != nil {
 		return nil, err
 	}
@@ -862,7 +862,7 @@ func (s *Store) FindRelevantNodes(ctx context.Context, query string, limit int) 
 		strings.Join(whereParts, " OR "),
 	)
 
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := s.q(ctx).QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("find relevant nodes: %w", err)
 	}
@@ -884,7 +884,7 @@ func (s *Store) FindRelevantNodes(ctx context.Context, query string, limit int) 
 // Returns (0, nil) when no node matches.
 func (s *Store) FindNodeAtLine(ctx context.Context, filePath string, lineno int) (int64, error) {
 	var id int64
-	err := s.db.QueryRowContext(ctx, `
+	err := s.q(ctx).QueryRowContext(ctx, `
 		SELECT n.id
 		FROM nodes n
 		JOIN files f ON f.id = n.file_id
@@ -905,7 +905,7 @@ func (s *Store) FindNodeAtLine(ctx context.Context, filePath string, lineno int)
 // Returns "" when no node covers the line.
 func (s *Store) FQNAtLine(ctx context.Context, filePath string, lineno int) (string, error) {
 	var fqn string
-	err := s.db.QueryRowContext(ctx, `
+	err := s.q(ctx).QueryRowContext(ctx, `
 		SELECT n.fqn
 		FROM nodes n JOIN files f ON f.id = n.file_id
 		WHERE f.path = ? AND n.line_start <= ? AND n.line_end >= ?
@@ -928,7 +928,7 @@ type FileSymbol struct {
 
 // SymbolsInFile returns all non-package symbols in a file, ordered by line.
 func (s *Store) SymbolsInFile(ctx context.Context, filePath string) ([]FileSymbol, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.q(ctx).QueryContext(ctx, `
 		SELECT n.short_name, n.kind, n.line_start, n.line_end
 		FROM nodes n JOIN files f ON f.id = n.file_id
 		WHERE f.path = ? AND n.kind != 'package'
