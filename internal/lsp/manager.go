@@ -2,6 +2,8 @@ package lsp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -126,6 +128,32 @@ type serverEntry struct {
 	// server, so its memory grew with every file a session touched (DATA-8).
 	docsMu sync.Mutex
 	recent []string
+	// sent is, per open document, the hash of the content the server was
+	// last given: a request finds out whether the document changed under
+	// the server — on disk, or in the overlay without a sync — and sends it
+	// again before asking (audit phase 7).
+	sent map[string]string
+}
+
+func hashText(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
+}
+
+// remember records the content the server was last given for uri.
+func (s *serverEntry) remember(uri, content string) {
+	s.docsMu.Lock()
+	defer s.docsMu.Unlock()
+	if s.sent == nil {
+		s.sent = map[string]string{}
+	}
+	s.sent[uri] = hashText(content)
+}
+
+func (s *serverEntry) sentHash(uri string) string {
+	s.docsMu.Lock()
+	defer s.docsMu.Unlock()
+	return s.sent[uri]
 }
 
 // DefaultMaxOpenDocs is how many documents a server keeps open at once.
@@ -743,10 +771,12 @@ func (m *Manager) reopenStaged(s *serverEntry) {
 		uri := PathToURI(absPath)
 		if c.IsOpen(uri) {
 			_ = c.DidChange(ctx, uri, content)
+			s.remember(uri, content)
 			s.touch(uri)
 			continue
 		}
 		_ = c.DidOpen(ctx, uri, langIDFromExt(ext), content)
+		s.remember(uri, content)
 		s.touch(uri)
 	}
 }
@@ -806,17 +836,39 @@ func (m *Manager) ClientRunningForTest(language string) bool {
 	return false
 }
 
+// ensureOpen has the server hold relPath as the caller sees it before a
+// request about it: opened when it is not, sent again when it changed under
+// the server since — on disk, or in the overlay without a sync — so the
+// answer is about the version that exists, not the one the server was given
+// first.
 func (m *Manager) ensureOpen(ctx context.Context, s *serverEntry, relPath string) error {
 	absPath := filepath.Join(m.workspaceRoot, filepath.FromSlash(relPath))
 	uri := PathToURI(absPath)
-	if s.client.IsOpen(uri) {
-		return nil
-	}
 	content, err := m.fileContent(relPath)
 	if err != nil {
+		if s.client.IsOpen(uri) {
+			return nil
+		}
 		return fmt.Errorf("lsp: read %s: %w", relPath, err)
 	}
-	return s.client.DidOpen(ctx, uri, langIDFromExt(filepath.Ext(relPath)), content)
+	if s.client.IsOpen(uri) {
+		if s.sentHash(uri) == hashText(content) {
+			return nil
+		}
+		if err := s.client.DidChange(ctx, uri, content); err != nil {
+			return fmt.Errorf("lsp: didChange %s: %w", relPath, err)
+		}
+		s.remember(uri, content)
+		s.touch(uri)
+		return nil
+	}
+	if err := s.client.DidOpen(ctx, uri, langIDFromExt(filepath.Ext(relPath)), content); err != nil {
+		return err
+	}
+	s.remember(uri, content)
+	s.touch(uri)
+	m.evictOpenDocs(ctx, s)
+	return nil
 }
 
 // fileContent returns effective text for relPath (staging overlay when set).
@@ -1075,6 +1127,7 @@ func (m *Manager) SyncStaged(ctx context.Context, relPath, content string) error
 		if err := s.client.DidChange(ctx, uri, content); err != nil {
 			return fmt.Errorf("lsp: SyncStaged DidChange %s: %w", relPath, err)
 		}
+		s.remember(uri, content)
 		s.touch(uri)
 		return nil
 	}
@@ -1082,6 +1135,7 @@ func (m *Manager) SyncStaged(ctx context.Context, relPath, content string) error
 	if err := s.client.DidOpen(ctx, uri, langID, content); err != nil {
 		return fmt.Errorf("lsp: SyncStaged DidOpen %s: %w", relPath, err)
 	}
+	s.remember(uri, content)
 	s.touch(uri)
 	m.evictOpenDocs(ctx, s)
 	return nil
@@ -1098,6 +1152,7 @@ func (s *serverEntry) touch(uri string) {
 func (s *serverEntry) forget(uri string) {
 	s.docsMu.Lock()
 	defer s.docsMu.Unlock()
+	delete(s.sent, uri)
 	s.forgetLocked(uri)
 }
 
@@ -1134,6 +1189,7 @@ func (m *Manager) evictOpenDocs(ctx context.Context, s *serverEntry) {
 			continue
 		}
 		s.recent = append(s.recent[:i], s.recent[i+1:]...)
+		delete(s.sent, uri)
 		victims = append(victims, uri)
 		open--
 	}

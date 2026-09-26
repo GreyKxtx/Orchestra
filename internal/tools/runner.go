@@ -559,6 +559,15 @@ func (r *Runner) memoryStoreAt(ctx context.Context) *memory.Store {
 	return memory.NewStore(r.workspaceRoot, t.SessionID(), t.MemoryConfig())
 }
 
+// ForgetInstructionsOf drops what the agents of the run were given (see
+// instructionSeen): the run is over, its launch closing.
+func (r *Runner) ForgetInstructionsOf(runID string) {
+	if r == nil {
+		return
+	}
+	r.seenInstructionDirs.forgetRun(runID)
+}
+
 // discoverInstructions walks from dir up to workspaceRoot collecting ORCHESTRA.md files
 // in directories this agent has not been given yet (the agent is the run and
 // task in ctx). Returns the combined text, or empty string if nothing new.
