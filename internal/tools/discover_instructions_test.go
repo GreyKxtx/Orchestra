@@ -96,6 +96,39 @@ func TestDiscoverInstructions_EachAgentGetsTheRulesOnce(t *testing.T) {
 	}
 }
 
+// A run's memo goes with the run: its launch closing drops what its agents
+// were given, and a run under the same id later — none exists, but a memo
+// that never shrank held every run the core ever served.
+func TestDiscoverInstructions_ARunsMemoGoesWithTheRun(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "pkg", "auth")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "ORCHESTRA.md"), []byte("AUTH PACKAGE RULES"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := testMemoryRunner(t, dir)
+	lead := llm.WithTrace(context.Background(), llm.Trace{RunID: "r1"})
+	worker := llm.WithTrace(context.Background(), llm.Trace{RunID: "r1", TaskID: "task_1", Depth: 1})
+	other := llm.WithTrace(context.Background(), llm.Trace{RunID: "r10"})
+	for _, ctx := range []context.Context{lead, worker, other} {
+		if !strings.Contains(r.discoverInstructions(ctx, sub), "AUTH PACKAGE RULES") {
+			t.Fatal("the first time, the rules")
+		}
+	}
+	r.ForgetInstructionsOf("r1")
+	if len(r.seenInstructionDirs.sets) != 1 || len(r.seenInstructionDirs.order) != 1 {
+		t.Fatalf("r1's two agents are forgotten, r10 kept: %v", r.seenInstructionDirs.order)
+	}
+	if got := r.discoverInstructions(other, sub); got != "" {
+		t.Fatalf("another run's memo is untouched: %q", got)
+	}
+	if !strings.Contains(r.discoverInstructions(lead, sub), "AUTH PACKAGE RULES") {
+		t.Fatal("a forgotten run starts with the rules again")
+	}
+}
+
 func TestInstructionSeen_IsBounded(t *testing.T) {
 	var s instructionSeen
 	for i := 0; i < maxInstructionAgents+10; i++ {

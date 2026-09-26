@@ -91,6 +91,10 @@ type agentLaunch struct {
 	// opened; Close is safe either way.
 	Trajectory *trajectory.Writer
 
+	// tools is the runner whose per-run memos the launch clears when it
+	// closes.
+	tools *tools.Runner
+
 	// turnStartedAt is when the boundary was recorded, so Close can say how
 	// long the turn took rather than leaving a reader to subtract timestamps
 	// of whatever events happened to bracket it.
@@ -125,6 +129,12 @@ func (l *agentLaunch) Close() {
 	// collecting, workers relayed from a Lead's batch — stop with the turn
 	// instead of editing the workspace after it has been reported done.
 	l.TaskRunner.Close()
+	// The run's agents are gone with it; what they were given (a directory's
+	// ORCHESTRA.md) is forgotten so the memo does not carry every run the
+	// core ever served.
+	if l.tools != nil {
+		l.tools.ForgetInstructionsOf(l.EventEnvelope.TurnID)
+	}
 	if l.Trajectory == nil {
 		return
 	}
@@ -261,6 +271,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 		RouteConfidence: p.routeConfidence,
 		EventEnvelope:   p.env,
 		Trajectory:      p.trajectory,
+		tools:           c.tools,
 		turnStartedAt:   time.Now(),
 		sessionID:       spec.SessionID,
 	}, nil

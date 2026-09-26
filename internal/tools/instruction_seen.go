@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/orchestra/orchestra/llm"
@@ -53,4 +54,25 @@ func (s *instructionSeen) firstTime(agent, dir string) bool {
 	}
 	set[dir] = struct{}{}
 	return true
+}
+
+// forgetRun drops the sets of every agent of run — the key is the run's id
+// followed by the task's — once the run is over: what its agents were given
+// has no reader left, and the next run starts with the rules again.
+func (s *instructionSeen) forgetRun(runID string) {
+	if runID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prefix := runID + "/"
+	kept := s.order[:0]
+	for _, k := range s.order {
+		if strings.HasPrefix(k, prefix) {
+			delete(s.sets, k)
+			continue
+		}
+		kept = append(kept, k)
+	}
+	s.order = kept
 }
