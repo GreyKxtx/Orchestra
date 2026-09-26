@@ -35,6 +35,15 @@ import { t } from "./i18n";
 /** session.message can run a long agent turn (orchestrated multi-department runs). */
 const MESSAGE_TIMEOUT_MS = 60 * 60 * 1000;
 
+/** workspace.trust_status's answer, and workspace.trust's (docs/security.md). */
+export interface WorkspaceTrustState {
+  enforced: boolean;
+  trusted: boolean;
+  ignored?: string[];
+  hash?: string;
+  warnings?: string[];
+}
+
 export interface HealthResult {
   ok: boolean;
   raw: unknown;
@@ -134,6 +143,8 @@ export interface CoreSessionEvents {
  * Long-lived orchestra core session: ensure → initialize → session.start → session.message.
  */
 export class CoreSession extends EventEmitter implements vscode.Disposable {
+  /** The trust offer is made once per core; a new core asks again. */
+  private trustOffered = false;
   private static readonly LAST_SESSION_KEY = "orchestra.lastSessionId";
 
   private client: RpcClient | undefined;
@@ -222,6 +233,7 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     if (this.client) {
       this.client.dispose();
       this.client = undefined;
+      this.trustOffered = false;
       this.output.appendLine("[orchestra] core stopped");
     }
     this.sessionId = undefined;
@@ -302,7 +314,74 @@ export class CoreSession extends EventEmitter implements vscode.Disposable {
     this.output.appendLine(`[orchestra] session_id: ${id}`);
     await this.persistSessionId(id);
     this.setStatus("ready", id);
+    this.offerWorkspaceTrust();
     return id;
+  }
+
+  /** The workspace's trust state: whether its own settings are in effect. */
+  async workspaceTrustStatus(): Promise<WorkspaceTrustState> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing after ensure");
+    }
+    return (await this.client.request("workspace.trust_status", {}, 10_000)) as WorkspaceTrustState;
+  }
+
+  /**
+   * Trusts the workspace's current settings (or, with revoke, forgets them);
+   * the core reloads its config without a restart.
+   */
+  async trustWorkspace(revoke: boolean): Promise<WorkspaceTrustState> {
+    await this.ensure();
+    if (!this.client) {
+      throw new Error("core client missing after ensure");
+    }
+    return (await this.client.request(
+      "workspace.trust",
+      revoke ? { revoke: true } : {},
+      30_000
+    )) as WorkspaceTrustState;
+  }
+
+  /**
+   * Once per core: a workspace whose own settings the core leaves out until
+   * it is trusted is offered the trust. The core said so only on stderr
+   * before, and the trust could only be given from a terminal.
+   */
+  private offerWorkspaceTrust(): void {
+    if (this.trustOffered) {
+      return;
+    }
+    this.trustOffered = true;
+    void (async () => {
+      let st: WorkspaceTrustState;
+      try {
+        st = await this.workspaceTrustStatus();
+      } catch {
+        return;
+      }
+      const ignored = Array.isArray(st.ignored) ? st.ignored : [];
+      if (!st.enforced || st.trusted || ignored.length === 0) {
+        return;
+      }
+      this.output.appendLine(`[orchestra] workspace not trusted; ignored: ${ignored.join(", ")}`);
+      const action = t("trust.action");
+      const pick = await vscode.window.showWarningMessage(
+        t("trust.ignored", { ignored: ignored.join(", ") }),
+        action
+      );
+      if (pick !== action) {
+        return;
+      }
+      try {
+        const res = await this.trustWorkspace(false);
+        const warnings = res.warnings?.length ? " " + res.warnings.join("; ") : "";
+        void vscode.window.showInformationMessage(t("trust.granted") + warnings);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`Orchestra workspace.trust: ${msg}`);
+      }
+    })();
   }
 
   /**

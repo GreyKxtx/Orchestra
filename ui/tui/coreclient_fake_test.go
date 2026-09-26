@@ -42,6 +42,13 @@ type fakeCore struct {
 	questionAnswers       []fakeQuestionAnswer
 	ruleSuggestionAnswers []fakeRuleSuggestionAnswer
 
+	// resumableTurnID is what session.start of a reopened session names.
+	resumableTurnID string
+	// trust is what workspace.trust_status answers; trustCalls records each
+	// workspace.trust (its revoke flag).
+	trust      *rpcclient.WorkspaceTrust
+	trustCalls []bool
+
 	// Scripted responses.
 	sessionGetResult *rpcclient.SessionGetResult
 	sessionStartID   string
@@ -92,14 +99,14 @@ func (f *fakeCore) Close() error {
 	return nil
 }
 
-func (f *fakeCore) SessionStart(_ context.Context, sessionID string) (string, bool, error) {
+func (f *fakeCore) SessionStart(_ context.Context, sessionID string) (rpcclient.SessionStartInfo, error) {
 	if sessionID != "" {
-		return sessionID, true, nil
+		return rpcclient.SessionStartInfo{SessionID: sessionID, Restored: true, ResumableTurnID: f.resumableTurnID}, nil
 	}
 	if f.sessionStartID != "" {
-		return f.sessionStartID, false, nil
+		return rpcclient.SessionStartInfo{SessionID: f.sessionStartID}, nil
 	}
-	return "fake-session", false, nil
+	return rpcclient.SessionStartInfo{SessionID: "fake-session"}, nil
 }
 
 func (f *fakeCore) SessionGet(_ context.Context, _ string) (*rpcclient.SessionGetResult, error) {
@@ -205,6 +212,31 @@ func (f *fakeCore) MCPPromptGet(_ context.Context, server, name, args string) (s
 
 func (f *fakeCore) QueryLSPStatusDetail(_ context.Context) (string, int, string, error) {
 	return "idle", 0, "", nil
+}
+
+func (f *fakeCore) WorkspaceTrustStatus(_ context.Context) (*rpcclient.WorkspaceTrust, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.trust == nil {
+		return &rpcclient.WorkspaceTrust{Enforced: true, Trusted: true}, nil
+	}
+	cp := *f.trust
+	return &cp, nil
+}
+
+func (f *fakeCore) WorkspaceTrust(_ context.Context, revoke bool) (*rpcclient.WorkspaceTrust, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.trustCalls = append(f.trustCalls, revoke)
+	if f.trust == nil {
+		f.trust = &rpcclient.WorkspaceTrust{Enforced: true}
+	}
+	f.trust.Trusted = !revoke
+	if !revoke {
+		f.trust.Ignored = nil
+	}
+	cp := *f.trust
+	return &cp, nil
 }
 
 func (f *fakeCore) RespondPermission(reqID int64, approved bool) {

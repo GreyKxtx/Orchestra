@@ -451,6 +451,7 @@
     "search",
     "sessions",
     "settings",
+    "trust",
     "workflow",
     "workflows",
   ];
@@ -532,6 +533,17 @@
       case "/settings":
         showRailSettings(true, "general");
         return;
+      case "/trust": {
+        // The workspace's own settings take effect (or, with revoke, stop)
+        // without restarting the core (docs/security.md).
+        const revoke = (arg || "").trim().toLowerCase() === "revoke";
+        const r = await composerRpc("workspace.trust", revoke ? { revoke: true } : {}, "trust");
+        if (r) {
+          const warnings = Array.isArray(r.warnings) && r.warnings.length ? " " + r.warnings.join("; ") : "";
+          toRenderer({ type: "systemNote", text: i18n(revoke ? "web.trust_revoked" : "web.trusted") + warnings });
+        }
+        return;
+      }
       case "/help":
         toRenderer({ type: "systemNote", text: slashHelp() });
         return;

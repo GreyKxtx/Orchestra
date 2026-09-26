@@ -34,6 +34,10 @@ type SessionStartParams struct {
 type SessionStartResult struct {
 	SessionID string `json:"session_id"`
 	Restored  bool   `json:"restored,omitempty"`
+	// ResumableTurnID names the session's most recent turn its core did not
+	// finish — a crash, a kill — which session.message{resume} continues.
+	// Empty when there is none. (ProtocolVersion 25.)
+	ResumableTurnID string `json:"resumable_turn_id,omitempty"`
 }
 
 type SessionGetParams struct {

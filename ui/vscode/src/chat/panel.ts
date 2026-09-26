@@ -1878,6 +1878,18 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       case "/settings":
         await this.showSettings();
         break;
+      case "/trust": {
+        const revoke = (arg || "").trim().toLowerCase() === "revoke";
+        try {
+          const res = await this.session.trustWorkspace(revoke);
+          const warnings = res.warnings?.length ? " " + res.warnings.join("; ") : "";
+          this.post({ type: "systemNote", text: t(revoke ? "trust.revoked" : "trust.granted") + warnings });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.post({ type: "systemNote", text: `workspace.trust: ${msg}` });
+        }
+        break;
+      }
       case "/help":
         this.post({
           type: "systemNote",
@@ -1888,6 +1900,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
             "/sessions — switch session (title menu)",
             "/model — change model (composer pill)",
             "/settings — Orchestra settings",
+            "/trust [revoke] — trust this workspace's settings (MCP servers, hooks, consent)",
             "/<skill-name> args — run a loaded skill",
             "Rewind: hover a user message → ↩ Rewind",
             "@file — mention files in composer",

@@ -71,6 +71,31 @@
    * (postLLMInfo) while a fresh read is on its way.
    * @param {string} projectId
    */
+  /**
+   * What the core leaves out until this workspace is trusted — its MCP
+   * servers, hooks, consent settings — said in the transcript with the
+   * command that trusts it (docs/security.md). A core that cannot say leaves
+   * the transcript without the note.
+   * @param {string} projectId
+   */
+  async function pushTrustNotice(projectId) {
+    const conn = connFor(projectId);
+    if (!conn) {
+      return;
+    }
+    let st;
+    try {
+      st = (await conn.send("workspace.trust_status", {})) || {};
+    } catch (err) {
+      return;
+    }
+    const ignored = Array.isArray(st.ignored) ? st.ignored : [];
+    if (!st.enforced || st.trusted || ignored.length === 0 || projectId !== currentProjectId) {
+      return;
+    }
+    toRenderer({ type: "systemNote", text: i18n("web.trust_ignored", { ignored: ignored.join(", ") }) });
+  }
+
   async function pushLLMInfo(projectId) {
     const conn = connFor(projectId);
     if (!conn) {
@@ -357,6 +382,9 @@
       // What "/" offers beyond the built-in commands: this workspace's own
       // skills and .claude/commands, which only the core can enumerate.
       void pushSkillCommands(projectId);
+      // Whether this workspace's own settings are in effect, said once in the
+      // transcript when they are not (docs/security.md).
+      void pushTrustNotice(projectId);
       // Settings opened while this workspace was still coming up had nothing
       // to read from and said so; now there is. Without this the panel kept
       // that note, an empty provider list and no tool catalogue until it was

@@ -18,8 +18,12 @@ import (
 type coreSessionStartedMsg struct {
 	sessionID string
 	restored  bool
-	got       *rpcclient.SessionGetResult // prefetched session.get (nil on error)
-	err       error
+	// resumable names the turn the core did not finish, when there is one.
+	resumable string
+	// trust is the workspace's trust state (nil when the core did not say).
+	trust *rpcclient.WorkspaceTrust
+	got   *rpcclient.SessionGetResult // prefetched session.get (nil on error)
+	err   error
 }
 
 // startCoreSessionTimeout bounds session.start + session.get: without it a
@@ -40,15 +44,21 @@ func (a *App) startCoreSession() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), startCoreSessionTimeout)
 		defer cancel()
-		sid, restored, err := rpc.SessionStart(ctx, sessionID)
+		info, err := rpc.SessionStart(ctx, sessionID)
 		if err != nil {
-			return coreSessionStartedMsg{sessionID: sid, restored: restored, err: err}
+			return coreSessionStartedMsg{sessionID: info.SessionID, restored: info.Restored, err: err}
 		}
-		got, gErr := rpc.SessionGet(ctx, sid)
+		got, gErr := rpc.SessionGet(ctx, info.SessionID)
 		if gErr != nil {
 			got = nil
 		}
-		return coreSessionStartedMsg{sessionID: sid, restored: restored, got: got}
+		// Best-effort: a core that cannot say leaves the chat without the
+		// notice, not without the session.
+		trust, tErr := rpc.WorkspaceTrustStatus(ctx)
+		if tErr != nil {
+			trust = nil
+		}
+		return coreSessionStartedMsg{sessionID: info.SessionID, restored: info.Restored, resumable: info.ResumableTurnID, trust: trust, got: got}
 	}
 }
 
@@ -63,6 +73,27 @@ func (a *App) handleCoreSessionStarted(m coreSessionStartedMsg) {
 	}
 	a.coreSessionID = m.sessionID
 	a.currentSessionID = m.sessionID
+	a.resumableTurnID = m.resumable
+	defer func() {
+		// Said after the chat is back, so they are the last thing on screen.
+		if m.trust.Untrusted() {
+			a.session.AppendMessage(state.Message{
+				Role:       state.RoleSystem,
+				SystemKind: state.SystemKindInfo,
+				Text:       trustNotice(m.trust),
+			})
+			a.chat.SetMessages(a.session.Messages)
+		}
+		if a.resumableTurnID == "" {
+			return
+		}
+		a.session.AppendMessage(state.Message{
+			Role:       state.RoleSystem,
+			SystemKind: state.SystemKindInfo,
+			Text:       "предыдущий ход был прерван: core завершился, не закончив его. /resume — продолжить с checkpoint'а",
+		})
+		a.chat.SetMessages(a.session.Messages)
+	}()
 	got := m.got
 	if got == nil {
 		return
@@ -294,4 +325,53 @@ func (a *App) openSessionsDialogFiltered(query string) {
 		return
 	}
 	a.dialogStack = append(a.dialogStack, view.NewSessionsDialog(metas))
+}
+
+// trustNotice is what the chat says about a workspace whose own settings
+// the core leaves out until it is trusted (docs/security.md).
+func trustNotice(t *rpcclient.WorkspaceTrust) string {
+	return "рабочая область не доверена: её настройки, влияющие на машину, не применяются — " +
+		strings.Join(t.Ignored, ", ") +
+		". Если проект ваш, /trust применит их (или `orchestra trust` в терминале); /trust revoke забудет доверие."
+}
+
+// workspaceTrustMsg is the answer to /trust.
+type workspaceTrustMsg struct {
+	revoke bool
+	res    *rpcclient.WorkspaceTrust
+	err    error
+}
+
+// cmdWorkspaceTrust is /trust and /trust revoke: the core records (or
+// forgets) the workspace's settings as trusted and reloads its config.
+func (a *App) cmdWorkspaceTrust(revoke bool) tea.Cmd {
+	if a.rpc == nil {
+		return nil
+	}
+	rpc := a.rpc
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), startCoreSessionTimeout)
+		defer cancel()
+		res, err := rpc.WorkspaceTrust(ctx, revoke)
+		return workspaceTrustMsg{revoke: revoke, res: res, err: err}
+	}
+}
+
+// handleWorkspaceTrust says what /trust did.
+func (a *App) handleWorkspaceTrust(m workspaceTrustMsg) {
+	var msg state.Message
+	switch {
+	case m.err != nil:
+		msg = state.Message{Role: state.RoleSystem, SystemKind: state.SystemKindError, Text: "[error] workspace.trust: " + m.err.Error()}
+	case m.revoke:
+		msg = state.Message{Role: state.RoleSystem, SystemKind: state.SystemKindInfo, Text: "доверие к рабочей области снято: её настройки, влияющие на машину, больше не применяются"}
+	default:
+		text := "рабочая область доверена: её настройки применены"
+		if m.res != nil && len(m.res.Warnings) > 0 {
+			text += "; " + strings.Join(m.res.Warnings, "; ")
+		}
+		msg = state.Message{Role: state.RoleSystem, SystemKind: state.SystemKindInfo, Text: text}
+	}
+	a.session.AppendMessage(msg)
+	a.chat.SetMessages(a.session.Messages)
 }

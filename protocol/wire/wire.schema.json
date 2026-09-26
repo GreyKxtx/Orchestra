@@ -2166,6 +2166,10 @@
         "restored": {
           "type": "boolean"
         },
+        "resumable_turn_id": {
+          "description": "ResumableTurnID names the session's most recent turn its core did not\nfinish — a crash, a kill — which session.message{resume} continues.\nEmpty when there is none. (ProtocolVersion 25.)",
+          "type": "string"
+        },
         "session_id": {
           "type": "string"
         }
@@ -2616,7 +2620,7 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Generated from protocol/wire (go generate ./protocol/wire/...). The client↔core JSON-RPC contract: methods, notifications, requests, and the shape of every params, result and event.",
-  "title": "Orchestra wire contract, protocol v24",
+  "title": "Orchestra wire contract, protocol v25",
   "x-orchestra": {
     "event_types": [
       "message_delta",
@@ -2697,7 +2701,7 @@
       "workspace.trust",
       "workspace.trust_status"
     ],
-    "min_protocol_version": 23,
+    "min_protocol_version": 24,
     "notifications": [
       "agent/event",
       "exec/output_chunk",
@@ -2705,7 +2709,7 @@
       "workflow/stage_start"
     ],
     "ops_version": 1,
-    "protocol_version": 24,
+    "protocol_version": 25,
     "requests": [
       "browser/call",
       "permission/request",

@@ -159,7 +159,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	// apply. The request brings only the consent (checkpoint.go).
 	var resumed *checkpoint.Checkpoint
 	if ref := strings.TrimSpace(params.Resume); ref != "" {
-		cp, err := c.loadResumable(ref)
+		cp, err := c.loadResumable(ref, "")
 		if err != nil {
 			return nil, err
 		}

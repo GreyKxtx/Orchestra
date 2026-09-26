@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
+import { t } from "./i18n";
 import { ChatPanel } from "./chat/panel";
 import { CoreSession } from "./coreSession";
 
@@ -48,6 +49,19 @@ export function activate(context: vscode.ExtensionContext): void {
         const msg = err instanceof Error ? err.message : String(err);
         output.appendLine(`[orchestra] FAILED: ${msg}`);
         void vscode.window.showErrorMessage(`Orchestra Ping failed: ${msg}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("orchestra.trustWorkspace", async () => {
+      try {
+        const res = await session.trustWorkspace(false);
+        const warnings = res.warnings?.length ? " " + res.warnings.join("; ") : "";
+        void vscode.window.showInformationMessage(t("trust.granted") + warnings);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`Orchestra workspace.trust: ${msg}`);
       }
     })
   );

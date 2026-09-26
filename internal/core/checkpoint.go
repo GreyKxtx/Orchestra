@@ -33,6 +33,24 @@ type resumableParams struct {
 	MaxSteps          int    `json:"max_steps,omitempty"`
 	MaxInvalidRetries int    `json:"max_invalid_retries,omitempty"`
 	MaxPromptBytes    int    `json:"max_prompt_bytes,omitempty"`
+
+	// SessionID names the session whose turn this is; empty for agent.run.
+	// A session resumes its own turns, and agent.run resumes its own runs.
+	SessionID string `json:"session_id,omitempty"`
+	// TurnStart is where the turn began in the session's history, and UIText
+	// the user's message as the session's chat shows it: put back on resume
+	// when the crash came before a snapshot took them.
+	TurnStart int    `json:"turn_start,omitempty"`
+	UIText    string `json:"ui_text,omitempty"`
+}
+
+// sessionOf is the session a checkpoint's turn belongs to; "" for a run.
+func sessionOf(cp *checkpoint.Checkpoint) string {
+	var p resumableParams
+	if cp == nil || json.Unmarshal(cp.Params, &p) != nil {
+		return ""
+	}
+	return p.SessionID
 }
 
 // applyTo makes req the run the checkpoint recorded, keeping the request's
@@ -179,13 +197,14 @@ func stagedFromCheckpoint(in []checkpoint.StagedFile) []fs.StagedSnapshot {
 	return out
 }
 
-// loadResumable finds the checkpoint agent.run's resume names: a run id, or
-// "last" for the most recent run that can be resumed.
-func (c *Core) loadResumable(ref string) (*checkpoint.Checkpoint, error) {
+// loadResumable finds the checkpoint a resume names: a run id, or "last" for
+// the most recent one that can be resumed — among agent.run's runs when
+// sessionID is empty, among the session's own turns otherwise.
+func (c *Core) loadResumable(ref, sessionID string) (*checkpoint.Checkpoint, error) {
 	var cp *checkpoint.Checkpoint
 	var err error
 	if strings.EqualFold(ref, "last") {
-		cp, err = checkpoint.Latest(c.workspaceRoot)
+		cp, err = checkpoint.LatestWhere(c.workspaceRoot, func(cp *checkpoint.Checkpoint) bool { return sessionOf(cp) == sessionID })
 	} else {
 		cp, err = checkpoint.Load(c.workspaceRoot, ref)
 	}
@@ -195,10 +214,26 @@ func (c *Core) loadResumable(ref string) (*checkpoint.Checkpoint, error) {
 	if err != nil {
 		return nil, protocol.NewError(protocol.InvalidParams, fmt.Sprintf("resume %q: %v", ref, err), nil)
 	}
+	if owner := sessionOf(cp); owner != sessionID {
+		if owner == "" {
+			return nil, protocol.NewError(protocol.InvalidParams, fmt.Sprintf("resume %q: that is an agent.run run, not a turn of session %s", cp.RunID, sessionID), nil)
+		}
+		return nil, protocol.NewError(protocol.InvalidParams, fmt.Sprintf("resume %q: that turn belongs to session %s", cp.RunID, owner), nil)
+	}
 	if !cp.Resumable() {
 		return nil, protocol.NewError(protocol.InvalidParams, fmt.Sprintf("resume %q: the run finished; there is nothing to resume", cp.RunID), nil)
 	}
 	return cp, nil
+}
+
+// resumableTurnOf is the session's most recent turn that can be resumed, or
+// "" — what session.start tells a client so it can offer to go on.
+func (c *Core) resumableTurnOf(sessionID string) string {
+	cp, err := checkpoint.LatestWhere(c.workspaceRoot, func(cp *checkpoint.Checkpoint) bool { return sessionOf(cp) == sessionID })
+	if err != nil {
+		return ""
+	}
+	return cp.RunID
 }
 
 // restoreRun puts a checkpoint back: the staged edits into the turn's

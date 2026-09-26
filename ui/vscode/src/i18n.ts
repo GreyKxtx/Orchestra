@@ -19,6 +19,11 @@ const FALLBACK: UiLang = "en";
 
 const CATALOGUE: Record<UiLang, Record<string, string>> = {
   en: {
+    "trust.ignored":
+      "Orchestra: this workspace is not trusted, so its settings that act on this machine are not in effect — {ignored}. Trust it if the project is yours.",
+    "trust.action": "Trust workspace",
+    "trust.granted": "Orchestra: workspace trusted — its settings are in effect.",
+    "trust.revoked": "Orchestra: trust revoked — the workspace's machine-level settings are no longer in effect.",
     "notice.turn_interrupted":
       "The previous turn was interrupted (the process died). History is kept up to the last completed step.",
     "notice.background_turn_done": "A background turn finished — history has been refreshed.",
@@ -40,6 +45,11 @@ const CATALOGUE: Record<UiLang, Record<string, string>> = {
     "access.ask.hint": "Ask — shell with confirmation; edits go through Accept/Reject",
   },
   ru: {
+    "trust.ignored":
+      "Orchestra: рабочая область не доверена, её настройки, влияющие на машину, не применяются — {ignored}. Доверьте её, если проект ваш.",
+    "trust.action": "Доверить рабочей области",
+    "trust.granted": "Orchestra: рабочая область доверена — её настройки применены.",
+    "trust.revoked": "Orchestra: доверие снято — настройки рабочей области, влияющие на машину, больше не применяются.",
     "notice.turn_interrupted":
       "Предыдущий ход был прерван (процесс завершился аварийно). История сохранена до последнего выполненного шага.",
     "notice.background_turn_done": "Фоновый ход завершён — история обновлена.",

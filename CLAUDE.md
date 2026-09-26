@@ -30,6 +30,14 @@ go test ./tests/e2e_real_llm -v -run TestRealLLMMinimalFlow -count=1
 # Optional overrides: ORCH_E2E_LLM_API_BASE, ORCH_E2E_LLM_API_KEY, ORCH_E2E_LLM_MODEL
 ```
 
+After a change to `protocol/wire` or `protocol/version.go`, regenerate the clients' copies of the contract and the web bundle that embeds them — the drift tests and `check-web.mjs` fail in CI otherwise:
+
+```bash
+go generate ./protocol/wire                  # wire.schema.json, ui/vscode/src/protocol/wire.generated.ts, ui/web/src/01-wire.generated.js
+node ui/web/scripts/bundle-web.mjs           # ui/web/static (embedded into the binary)
+node ui/web/scripts/check-web.mjs
+```
+
 Lint (all four modules; linters and exclusions in `.golangci.yml`):
 
 ```bash
@@ -65,7 +73,7 @@ orchestra mcp list-tools                     # list tools from configured MCP se
 orchestra trust [--status|--revoke]          # trust this workspace's machine-level settings
 ```
 
-`.orchestra.yml` (created by `init`) configures `project_root`, `exclude_dirs`, `llm.*`, `agent.profile`, `apply.output` / `apply.patch_dir`, `exec.*`, `retention.*` (how many session snapshots and exported patches are kept; `-1` lifts a bound), etc. — see `internal/config/config.go` for the full schema. `.orchestra/` is the per-project artifact dir (gitignored): `plan.json`, `diff.txt`, `last_run.jsonl`, `last_result.json`, `llm_log.jsonl`, `sessions/<id>.json` with its event log `sessions/<id>.events.jsonl` (rotated past 32 MB, one older generation kept; the store is pruned to `retention.sessions` on `session.start`), `runs/<run_id>.events.jsonl` (the newest 50 kept) and `runs/<run_id>.checkpoint.json` (what `agent.run resume` continues from: history, staged edits, task graph — `internal/checkpoint`), plus debug discovery files. TUI pipeline audit: `docs/architecture/tui-pipeline.md`.
+`.orchestra.yml` (created by `init`) configures `project_root`, `exclude_dirs`, `llm.*`, `agent.profile`, `apply.output` / `apply.patch_dir`, `exec.*`, `retention.*` (how many session snapshots and exported patches are kept; `-1` lifts a bound), etc. — see `internal/config/config.go` for the full schema. `.orchestra/` is the per-project artifact dir (gitignored): `plan.json`, `diff.txt`, `last_run.jsonl`, `last_result.json`, `llm_log.jsonl`, `sessions/<id>.json` with its event log `sessions/<id>.events.jsonl` (rotated past 32 MB, one older generation kept; the store is pruned to `retention.sessions` on `session.start`), `runs/<run_id>.events.jsonl` (the newest 50 kept) and `runs/<run_id>.checkpoint.json` (what `agent.run resume` and `session.message resume` continue from: history, staged edits, task graph — `internal/checkpoint`; a session's turn records its session, and each side resumes only its own), plus debug discovery files. TUI pipeline audit: `docs/architecture/tui-pipeline.md`.
 
 ## Architecture (the bits that need multiple files to understand)
 

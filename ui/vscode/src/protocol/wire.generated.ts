@@ -5,9 +5,9 @@
 // every params, result and event. Field meanings: protocol/wire/*.go.
 
 /** The newest protocol version this contract describes. */
-export const PROTOCOL_VERSION = 24;
+export const PROTOCOL_VERSION = 25;
 /** The oldest protocol version a core of this version still speaks. */
-export const MIN_PROTOCOL_VERSION = 23;
+export const MIN_PROTOCOL_VERSION = 24;
 /** Internal ops; must match the core's. */
 export const OPS_VERSION = 1;
 /** The tools this contract was written against; informational to the core. */
@@ -1021,6 +1021,12 @@ export interface SessionStartParams {
 export interface SessionStartResult {
   session_id: string;
   restored?: boolean;
+  /**
+   * ResumableTurnID names the session's most recent turn its core did not
+   * finish — a crash, a kill — which session.message{resume} continues.
+   * Empty when there is none. (ProtocolVersion 25.)
+   */
+  resumable_turn_id?: string;
 }
 
 export interface SessionGetParams {

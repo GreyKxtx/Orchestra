@@ -22,7 +22,7 @@ type coreClient interface {
 	Close() error
 
 	// Session lifecycle / persistence.
-	SessionStart(ctx context.Context, sessionID string) (id string, restored bool, err error)
+	SessionStart(ctx context.Context, sessionID string) (rpcclient.SessionStartInfo, error)
 	SessionGet(ctx context.Context, sessionID string) (*rpcclient.SessionGetResult, error)
 	SessionUISync(ctx context.Context, sessionID, title, model string, ui []sessionfile.UIMessage, costUSD float64) error
 	SessionRewind(ctx context.Context, sessionID string, uiMessageIndex int) (*rpcclient.SessionRewindResult, error)
@@ -49,6 +49,11 @@ type coreClient interface {
 
 	// Status polling.
 	QueryLSPStatusDetail(ctx context.Context) (status string, percent int, id string, err error)
+
+	// Workspace trust (docs/security.md): what the core ignores until the
+	// workspace is trusted, and the call that trusts it.
+	WorkspaceTrustStatus(ctx context.Context) (*rpcclient.WorkspaceTrust, error)
+	WorkspaceTrust(ctx context.Context, revoke bool) (*rpcclient.WorkspaceTrust, error)
 
 	// Answers to server-initiated permission/question requests.
 	RespondPermission(reqID int64, approved bool)
