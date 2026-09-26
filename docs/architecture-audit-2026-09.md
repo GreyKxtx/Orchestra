@@ -221,13 +221,15 @@
 
 **ARCH-6.1 и остаток ARCH-5 закрыты 2026-09-25** (та же ветка). `RPCHandler.Handle` (538 строк, 52 копии decode-блока) заменён таблицей `rpcMethods` (`internal/core/rpc_methods.go`): по строке на метод, generic-конструктор `serve[P]` декодирует params в одном месте, ошибка декодирования → `InvalidParams` с именем метода; `Handle` — 50 строк (гейт `initialize`, перечитывание конфига, диспетчеризация). Drift-тест `TestRPCHandler_ServesExactlyTheWireMethods` сверяет ключи таблицы с `wire.Methods()` вместо разбора AST. Consent на установку LSP-сервера больше не лежит на общем `tools.Runner` (`SetLSPInstallConsent` удалён): requester хода едет в его контексте (`permission.WithRequester` в `launch.RunContext`), `lsp.Manager` и `Runner.WarmupLSP` берут его из контекста вызова. Приёмка: два вызова с разными requester'ами получают каждый свой ответ — отказ одного хода не отвечает за следующий (мутация «общий consent» валит тест); `RunContext` без requester'а валит тест.
 
+**ARCH-6.2 закрыт 2026-09-25** (та же ветка). `runApply` (445 строк) разобран: `resolveApplyRun` читает флаги и конфиг в один `applyRun` (запрос, dry-run/backup, режим вывода, профиль, провайдер, skill/mode, consent) — все отказы до запуска живут там; по функции на режим (`runFromPlan`, `runViaCore`, `runPipeline`, `runDirect`) заполняют `applyOutcome`, который `report` печатает, а `writeApplyArtifacts` записывает; `runApply` — 60 строк. Поведение то же (флаги, вывод, артефакты, `--git-commit`). Тесты: разрешение флагов (dry-run без `--apply`, `exec.confirm: false` как `--allow-exec`, `apply.output: patch` принудительно dry-run и несовместим с `--apply`) и отказы (нет запроса, неизвестный профиль, subagent-only режим, неопределённый режим); существующие тесты `apply` зелёные.
+
 **Осталось по плану (остатки фаз 4–8):**
 - 4.2: `TaskRunner` как адаптер над `Graph`, `StallDetector`; 4.5: типизированная шина артефактов; 4.6: OTel-экспорт и resume для `session.message` (сессия сохраняет историю после шагов, но не граф задач и staging);
 - ORC-8 (воркер с goal в прозе без проверок scope; `bash` мимо слоёв), ORC-12 (остаток: `acceptance_checks` и `tsc` в dry-run);
 - LLM-11 (остаток: `bash` и CKG видят диск, а не staging), LLM-13 (остаток: см. выше), кеш как отдельный слой (фаза 5);
 - 6: типы с `ops.AnyOp` / `patches.Patch` / config / session / CKG в `internal/core` (см. выше); TUI по-прежнему объявляет `SessionGetResult` (несёт `sessionfile.UIMessage`);
 - 7: fsnotify вместо фонового прохода по запросу; `didChange` при смене хеша диска под открытым LSP-документом;
-- ARCH-6 (остаток: `runApply` 445 строк, `Agent.run` 417, `ApplyAnyOps` 339, `tui.App`, `agent.Options`); `applyMu` применителя — один на процесс, принято: процесс обслуживает один корень, а применения к одному корню обязаны сериализоваться ради `.orchestra.bak`;
+- ARCH-6 (остаток: `Agent.run` 417 строк, `ApplyAnyOps` 339, `tui.App`, `agent.Options`); `applyMu` применителя — один на процесс, принято: процесс обслуживает один корень, а применения к одному корню обязаны сериализоваться ради `.orchestra.bak`;
 - 8: 45 недостижимых функций остаются как тестовые сиды; `CompactSchemasForSmallContext` — по замеру; сброс `seenInstructionDirs` по концу прогона;
 - `pipeline` как пресет workflow (пока оставлен: у него стабильный флаг `--pipeline`);
 - UI доверия в клиентах.
