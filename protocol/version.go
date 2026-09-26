@@ -68,13 +68,13 @@ const (
 	//      methods, notifications and requests it serves); tools_version is
 	//      informational; core.health carries min_protocol_version. The
 	//      contract itself — every params, result and event — is protocol/wire.
-	ProtocolVersion = 24
+	ProtocolVersion = 25
 
 	// MinProtocolVersion is the oldest protocol version this core still
 	// speaks. initialize picks the newest version both sides speak, so a
 	// client and a core one release apart still connect. The window is one
 	// version: when ProtocolVersion moves, this moves with it.
-	MinProtocolVersion = 23
+	MinProtocolVersion = 24
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1

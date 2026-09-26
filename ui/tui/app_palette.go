@@ -244,6 +244,7 @@ const helpText = `Orchestra TUI — клавиши:
   Tab           цикл mode (build / plan / explore / ask / debug / architecture / agent / orchestra)
   Ctrl+T / t    tools → diff (d / Ctrl+D — diff)
   /compact      сжать LLM-контекст сессии
+  /resume       продолжить прерванный ход сессии с checkpoint'а
   /rewind       откатить историю к сообщению (файлы не откатываются)
   /memory       слои памяти + pinned facts
   /memory open  открыть ORCHESTRA.md (или fallback) в $EDITOR
@@ -299,6 +300,9 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 	case "/compact":
 		dismissWelcome()
 		return a.cmdSessionCompact()
+	case "/resume":
+		dismissWelcome()
+		return a.cmdResumeTurn()
 	case "/memory":
 		dismissWelcome()
 		return a.cmdShowMemory()

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orchestra/orchestra/internal/agent"
+	"github.com/orchestra/orchestra/internal/checkpoint"
 	"github.com/orchestra/orchestra/internal/config"
 	coresession "github.com/orchestra/orchestra/internal/core/session"
 	"github.com/orchestra/orchestra/internal/hooks"
@@ -59,7 +60,11 @@ func (c *Core) SessionStart(params SessionStartParams) (*SessionStartResult, err
 		"workspace_root": c.workspaceRoot,
 	})
 	c.housekeep()
-	return &SessionStartResult{SessionID: s.ID, Restored: restored}, nil
+	out := &SessionStartResult{SessionID: s.ID, Restored: restored}
+	if restored {
+		out.ResumableTurnID = c.resumableTurnOf(s.ID)
+	}
+	return out, nil
 }
 
 const (
@@ -266,6 +271,12 @@ func (c *Core) SessionUISync(params SessionUISyncParams) (*SessionUISyncResult, 
 type SessionMessageParams struct {
 	SessionID string `json:"session_id"`
 	Content   string `json:"content"`
+	// Resume continues a turn of this session its core did not finish — a
+	// crash, a kill — from its checkpoint: the turn's id (session.message's
+	// turn_id, session.start's resumable_turn_id) or "last". The turn is the
+	// one the checkpoint recorded — its message, mode, apply — and content
+	// may be empty; consent comes from this request. (ProtocolVersion 25.)
+	Resume string `json:"resume,omitempty"`
 
 	Apply     bool `json:"apply,omitempty"`
 	Backup    bool `json:"backup,omitempty"`
@@ -319,6 +330,9 @@ type SessionMessageParams struct {
 type SessionMessageResult struct {
 	Steps   int  `json:"steps"`
 	Applied bool `json:"applied"`
+	// TurnID names the turn: its checkpoint for resume, its lines in the
+	// session's event log. (ProtocolVersion 25.)
+	TurnID string `json:"turn_id,omitempty"`
 
 	Patches       []patches.Patch           `json:"patches,omitempty"`
 	Ops           []ops.AnyOp               `json:"ops,omitempty"`
@@ -361,6 +375,21 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	if strings.TrimSpace(params.SessionID) == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "session_id is empty", nil)
 	}
+	// A resumed turn is the turn its checkpoint recorded: its message, mode
+	// and apply. The request brings only the consent (checkpoint.go).
+	var resumed *checkpoint.Checkpoint
+	var rp resumableParams
+	if ref := strings.TrimSpace(params.Resume); ref != "" {
+		cp, err := c.loadResumable(ref, params.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(cp.Params, &rp); err != nil {
+			return nil, protocol.NewError(protocol.InvalidParams, fmt.Sprintf("resume %q: %v", cp.RunID, err), nil)
+		}
+		params = rp.applyToSession(params)
+		resumed = cp
+	}
 	if strings.TrimSpace(params.Content) == "" && len(params.Attachments) == 0 {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "content is empty", nil)
 	}
@@ -375,14 +404,17 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	if err != nil {
 		return nil, err
 	}
-	agentQuery := resolveTurnQuery(params.Content, params.Attachments, c.cfg != nil && c.cfg.LLM.Multimodal)
-	agentQuery = enrichQueryWithImageHints(agentQuery, params.Attachments)
+	agentQuery := rp.Query
+	if resumed == nil {
+		agentQuery = resolveTurnQuery(params.Content, params.Attachments, c.cfg != nil && c.cfg.LLM.Multimodal)
+		agentQuery = enrichQueryWithImageHints(agentQuery, params.Attachments)
 
-	// Before anything is spent: a user_prompt_submit hook may refuse the turn
-	// or add context the model cannot know.
-	agentQuery, err = c.applyUserPromptHooks(ctx, params.SessionID, agentQuery)
-	if err != nil {
-		return nil, err
+		// Before anything is spent: a user_prompt_submit hook may refuse the turn
+		// or add context the model cannot know.
+		agentQuery, err = c.applyUserPromptHooks(ctx, params.SessionID, agentQuery)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	applyOutput, err := resolveApplyOutput(c.cfg, params.ApplyOutput, &params.Apply, &params.Backup)
@@ -431,27 +463,41 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	inHistory := sess.CopyHistory()
 	inTodos := sess.CopyTodos()
 	planPath := sessionPlanPathLocked(sess, params.Mode)
-	sess.AppendUIMessage(buildUserUIMessage(params.Content, params.Attachments))
-	// Record where this user turn's agent output will begin. This is the only
-	// link between the UI projection and the LLM history: the agent builds a
-	// fresh system+user+history slice per request (agent_step.go), so the
-	// prompt just appended to the UI is never appended to History, and the
-	// agent does inject synthetic role=user messages mid-run. Recorded at
-	// turn *start* rather than turn end because OnStepHistory below replaces
-	// History with partial-turn content — a turn-end computation would be
-	// wrong for every turn during which a mid-turn snapshot fired.
-	sess.AppendTurnStart(len(inHistory))
-	// The user's message opens the turn in History. The agent rebuilds the
-	// current query into every request, but nothing else kept it, so the next
-	// turn saw only the model's replies — "use the name I gave you" had no name
-	// to use. Same <user_query> wrapping as the prompt, which is also what
-	// compaction reads to carry the user's words into its checkpoint. The turn
-	// start recorded above points at this message, so rewind and fork cut the
-	// question together with its answer.
-	inHistory = append(inHistory, llm.Message{
-		Role:    llm.RoleUser,
-		Content: promptpkg.UserQueryBlock(agentQuery),
-	})
+	turnStart := len(inHistory)
+	if resumed == nil {
+		sess.AppendUIMessage(buildUserUIMessage(params.Content, params.Attachments))
+		// Record where this user turn's agent output will begin. This is the only
+		// link between the UI projection and the LLM history: the agent builds a
+		// fresh system+user+history slice per request (agent_step.go), so the
+		// prompt just appended to the UI is never appended to History, and the
+		// agent does inject synthetic role=user messages mid-run. Recorded at
+		// turn *start* rather than turn end because OnStepHistory below replaces
+		// History with partial-turn content — a turn-end computation would be
+		// wrong for every turn during which a mid-turn snapshot fired.
+		sess.AppendTurnStart(turnStart)
+		// The user's message opens the turn in History. The agent rebuilds the
+		// current query into every request, but nothing else kept it, so the next
+		// turn saw only the model's replies — "use the name I gave you" had no name
+		// to use. Same <user_query> wrapping as the prompt, which is also what
+		// compaction reads to carry the user's words into its checkpoint. The turn
+		// start recorded above points at this message, so rewind and fork cut the
+		// question together with its answer.
+		inHistory = append(inHistory, llm.Message{
+			Role:    llm.RoleUser,
+			Content: promptpkg.UserQueryBlock(agentQuery),
+		})
+	} else {
+		// The turn's message and its boundary went in when the turn began;
+		// a crash before a snapshot took them leaves the chat without its
+		// question, so they are put back. The history is the checkpoint's,
+		// restored below once the task runner exists.
+		turnStart = rp.TurnStart
+		if !sessionShowsTurnLocked(sess, rp.UIText) {
+			sess.AppendUIMessage(buildUserUIMessage(rp.UIText, nil))
+			sess.AppendTurnStart(turnStart)
+		}
+		sess.AppendUIMessage(sessionfile.UIMessage{Role: "system", SystemKind: "info", Text: "the turn was resumed from its checkpoint"})
+	}
 	// Create a cancellable context for this turn and store its cancel in the session.
 	turnCtx, cancel := context.WithCancel(ctx)
 	sess.SetCancel(cancel)
@@ -475,6 +521,26 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	turn.Begin(params.Apply, params.SessionID, memory.ConfigFrom(c.cfg.Memory))
 	defer turn.End()
 
+	// The turn's checkpoint: after each step and each change of the task
+	// graph, the history, the staged edits and the graph, for
+	// session.message{resume} after a crash (checkpoint.go). A resumed turn
+	// keeps its id.
+	turnID := NewTurnID()
+	if resumed != nil {
+		turnID = resumed.RunID
+	} else {
+		checkpoint.Prune(c.workspaceRoot, checkpoint.MaxKeep-1)
+	}
+	ck := newTurnCheckpoint(c.workspaceRoot, turnID, resumableParams{
+		Query: agentQuery, Mode: params.Mode, Profile: params.Profile,
+		Apply: params.Apply, Backup: params.Backup, ApplyOutput: params.ApplyOutput, PatchPath: params.PatchPath,
+		MaxSteps: params.MaxSteps, MaxInvalidRetries: params.MaxInvalidRetries, MaxPromptBytes: params.MaxPromptBytes,
+		SessionID: params.SessionID, TurnStart: turnStart, UIText: params.Content,
+	}, turn)
+	if resumed != nil {
+		ck.resumeFrom(resumed)
+	}
+
 	launch, err := c.prepareAgentLaunch(ctx, agentLaunchSpec{
 		Mode:                params.Mode,
 		Profile:             params.Profile,
@@ -493,17 +559,25 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		AutoSessionMemory:   c.cfg.Agent.ResolvedAutoSessionMemory(),
 		UsageLabel:          "session.turn",
 		OnEvent:             params.OnEvent,
-		EventEnvelope:       EventEnvelope{SessionID: params.SessionID, TurnID: NewTurnID()},
+		EventEnvelope:       EventEnvelope{SessionID: params.SessionID, TurnID: turnID},
 		PermissionRequester: params.PermissionRequester,
 		QuestionAsker:       params.QuestionAsker,
 		Attachments:         params.Attachments,
 		UserImages:          imageParts,
 		Multimodal:          len(imageParts) > 0,
+		OnGraphChange:       ck.graphChanged,
 	})
 	if err != nil {
 		return nil, err
 	}
 	defer launch.Close()
+	// The mode the router chose is the turn's: a resumed turn does not route
+	// again.
+	ck.setMode(launch.EffectiveMode)
+	ck.setTasks(launch.TaskRunner)
+	if resumed != nil {
+		inHistory = restoreRun(turnCtx, resumed, turn, launch.TaskRunner)
+	}
 
 	// Persist todos as soon as todowrite succeeds so a crash / cancel mid-turn
 	// (or reopen before SessionMessage returns) does not lose the checklist.
@@ -531,7 +605,8 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	// The throttle is safe against the rewrite flag: it can only skip a write,
 	// and the flag is cumulative for the turn, so the next tick that does write
 	// still carries it.
-	launch.Opts.OnStepHistory = func(_ int, hist []llm.Message, rewritten bool) {
+	launch.Opts.OnStepHistory = func(step int, hist []llm.Message, rewritten bool) {
+		ck.stepHistory(step, hist, rewritten)
 		if time.Since(lastStepPersist) < stepPersistInterval {
 			return
 		}
@@ -549,6 +624,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	if err == nil {
 		outHistory, res, err = maybeContinueBuildAfterPlan(turnCtx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
 	}
+	ck.finish(err)
 	finalizeAgentUsage(launch.Usage, c.workspaceRoot)
 	profileName := launch.Profile
 
@@ -581,6 +657,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	memoryStatus := c.maybeAutoSummaryMemory(ctx, sess.ID, outHistory, res)
 
 	out := &SessionMessageResult{
+		TurnID:           turnID,
 		Memory:           memoryStatus,
 		Steps:            res.Steps,
 		Applied:          res.Applied,
@@ -1237,3 +1314,33 @@ type (
 	SessionStartResult          = wire.SessionStartResult
 	SessionUISyncResult         = wire.SessionUISyncResult
 )
+
+// applyToSession makes req the turn the checkpoint recorded, keeping the
+// request's consent and callbacks; the message is the one the chat showed.
+func (p resumableParams) applyToSession(req SessionMessageParams) SessionMessageParams {
+	req.Content = p.UIText
+	req.Mode = p.Mode
+	req.Profile = p.Profile
+	req.Apply = p.Apply
+	req.Backup = p.Backup
+	req.ApplyOutput = p.ApplyOutput
+	req.PatchPath = p.PatchPath
+	req.MaxSteps = p.MaxSteps
+	req.MaxInvalidRetries = p.MaxInvalidRetries
+	req.MaxPromptBytes = p.MaxPromptBytes
+	req.Attachments = nil
+	return req
+}
+
+// sessionShowsTurnLocked reports whether the session's chat already ends
+// with the resumed turn's message: its snapshot took the turn's start before
+// the crash. The caller holds the session's lock.
+func sessionShowsTurnLocked(sess *coresession.Session, text string) bool {
+	msgs := sess.UIMessages()
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return strings.TrimSpace(msgs[i].Text) == strings.TrimSpace(text)
+		}
+	}
+	return false
+}

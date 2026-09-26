@@ -140,6 +140,9 @@ type App struct {
 	turnStartedAt  time.Time // moment the current agent.run was kicked off
 
 	coreSessionID string // JSON-RPC session for multi-turn agent history
+	// resumableTurnID is the session's turn the core did not finish, which
+	// /resume continues; "" when there is none.
+	resumableTurnID string
 
 	// dialogStack holds dialogs opened from the Ctrl+K palette
 	// (/provider → ProviderDialog → ModelDialog → SettingsDialog).

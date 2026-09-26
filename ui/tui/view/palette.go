@@ -21,6 +21,7 @@ var AllSlashCmds = []SlashCmd{
 	{"/attach", "прикрепить файл: /attach <path>"},
 	{"/clear", "очистить историю чата"},
 	{"/compact", "сжать LLM-контекст сессии"},
+	{"/resume", "продолжить прерванный ход с checkpoint'а"},
 	{"/diff", "diff последнего commit"},
 	{"/help", "показать команды и клавиши"},
 	{"/mcp", "MCP servers: add / edit / test"},

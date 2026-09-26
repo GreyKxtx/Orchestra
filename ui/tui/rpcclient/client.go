@@ -228,6 +228,9 @@ func (c *Client) Events() <-chan Event {
 type AgentRunOptions struct {
 	Apply     bool
 	AllowExec bool
+	// Resume continues the session's interrupted turn from its checkpoint
+	// (session.message resume, protocol 25): the turn's id or "last".
+	Resume string
 	// AllowBrowser gives the turn browser.* tools (protocol 19).
 	AllowBrowser bool
 	Profile      string
@@ -253,23 +256,29 @@ type RPCAttachment struct {
 	Name string `json:"name,omitempty"`
 }
 
+// SessionStartInfo is session.start's answer.
+type SessionStartInfo struct {
+	SessionID string `json:"session_id"`
+	Restored  bool   `json:"restored"`
+	// ResumableTurnID names the session's turn its core did not finish,
+	// which SessionMessage with Resume continues (protocol 25).
+	ResumableTurnID string `json:"resumable_turn_id"`
+}
+
 // SessionStart creates or reopens a core session.
-func (c *Client) SessionStart(ctx context.Context, sessionID string) (string, bool, error) {
+func (c *Client) SessionStart(ctx context.Context, sessionID string) (SessionStartInfo, error) {
 	params := map[string]any{}
 	if strings.TrimSpace(sessionID) != "" {
 		params["session_id"] = strings.TrimSpace(sessionID)
 	}
-	var res struct {
-		SessionID string `json:"session_id"`
-		Restored  bool   `json:"restored"`
-	}
+	var res SessionStartInfo
 	if err := c.rpc.Call(ctx, "session.start", params, &res); err != nil {
-		return "", false, err
+		return SessionStartInfo{}, err
 	}
 	if strings.TrimSpace(res.SessionID) == "" {
-		return "", false, fmt.Errorf("session.start returned empty session_id")
+		return SessionStartInfo{}, fmt.Errorf("session.start returned empty session_id")
 	}
-	return res.SessionID, res.Restored, nil
+	return res, nil
 }
 
 // SessionGetResult mirrors core.SessionGetResult.
@@ -360,6 +369,9 @@ func (c *Client) SessionMessage(ctx context.Context, sessionID, query, mode stri
 		"content":    query,
 	}
 	addTurnFlags(params, opts)
+	if opts.Resume != "" {
+		params["resume"] = opts.Resume
+	}
 	if mode != "" {
 		params["mode"] = mode
 	}

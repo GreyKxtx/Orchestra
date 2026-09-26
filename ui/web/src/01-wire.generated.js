@@ -5,8 +5,8 @@
   // A fragment of the web bundle: ui/web/scripts/bundle-web.mjs puts it right
   // after the prelude, so every later fragment sees WIRE.
   const WIRE = Object.freeze({
-    PROTOCOL_VERSION: 24,
-    MIN_PROTOCOL_VERSION: 23,
+    PROTOCOL_VERSION: 25,
+    MIN_PROTOCOL_VERSION: 24,
     OPS_VERSION: 1,
     TOOLS_VERSION: 18,
     METHODS: Object.freeze([

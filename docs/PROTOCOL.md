@@ -18,6 +18,7 @@
 
 ### История ProtocolVersion
 
+- **v25** (2026-09-26): resume для сессии. `session.message` принимает `resume` — `turn_id` хода этой сессии или `"last"` — и продолжает ход, который его core не довёл до конца, с его checkpoint'а (тот же механизм, что у `agent.run`: `.orchestra/runs/<turn_id>.checkpoint.json` пишется после каждого шага и при каждом изменении графа задач). Ответ `session.message` содержит `turn_id`; `session.start` переоткрытой сессии — `resumable_turn_id`, если у сессии есть ход, который можно продолжить. Сессия продолжает только свои ходы, `agent.run` — только свои прогоны.
 - **v24** (2026-09-25): рукопожатие по диапазону версий. `initialize` принимает `min_protocol_version` и отвечает согласованной `protocol_version`, своей `tools_version` и `capabilities` (`{methods[], notifications[], requests[]}` — что именно обслуживает этот core, чтобы клиент спрашивал про нужную возможность по имени, а не сравнивал числа); `tools_version` — информационная; `core.health` несёт `min_protocol_version`. Контракт целиком — пакет `protocol/wire` и сгенерированные из него TS / JS / JSON Schema (см. «Версии»). `agent/event` и `exec/output_chunk` — `wire.AgentEvent` и `wire.ExecOutputChunk`: те же поля и значения, что и раньше; `step`, `type`, `content` и `tool_call_index` есть всегда, остальные поля приходят только с непустым значением.
 - **v23** (2026-09-25): `agent.run` принимает `resume` — `run_id` хода или `"last"` — и продолжает ход, который его core не довёл до конца (крах, `kill -9`), с его checkpoint'а (`.orchestra/runs/<run_id>.checkpoint.json`). Ответ `agent.run` содержит `run_id`. Подробности — в описании `agent.run` ниже.
 - **v22** (2026-09-25): доверие к рабочей области. Новые методы `workspace.trust_status` и `workspace.trust` (`{revoke?: bool}`) — см. ниже. Настройки проекта, которые действуют на машину (MCP-серверы из `.orchestra.yml` и `.mcp.json`, `hooks`, `lsp.servers`, `exec.confirm` / `exec.allow` / `exec.env_passthrough`, `web.confirm`, правила `permissions` с `action: allow`, блоки `auth`, а также endpoint проекта, куда ушёл бы ключ пользователя — `${VAR}` или ключ из `~/.orchestra/config.yml`), вступают в силу только в доверенной рабочей области; до этого core их не применяет и пишет в stderr, что проигнорировано. `session.start` отклоняет `session_id`, который не является простым именем (буквы, цифры, `.`, `_`, `-`), с `InvalidParams`.
@@ -600,7 +601,7 @@ Response `result` (`wire.InitializeResult`):
 - `patch_path` (string, optional) — путь для `.patch` при `apply_output=patch` (иначе `apply.patch_dir` / `.orchestra/patches/orchestra-<ts>.patch`).
 - `profile` (string, optional) — adaptive preset `fast` | `precision` (см. `docs/architecture/tui-pipeline.md` §9).
 - `attachments` (array, optional) — файлы/изображения для multimodal хода. Элемент: `{ "path": "...", "kind": "image"|"file", "mime": "...", "name": "..." }`. `kind=image` требует `llm.multimodal: true` и vision-модель.
-- `resume` (string, optional; v23+) — продолжить ход, который не завершился, с его checkpoint'а: `run_id` или `"last"` (последний ход, который можно продолжить). Checkpoint пишется атомарно после каждого шага агента верхнего уровня и при каждом изменении графа задач. В нём история агента, staged-правки хода с версией диска, от которой они сделаны, и граф задач. При resume ход работает со своими `query`, `mode`, `profile`, `apply`, `apply_output` и лимитами из checkpoint'а, а согласие (`allow_exec`, `allow_web`, `allow_browser`) берётся только из этого запроса: checkpoint — файл в проекте. Staged-правки возвращаются. Завершённые задачи сохраняют результат и повторно не запускаются. Прерванные задачи стартуют заново под теми же id, если их запустил агент верхнего уровня и этот id есть в его истории или если их спавнер завершился. Прерванные задачи прерванного спавнера не перезапускаются: спавнер запустит их сам. Агент получает `<resume_notice>` со списком того, что вернулось. Ход, который уже завершился, продолжить нельзя (`InvalidParams`). `session.message` пока так не умеет: сессия сохраняет историю после каждого шага, а граф задач и staging — нет.
+- `resume` (string, optional; v23+) — продолжить ход, который не завершился, с его checkpoint'а: `run_id` или `"last"` (последний ход, который можно продолжить). Checkpoint пишется атомарно после каждого шага агента верхнего уровня и при каждом изменении графа задач. В нём история агента, staged-правки хода с версией диска, от которой они сделаны, и граф задач. При resume ход работает со своими `query`, `mode`, `profile`, `apply`, `apply_output` и лимитами из checkpoint'а, а согласие (`allow_exec`, `allow_web`, `allow_browser`) берётся только из этого запроса: checkpoint — файл в проекте. Staged-правки возвращаются. Завершённые задачи сохраняют результат и повторно не запускаются. Прерванные задачи стартуют заново под теми же id, если их запустил агент верхнего уровня и этот id есть в его истории или если их спавнер завершился. Прерванные задачи прерванного спавнера не перезапускаются: спавнер запустит их сам. Агент получает `<resume_notice>` со списком того, что вернулось. Ход, который уже завершился, продолжить нельзя (`InvalidParams`). `session.message` продолжает ходы сессии так же (`resume`, v25+); `agent.run` не продолжает ход сессии, а сессия — прогон `agent.run`.
 
 > **Skills:** CLI также принимает `--skill <name>`, который загружает file-based agent definition из `<project>/.orchestra/skills/<name>.md`. Скилл резолвится в синтетический `AgentDefinition` и идёт через тот же путь `--mode`, поэтому JSON-RPC surface не меняется — это CLI-side loader поверх существующего `AgentOptions`. См. `docs/skills.md`.
 
@@ -674,6 +675,7 @@ Response `result`:
 ```
 
 - `restored` — true когда на диске уже был snapshot с history и/или ui_messages
+- `resumable_turn_id` (string, optional; v25+) — последний ход этой сессии, который её core не довёл до конца и который `session.message` с `resume` продолжит; отсутствует, если такого нет. Только для переоткрытой сессии.
 
 ### `session.get`
 
@@ -733,9 +735,11 @@ Response `result`: `{ "session_id": "...", "saved": true }`
 - `max_invalid_retries` (int, optional)
 - `max_prompt_bytes` (int, optional)
 - `apply_output` / `patch_path` / `profile` — как у `agent.run`
+- `resume` (string, optional; v25+) — продолжить ход этой сессии, который не завершился, с его checkpoint'а: `turn_id` (из ответа `session.message` или `resumable_turn_id` в `session.start`) или `"last"`. Ход — тот, что записан в checkpoint'е: его сообщение, `mode`, `profile`, `apply`, `apply_output` и лимиты; `content` может быть пустым. Согласие (`allow_exec`, `allow_browser`) — только из этого запроса. Возвращаются staged-правки и граф задач (как у `agent.run`), агент получает `<resume_notice>`; в чат сессии добавляется системное сообщение о продолжении, а вопрос пользователя — только если крах случился до того, как snapshot сессии его записал. Ход другой сессии или прогон `agent.run` — `InvalidParams`; завершённый ход продолжить нельзя.
 
 Response `result`:
 
+- `turn_id` (string; v25+) — имя хода: его checkpoint для `resume`, его строки в логе событий сессии
 - `steps` (int) — число шагов агента
 - `applied` (bool)
 - `patches` (optional) — diff/patches (при `apply=false`)

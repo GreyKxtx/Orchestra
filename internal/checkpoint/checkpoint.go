@@ -141,6 +141,12 @@ func Load(projectRoot, runID string) (*Checkpoint, error) {
 // Latest returns the most recent resumable checkpoint, or ErrNotFound.
 // Run ids begin with their UTC start time, so name order is age order.
 func Latest(projectRoot string) (*Checkpoint, error) {
+	return LatestWhere(projectRoot, nil)
+}
+
+// LatestWhere is Latest among the resumable checkpoints keep accepts — a
+// session's own turns, say; nil accepts every one.
+func LatestWhere(projectRoot string, keep func(*Checkpoint) bool) (*Checkpoint, error) {
 	entries, err := os.ReadDir(Dir(projectRoot))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotFound
@@ -157,7 +163,7 @@ func Latest(projectRoot string) (*Checkpoint, error) {
 	sort.Sort(sort.Reverse(sort.StringSlice(ids)))
 	for _, id := range ids {
 		c, err := Load(projectRoot, id)
-		if err == nil && c.Resumable() {
+		if err == nil && c.Resumable() && (keep == nil || keep(c)) {
 			return c, nil
 		}
 	}

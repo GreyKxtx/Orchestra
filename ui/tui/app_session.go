@@ -18,6 +18,8 @@ import (
 type coreSessionStartedMsg struct {
 	sessionID string
 	restored  bool
+	// resumable names the turn the core did not finish, when there is one.
+	resumable string
 	got       *rpcclient.SessionGetResult // prefetched session.get (nil on error)
 	err       error
 }
@@ -40,15 +42,15 @@ func (a *App) startCoreSession() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), startCoreSessionTimeout)
 		defer cancel()
-		sid, restored, err := rpc.SessionStart(ctx, sessionID)
+		info, err := rpc.SessionStart(ctx, sessionID)
 		if err != nil {
-			return coreSessionStartedMsg{sessionID: sid, restored: restored, err: err}
+			return coreSessionStartedMsg{sessionID: info.SessionID, restored: info.Restored, err: err}
 		}
-		got, gErr := rpc.SessionGet(ctx, sid)
+		got, gErr := rpc.SessionGet(ctx, info.SessionID)
 		if gErr != nil {
 			got = nil
 		}
-		return coreSessionStartedMsg{sessionID: sid, restored: restored, got: got}
+		return coreSessionStartedMsg{sessionID: info.SessionID, restored: info.Restored, resumable: info.ResumableTurnID, got: got}
 	}
 }
 
@@ -63,6 +65,19 @@ func (a *App) handleCoreSessionStarted(m coreSessionStartedMsg) {
 	}
 	a.coreSessionID = m.sessionID
 	a.currentSessionID = m.sessionID
+	a.resumableTurnID = m.resumable
+	defer func() {
+		// Said after the chat is back, so it is the last thing on screen.
+		if a.resumableTurnID == "" {
+			return
+		}
+		a.session.AppendMessage(state.Message{
+			Role:       state.RoleSystem,
+			SystemKind: state.SystemKindInfo,
+			Text:       "предыдущий ход был прерван: core завершился, не закончив его. /resume — продолжить с checkpoint'а",
+		})
+		a.chat.SetMessages(a.session.Messages)
+	}()
 	got := m.got
 	if got == nil {
 		return

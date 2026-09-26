@@ -42,6 +42,9 @@ type fakeCore struct {
 	questionAnswers       []fakeQuestionAnswer
 	ruleSuggestionAnswers []fakeRuleSuggestionAnswer
 
+	// resumableTurnID is what session.start of a reopened session names.
+	resumableTurnID string
+
 	// Scripted responses.
 	sessionGetResult *rpcclient.SessionGetResult
 	sessionStartID   string
@@ -92,14 +95,14 @@ func (f *fakeCore) Close() error {
 	return nil
 }
 
-func (f *fakeCore) SessionStart(_ context.Context, sessionID string) (string, bool, error) {
+func (f *fakeCore) SessionStart(_ context.Context, sessionID string) (rpcclient.SessionStartInfo, error) {
 	if sessionID != "" {
-		return sessionID, true, nil
+		return rpcclient.SessionStartInfo{SessionID: sessionID, Restored: true, ResumableTurnID: f.resumableTurnID}, nil
 	}
 	if f.sessionStartID != "" {
-		return f.sessionStartID, false, nil
+		return rpcclient.SessionStartInfo{SessionID: f.sessionStartID}, nil
 	}
-	return "fake-session", false, nil
+	return rpcclient.SessionStartInfo{SessionID: "fake-session"}, nil
 }
 
 func (f *fakeCore) SessionGet(_ context.Context, _ string) (*rpcclient.SessionGetResult, error) {

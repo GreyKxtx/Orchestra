@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/orchestra/orchestra/ui/tui/rpcclient"
 	"github.com/orchestra/orchestra/ui/tui/state"
 )
 
@@ -72,15 +73,7 @@ func (a *App) submitUserMessage(text string) tea.Cmd {
 		return cmd
 	}
 
-	a.session.StartAssistant(a.cfg.Mode, a.cfg.Model)
-	a.reasoning.Reset()
-	if a.subagents != nil {
-		a.subagents.Reset()
-	}
-	a.stepTextLen = 0
-	a.turnStartedAt = time.Now()
-	a.chat.ScrollToBottom()
-	a.chat.SetMessages(a.session.Messages)
+	a.openAssistantTurn()
 	saveCmd := a.persistSessionCmd()
 
 	if a.rpc == nil {
@@ -90,16 +83,36 @@ func (a *App) submitUserMessage(text string) tea.Cmd {
 		a.chat.SetMessages(a.session.Messages)
 		return saveCmd
 	}
+	opts := a.agentRunOptions()
+	opts.Attachments = rpcAttachmentsFromState(atts)
+	return tea.Batch(saveCmd, a.launchTurn(text, opts))
+}
 
+// openAssistantTurn readies the chat for the answer that is about to stream.
+func (a *App) openAssistantTurn() {
+	a.session.StartAssistant(a.cfg.Mode, a.cfg.Model)
+	a.reasoning.Reset()
+	if a.subagents != nil {
+		a.subagents.Reset()
+	}
+	a.stepTextLen = 0
+	a.turnStartedAt = time.Now()
+	a.chat.ScrollToBottom()
+	a.chat.SetMessages(a.session.Messages)
+}
+
+// launchTurn starts the turn on the core — the turn FSM, its cancel — and
+// returns the command that sends it: session.message in a session, agent.run
+// without one. The tea.Cmd runs in its own goroutine and must never touch
+// App fields (a data race with Update), so it takes everything it needs
+// here; results come back through the RPC event stream alone.
+func (a *App) launchTurn(text string, opts rpcclient.AgentRunOptions) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.activeCancel = cancel
 	a.beginAgentTurn()
 	a.layout()
 	a.updateStatusHints()
 
-	// Snapshot everything the turn needs on the UI thread: the tea.Cmd runs
-	// in its own goroutine and must never touch App fields (data race with
-	// Update). Results come back exclusively through the RPC event stream.
 	rpc := a.rpc
 	sid := strings.TrimSpace(a.coreSessionID)
 	if sid == "" {
@@ -108,10 +121,8 @@ func (a *App) submitUserMessage(text string) tea.Cmd {
 		sid = strings.TrimSpace(a.currentSessionID)
 		a.coreSessionID = sid
 	}
-	opts := a.agentRunOptions()
-	opts.Attachments = rpcAttachmentsFromState(atts)
 	mode := a.cfg.Mode
-	turnCmd := func() tea.Msg {
+	return func() tea.Msg {
 		if sid != "" {
 			_ = rpc.SessionMessage(ctx, sid, text, mode, opts)
 		} else {
@@ -119,5 +130,26 @@ func (a *App) submitUserMessage(text string) tea.Cmd {
 		}
 		return nil
 	}
-	return tea.Batch(saveCmd, turnCmd)
+}
+
+// cmdResumeTurn is /resume: the session's interrupted turn goes on from its
+// checkpoint — the same turn, its message and mode, with this TUI's consent
+// flags (session.message resume). The checkpoint's user message is already
+// in the chat, or comes back with the session.
+func (a *App) cmdResumeTurn() tea.Cmd {
+	turnID := strings.TrimSpace(a.resumableTurnID)
+	if turnID == "" || a.rpc == nil || strings.TrimSpace(a.coreSessionID)+strings.TrimSpace(a.currentSessionID) == "" {
+		a.session.AppendMessage(state.Message{
+			Role:       state.RoleSystem,
+			SystemKind: state.SystemKindInfo,
+			Text:       "нечего продолжать: у этой сессии нет прерванного хода",
+		})
+		a.chat.SetMessages(a.session.Messages)
+		return nil
+	}
+	a.resumableTurnID = ""
+	a.openAssistantTurn()
+	opts := a.agentRunOptions()
+	opts.Resume = turnID
+	return a.launchTurn("", opts)
 }

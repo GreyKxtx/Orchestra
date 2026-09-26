@@ -22,7 +22,7 @@ type coreClient interface {
 	Close() error
 
 	// Session lifecycle / persistence.
-	SessionStart(ctx context.Context, sessionID string) (id string, restored bool, err error)
+	SessionStart(ctx context.Context, sessionID string) (rpcclient.SessionStartInfo, error)
 	SessionGet(ctx context.Context, sessionID string) (*rpcclient.SessionGetResult, error)
 	SessionUISync(ctx context.Context, sessionID, title, model string, ui []sessionfile.UIMessage, costUSD float64) error
 	SessionRewind(ctx context.Context, sessionID string, uiMessageIndex int) (*rpcclient.SessionRewindResult, error)
