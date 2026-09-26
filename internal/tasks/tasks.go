@@ -17,6 +17,7 @@ import (
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/app"
+	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/contract"
 	"github.com/orchestra/orchestra/internal/orchestrastate"
 	"github.com/orchestra/orchestra/internal/roles"
@@ -451,30 +452,38 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 	var contractRefs []contract.Ref
 	if isWorker {
 		goal := strings.TrimSpace(req.Goal)
+		var wo *WorkOrder
 		if goal != "" && json.Valid([]byte(goal)) {
 			goal = withDefaultScratchpad(goal, dept)
 			req.Goal = goal
-			wo, err := ParseWorkOrderJSON(goal)
+			wo, err = ParseWorkOrderJSON(goal)
 			if err != nil {
 				return "", err
 			}
-			if r.child.GuardContractRefs != nil {
-				if err := r.child.GuardContractRefs(ctx, wo.ContractRefs); err != nil {
-					return "", err
-				}
-			}
-			// Brief completeness gate (spec §6.2): active only when the
-			// dept playbook opted in via brief_required_fields.
-			if err := checkBriefCompleteness(r.toolRunner.WorkspaceRoot(), r.toolRunner.View(ctx), wo); err != nil {
+		} else {
+			// A worker whose goal is prose is a WorkOrder with nothing in
+			// it, and the gates judge it as one (ORC-8): in execution with
+			// a frozen contract it is refused the way a WorkOrder without
+			// contract_refs is, and a department whose playbook demands a
+			// brief gets no worker without one, however the task is put.
+			wo = proseWorkOrder(dept)
+		}
+		if r.child.GuardContractRefs != nil {
+			if err := r.child.GuardContractRefs(ctx, wo.ContractRefs); err != nil {
 				return "", err
 			}
-			editPaths = normalizeEditPathSet(EditScopePaths(wo))
-			contractRefs = wo.ContractRefs
-			if key == "" {
-				key = strings.TrimSpace(wo.TaskID)
-			}
-			dependsOn = append(dependsOn, wo.DependsOn...)
 		}
+		// Brief completeness gate (spec §6.2): active only when the
+		// dept playbook opted in via brief_required_fields.
+		if err := checkBriefCompleteness(r.toolRunner.WorkspaceRoot(), r.toolRunner.View(ctx), wo); err != nil {
+			return "", err
+		}
+		editPaths = normalizeEditPathSet(EditScopePaths(wo))
+		contractRefs = wo.ContractRefs
+		if key == "" {
+			key = strings.TrimSpace(wo.TaskID)
+		}
+		dependsOn = append(dependsOn, wo.DependsOn...)
 	}
 
 	// Inherit parent cancellation so finishing/cancelling the parent turn
@@ -675,6 +684,16 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 	}()
 
 	return taskID, nil
+}
+
+// proseWorkOrder is the WorkOrder a worker with a goal in prose stands for
+// at the gates: no scope, no refs, the department's own scratchpad.
+func proseWorkOrder(dept string) *WorkOrder {
+	wo := &WorkOrder{}
+	if dept != "" && config.ValidAgencyName(dept) {
+		wo.Context = map[string]any{"scratchpad": agent.DeptScratchpadDir + "/" + dept + ".md"}
+	}
+	return wo
 }
 
 // conflictingTasksLocked returns unfinished tasks whose edit scope overlaps
