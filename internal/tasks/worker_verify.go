@@ -160,8 +160,17 @@ func VerifyWorkerOutcome(ctx context.Context, runner *tools.Runner, paths []stri
 	for _, p := range paths {
 		record(verifyWorkerLSP(ctx, runner, p))
 	}
-	if runner != nil && !runner.TurnAt(ctx).DryRun() {
-		root := runner.WorkspaceRoot()
+	root, inShadow := "", false
+	if runner != nil {
+		// The workspace itself when the turn applies; in a preview, the
+		// agent's shadow workspace with its staged edits (ORC-12): the
+		// build, the tests and the typecheck run against what the turn
+		// will be once applied, without an overlay file and without
+		// touching the workspace. A preview with no shadow (off, or the
+		// tree too large) keeps the overlay build below.
+		root, inShadow, _ = runner.VerificationRoot(ctx)
+	}
+	if runner != nil && (!runner.TurnAt(ctx).DryRun() || inShadow) {
 		for _, pkg := range goBuildPackages(paths) {
 			record(verifyWorkerGoBuild(ctx, root, pkg, ""))
 			if opts.AffectedTests {
@@ -888,6 +897,20 @@ func (r *TaskRunner) runWorkerWithVerification(
 	return escHist, escRes, nil
 }
 
+// runAcceptanceChecksAt runs the WorkOrder's acceptance checks where the
+// worker's edits are: the workspace when the turn applies, the worker's
+// shadow workspace in a preview (ORC-12). A preview that cannot be shadowed
+// skips them, as it always did.
+func (r *TaskRunner) runAcceptanceChecksAt(ctx context.Context, checks []AcceptanceCheck) []WorkerVerifyCheck {
+	root, inShadow, err := r.toolRunner.VerificationRoot(ctx)
+	dryRun := r.toolRunner.TurnAt(ctx).DryRun() && !inShadow
+	if err != nil {
+		root = r.toolRunner.WorkspaceRoot()
+		dryRun = true
+	}
+	return runAcceptanceChecks(ctx, root, checks, r.child.Caps.Exec, dryRun)
+}
+
 // runWorkerRounds executes up to maxRounds worker attempts with post-run
 // deterministic checks, feeding verification failures back as hints.
 // Arbitration order (spec §5.4): deterministic checks → acceptance_checks →
@@ -955,7 +978,7 @@ func (r *TaskRunner) runWorkerRounds(
 		if report.Passed {
 			// Acceptance checks run only after green deterministic checks:
 			// no point probing behavior of code that does not compile.
-			acResults := runAcceptanceChecks(ctx, r.toolRunner.WorkspaceRoot(), acChecks, r.child.Caps.Exec, r.toolRunner.TurnAt(ctx).DryRun())
+			acResults := r.runAcceptanceChecksAt(ctx, acChecks)
 			report.Checks = append(report.Checks, acResults...)
 			acRan, acGreen := acceptanceOutcome(acResults)
 			if !acGreen {

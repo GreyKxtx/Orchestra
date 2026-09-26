@@ -10,7 +10,7 @@ import (
 
 // IntegrationReport is the verdict on several workers' edits taken together.
 type IntegrationReport struct {
-	Status  string              `json:"status"` // passed | failed
+	Status  string              `json:"status"` // passed | failed | skipped
 	Workers int                 `json:"workers"`
 	Files   []string            `json:"files"`
 	Summary string              `json:"summary"`
@@ -43,10 +43,22 @@ func (r *TaskRunner) integrationVerify(ctx context.Context, entries []*taskEntry
 		}
 	}
 	r.mu.Unlock()
-	if workers < 2 || !r.resolvedWorkerVerifyEnabled() || ctx.Err() != nil {
+	if workers < 2 || !r.resolvedWorkerVerifyEnabled() {
 		return nil
 	}
 	sort.Strings(files)
+	if ctx.Err() != nil {
+		// The turn ended before the pieces could be checked together: the
+		// report says so instead of vanishing, which read as "nothing to
+		// check" (ORC-12).
+		out := IntegrationReport{Status: "skipped", Workers: workers, Files: files,
+			Summary: "integration check skipped: " + ctx.Err().Error()}
+		raw, err := json.Marshal(out)
+		if err != nil {
+			return nil
+		}
+		return raw
+	}
 	report := VerifyWorkerOutcome(ctx, r.toolRunner, files, r.resolvedWorkerVerifyOptions())
 	out := IntegrationReport{Status: "passed", Workers: workers, Files: files, Summary: report.Summary()}
 	if !report.Passed {

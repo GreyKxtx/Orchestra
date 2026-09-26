@@ -255,6 +255,7 @@ func LayerContext(ctx context.Context) context.Context {
 // each document, the last one written, so a discarded edit would otherwise
 // keep answering diagnostics and navigation for everyone after it.
 func (r *Runner) DropLayer(ownerCtx context.Context, layer *fs.Overlay) {
+	r.closeShadowOf(layer)
 	paths := layer.Discard()
 	if len(paths) == 0 || r.lspManager == nil || r.lspManager.IsEmpty() {
 		return

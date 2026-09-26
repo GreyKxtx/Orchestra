@@ -1123,6 +1123,8 @@ Response `result`:
 
 A turn with `apply: false` (`agent.run`, `session.message`) stages its edits and, with `exec.shadow` on (the default), runs its commands in a shadow of the workspace: a copy that carries the turn's staged edits and leaves out `.git`, `.orchestra` and `exclude_dirs`. The command sees the edits the model made; the files it writes come back as staged edits (a `tool_call_completed` for `bash` says which in its stderr trailer), and the workspace is untouched. With `exec.shadow: false` the core refuses every command in a preview, as before. A workspace too large to copy (20k files / 512 MiB) is refused the same way, with the reason.
 
+A worker's verification runs in the same place: in a preview, `go build`, the affected tests, `tsc --noEmit` and the WorkOrder's `acceptance_checks` run in the worker's own shadow (each task layer has one), and the integration check of `task_wait` in the turn's, against the staged edits. Without a shadow the preview keeps the `go build -overlay` path and reports `tsc` and the acceptance checks as skipped. An integration check the turn ended before is reported with `"status": "skipped"` and the reason, not omitted.
+
 ### `skill.invoke`
 
 Runs a single skill end-to-end as one child agent turn — the same runner

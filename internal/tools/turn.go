@@ -30,13 +30,6 @@ type Turn struct {
 	sessionID              string
 	memoryCfg              memory.Config
 	deptLessonWrites       int
-
-	// shadowWS is where this turn's commands run while it previews (see
-	// shadowWorkspace), made on the first command; shadowErr is why one
-	// could not be made, remembered so the copy is not attempted again.
-	shadowMu  sync.Mutex
-	shadowWS  *shadowWorkspace
-	shadowErr error
 }
 
 // TurnOptions says how a turn runs.
@@ -175,7 +168,7 @@ func (t *Turn) Close() {
 	delete(t.r.turns, t)
 	t.r.turnsMu.Unlock()
 	t.ClearStaged()
-	t.closeShadow()
+	t.r.closeShadowOf(t.overlay)
 }
 
 // Overlay is the turn's staging overlay.
@@ -252,27 +245,10 @@ func (t *Turn) previewBlocksCommands() bool {
 	return t.dryRun && t.r.blockExecInDryRun && !t.allowExecDespiteDryRun
 }
 
-// shadow is the turn's shadow workspace, made on first use. An error is
-// remembered: a workspace too large to copy stays so for the turn.
+// shadow is the shadow workspace of the turn's own overlay (see
+// Runner.shadowFor).
 func (t *Turn) shadow() (*shadowWorkspace, error) {
-	t.shadowMu.Lock()
-	defer t.shadowMu.Unlock()
-	if t.shadowWS != nil || t.shadowErr != nil {
-		return t.shadowWS, t.shadowErr
-	}
-	t.shadowWS, t.shadowErr = newShadowWorkspace(t.r.workspaceRoot, t.r.excludeDirs)
-	return t.shadowWS, t.shadowErr
-}
-
-func (t *Turn) closeShadow() {
-	if t == nil {
-		return
-	}
-	t.shadowMu.Lock()
-	ws := t.shadowWS
-	t.shadowWS, t.shadowErr = nil, nil
-	t.shadowMu.Unlock()
-	ws.Close()
+	return t.r.shadowFor(t.overlay)
 }
 
 // SessionID is the session whose memory the turn writes.

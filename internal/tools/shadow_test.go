@@ -168,3 +168,71 @@ func TestShadow_TooLargeRefuses(t *testing.T) {
 		t.Fatalf("err = %v, want the size refusal", err)
 	}
 }
+
+// Every task layer has a shadow of its own (ORC-12): two workers of one turn
+// run their commands against their own staged edits, not each other's.
+func TestShadow_EachLayerHasItsOwn(t *testing.T) {
+	r, _ := newShadowRunner(t)
+	base := context.Background()
+	a := WithLayer(base, r.ForkLayer(base))
+	b := WithLayer(base, r.ForkLayer(base))
+	hash := r.overlayAt(base).CurrentHash("a.txt")
+	if _, err := r.FSWrite(a, FSWriteRequest{Path: "a.txt", Content: "from a\n", FileHash: hash}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.FSWrite(b, FSWriteRequest{Path: "a.txt", Content: "from b\n", FileHash: hash}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		ctx  context.Context
+		want string
+	}{{a, "from a\n"}, {b, "from b\n"}, {base, "disk\n"}} {
+		resp, err := r.ExecRun(tc.ctx, helperCommand(t, "cat-file", "a.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(resp.Stdout, tc.want) {
+			t.Errorf("read %q, want %q", resp.Stdout, tc.want)
+		}
+	}
+	// Two layers never share a shadow: their commands may run at once, and
+	// one sync would undo the other's.
+	shA, _ := r.shadowFor(r.overlayAt(a))
+	shB, _ := r.shadowFor(r.overlayAt(b))
+	if shA == nil || shA == shB {
+		t.Fatal("the two layers share a shadow")
+	}
+	// Dropping a layer drops its shadow.
+	layerB := r.overlayAt(b)
+	r.DropLayer(base, layerB)
+	r.shadowMu.Lock()
+	_, still := r.shadows[layerB]
+	r.shadowMu.Unlock()
+	if still {
+		t.Error("a dropped layer's shadow is still held")
+	}
+}
+
+// VerificationRoot is the shadow, synced, in a preview; the workspace when
+// the turn applies.
+func TestVerificationRoot(t *testing.T) {
+	r, root := newShadowRunner(t)
+	ctx := context.Background()
+	hash := r.overlayAt(ctx).CurrentHash("a.txt")
+	if _, err := r.FSWrite(ctx, FSWriteRequest{Path: "a.txt", Content: "staged\n", FileHash: hash}); err != nil {
+		t.Fatal(err)
+	}
+	got, inShadow, err := r.VerificationRoot(ctx)
+	if err != nil || !inShadow || got == root {
+		t.Fatalf("VerificationRoot = %q %v %v, want the shadow", got, inShadow, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(got, "a.txt")); string(b) != "staged\n" {
+		t.Fatalf("the shadow holds %q, want the staged edit", b)
+	}
+	applying := r.NewTurn(TurnOptions{DryRun: false})
+	defer applying.Close()
+	got, inShadow, err = r.VerificationRoot(WithTurn(ctx, applying))
+	if err != nil || inShadow || got != root {
+		t.Fatalf("VerificationRoot for an applying turn = %q %v %v, want the workspace", got, inShadow, err)
+	}
+}

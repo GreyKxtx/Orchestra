@@ -88,8 +88,16 @@ type Runner struct {
 	allowBrowserEval bool
 
 	// shadowExec runs a preview turn's commands in a shadow of the workspace
-	// with the turn's staged edits (Turn.shadow) instead of refusing them.
+	// with the turn's staged edits (shadowFor) instead of refusing them.
 	shadowExec bool
+	// shadows is one shadow workspace per overlay that ran a command or a
+	// verification in a preview: a turn's, or a task layer's — parallel
+	// workers must not run in one another's copy. shadowErr is why none
+	// could be made (a workspace too large to copy), remembered so the copy
+	// is not attempted again.
+	shadowMu  sync.Mutex
+	shadows   map[*fs.Overlay]*shadowWorkspace
+	shadowErr error
 	// blockExecInDryRun refuses commands in a turn that previews (the core);
 	// the per-turn flags live on Turn.
 	blockExecInDryRun bool
@@ -511,7 +519,7 @@ func (r *Runner) BrowserEnabled() bool {
 
 func (r *Runner) Close() error {
 	r.closeBg()
-	r.turn.closeShadow()
+	r.closeShadows()
 	if r.browserClient != nil {
 		_ = r.browserClient.Close()
 		r.browserClient = nil
