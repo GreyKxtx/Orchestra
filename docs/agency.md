@@ -159,17 +159,27 @@ Lead возвращает в `task_result` JSON с `batch_workorders[]`. Ран�
 Воркеры переживают завершение Lead'а и останавливаются ожиданием родителя,
 отменой или концом хода.
 
-## Проверка в dry-run
+## Проверка в preview-ходе
 
 Ход в core всегда идёт в dry-run: правки лежат в staging overlay до
 применения. Раньше поэтому `go build` и тесты воркеров пропускались, и
-проверку делал только LSP. Теперь сборка идёт через `go build -overlay` —
-компилятор видит staged-содержимое, диск не трогается. Затронутые тесты
-(`go test -overlay`) запускают код, который написала модель, поэтому требуют
-того же согласия, что `bash` (`--allow-exec` / `exec.confirm: false`); без него
-они помечаются пропущенными. `tsc` не умеет overlay и в dry-run пропускается.
-Если staged `go.mod` / `go.sum` / `go.work` — сборка пропускается (overlay не
-подменяет файлы модуля).
+проверку делал только LSP; потом сборка пошла через `go build -overlay`, но
+`tsc` и `acceptance_checks` WorkOrder'а по-прежнему пропускались, а
+результат всё равно назывался `verified_success` (ORC-12). Теперь проверка
+воркера идёт там же, где его команды (`exec.shadow`, по умолчанию on): в
+теневой копии рабочего пространства, доведённой до staged-правок его слоя —
+у каждого слоя задачи своя тень, воркеры не мешают друг другу. `go build`,
+затронутые тесты, `tsc --noEmit` и `acceptance_checks` выполняются в тени
+против того, чем станет дерево после применения; staged `go.mod` / `go.sum`
+там не помеха. Интеграционная проверка после `task_wait` — в тени хода, с
+объединением правок. Диск не трогается. Затронутые тесты и `acceptance_checks`
+запускают код, который написала модель, поэтому требуют того же согласия, что
+`bash` (`--allow-exec` / `exec.confirm: false`); без него они помечаются
+пропущенными. Без тени (`exec.shadow: false` или пространство больше лимита)
+остаётся прежний путь: `go build -overlay` по overlay, `tsc` и
+`acceptance_checks` пропущены с пометкой, staged `go.mod` пропускает сборку.
+Интеграционная проверка, до которой ход не дожил, возвращает
+`{"status": "skipped", "summary": "..."}`, а не исчезает.
 
 ## Гарантии и пределы
 
@@ -239,7 +249,8 @@ Lead возвращает в `task_result` JSON с `batch_workorders[]`. Ран�
   ошибку LSP в пакете, чей `go build` по виду задачи прошёл, проверка
   воркера откладывает как чужую.
 - Переписка и входящие — уровня проекта, а не сессии.
-- Интеграционная проверка фронтенда в dry-run невозможна (нет overlay у `tsc`).
+- Без тени (`exec.shadow: false` или пространство больше лимита) `tsc` и
+  `acceptance_checks` в preview-ходе пропускаются.
 
 ## События для UI
 
@@ -257,7 +268,7 @@ Lead возвращает в `task_result` JSON с `batch_workorders[]`. Ран�
 | Сообщения, входящие, переписка, board, wait-many | `internal/tasks/agency_runner.go` |
 | Раздача `batch_workorders[]` | `internal/tasks/batch_relay.go` |
 | Проверка объединения правок | `internal/tasks/integration_verify.go` |
-| Сборка через overlay | `internal/tasks/worker_verify.go` (`verifyStagedGo`) |
+| Проверка воркера в тени / через overlay | `internal/tasks/worker_verify.go` (`VerifyWorkerOutcome`, `verifyStagedGo`), `internal/tools/shadow.go` (`Runner.VerificationRoot`) |
 | Инструменты и блок `<available_agents>` в агенте | `internal/agent/agency.go` |
 | Схемы инструментов | `internal/tools/task/registry.go` |
 | Роль Scout | `internal/prompt/files/scout.txt` |

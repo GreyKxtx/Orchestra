@@ -47,7 +47,7 @@ func (r *Runner) execInShadow(ctx context.Context, t *Turn, req ExecRunRequest) 
 // behind ctx written in, or the refusal a command gets when there can be
 // none.
 func (r *Runner) shadowReady(ctx context.Context, t *Turn, command string) (*shadowWorkspace, error) {
-	sh, err := t.shadow()
+	sh, err := r.shadowFor(r.overlayAt(ctx))
 	if err != nil {
 		return nil, protocol.NewError(protocol.ExecFailed,
 			"commands cannot run in this preview: "+err.Error()+". "+

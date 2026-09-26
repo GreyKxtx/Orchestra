@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -364,4 +365,81 @@ func looksBinary(data []byte) bool {
 		data = data[:8192]
 	}
 	return bytes.IndexByte(data, 0) >= 0
+}
+
+// shadowFor is the shadow workspace of overlay, made on first use. An error
+// is remembered for the runner: a workspace too large to copy stays so.
+func (r *Runner) shadowFor(overlay *toolsfs.Overlay) (*shadowWorkspace, error) {
+	if r == nil {
+		return nil, errors.New("runner is nil")
+	}
+	r.shadowMu.Lock()
+	defer r.shadowMu.Unlock()
+	if r.shadowErr != nil {
+		return nil, r.shadowErr
+	}
+	if sh, ok := r.shadows[overlay]; ok {
+		return sh, nil
+	}
+	sh, err := newShadowWorkspace(r.workspaceRoot, r.excludeDirs)
+	if err != nil {
+		r.shadowErr = err
+		return nil, err
+	}
+	if r.shadows == nil {
+		r.shadows = make(map[*toolsfs.Overlay]*shadowWorkspace)
+	}
+	r.shadows[overlay] = sh
+	return sh, nil
+}
+
+// closeShadowOf removes the shadow of overlay: a turn that closed, a task
+// layer that was dropped or committed.
+func (r *Runner) closeShadowOf(overlay *toolsfs.Overlay) {
+	if r == nil {
+		return
+	}
+	r.shadowMu.Lock()
+	sh := r.shadows[overlay]
+	delete(r.shadows, overlay)
+	r.shadowMu.Unlock()
+	sh.Close()
+}
+
+func (r *Runner) closeShadows() {
+	if r == nil {
+		return
+	}
+	r.shadowMu.Lock()
+	all := r.shadows
+	r.shadows = nil
+	r.shadowMu.Unlock()
+	for _, sh := range all {
+		sh.Close()
+	}
+}
+
+// VerificationRoot is where the runtime verifies the edits of the agent
+// behind ctx — builds, tests, acceptance checks, a typecheck. In a preview
+// with exec.shadow on it is the agent's shadow workspace, brought up to date
+// with its staged edits, and inShadow is true; otherwise the workspace root.
+// A preview whose workspace cannot be shadowed gets the error the commands
+// get, so the caller can say why it skipped.
+func (r *Runner) VerificationRoot(ctx context.Context) (root string, inShadow bool, err error) {
+	if r == nil {
+		return "", false, errors.New("runner is nil")
+	}
+	t := r.TurnAt(ctx)
+	if !t.DryRun() || !r.shadowExec {
+		return r.workspaceRoot, false, nil
+	}
+	overlay := r.overlayAt(ctx)
+	sh, err := r.shadowFor(overlay)
+	if err != nil {
+		return "", false, err
+	}
+	if err := sh.sync(overlay); err != nil {
+		return "", false, err
+	}
+	return sh.Root(), true, nil
 }
