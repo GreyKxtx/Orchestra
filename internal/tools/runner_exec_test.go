@@ -21,6 +21,19 @@ func TestExecRun_Helper(t *testing.T) {
 		fmt.Print(strings.Repeat("a", 200_000))
 	case "sleep":
 		time.Sleep(500 * time.Millisecond)
+	case "cat-file":
+		// Prints the file ORCHESTRA_EXEC_HELPER_FILE names, relative to the
+		// working directory: what the command sees.
+		b, err := os.ReadFile(os.Getenv("ORCHESTRA_EXEC_HELPER_FILE"))
+		if err != nil {
+			fmt.Print("ERR " + err.Error())
+			return
+		}
+		fmt.Print(string(b))
+	case "write-file":
+		// Writes ORCHESTRA_EXEC_HELPER_FILE in the working directory: what
+		// a command leaves behind.
+		_ = os.WriteFile(os.Getenv("ORCHESTRA_EXEC_HELPER_FILE"), []byte("from command\n"), 0o644)
 	}
 }
 

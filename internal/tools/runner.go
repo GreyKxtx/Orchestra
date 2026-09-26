@@ -87,6 +87,9 @@ type Runner struct {
 	browserClient    *browser.Client
 	allowBrowserEval bool
 
+	// shadowExec runs a preview turn's commands in a shadow of the workspace
+	// with the turn's staged edits (Turn.shadow) instead of refusing them.
+	shadowExec bool
 	// blockExecInDryRun refuses commands in a turn that previews (the core);
 	// the per-turn flags live on Turn.
 	blockExecInDryRun bool
@@ -131,6 +134,12 @@ type RunnerOptions struct {
 	// DryRun enables staging mode: write/edit accumulate in memory instead of disk.
 	// FSRead serves staged content. StagedOps() returns write_atomic ops for plan.json.
 	DryRun bool
+
+	// ShadowExec runs the commands of a preview turn that BlockExecInDryRun
+	// would refuse in a shadow of the workspace carrying the turn's staged
+	// edits (exec.shadow): the command sees the model's edits, its writes
+	// come back as staged edits, the workspace is untouched.
+	ShadowExec bool
 
 	// BlockExecInDryRun, when true, refuses ExecRun calls while r.dryRun is set.
 	// This closes the "exec.run bypasses the staging overlay" hole that lets a
@@ -239,6 +248,7 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		browserClient:           browserCli,
 		allowBrowserEval:        opts.Browser.AllowEval,
 		blockExecInDryRun:       opts.BlockExecInDryRun,
+		shadowExec:              opts.ShadowExec,
 		forceDiagnosticsForTest: opts.ForceDiagnosticsForTest,
 		forceDiagnosticsHook:    opts.ForceDiagnosticsHook,
 		astGate:                 !opts.DisableASTGate,
@@ -501,6 +511,7 @@ func (r *Runner) BrowserEnabled() bool {
 
 func (r *Runner) Close() error {
 	r.closeBg()
+	r.turn.closeShadow()
 	if r.browserClient != nil {
 		_ = r.browserClient.Close()
 		r.browserClient = nil

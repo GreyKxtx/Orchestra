@@ -19,7 +19,45 @@ func (r *Runner) ExecRun(ctx context.Context, req ExecRunRequest) (*ExecRunRespo
 		return nil, err
 	}
 	req.Env = r.execEnv()
+	if t := r.TurnAt(ctx); t.CommandsInShadow() {
+		return r.execInShadow(ctx, t, req)
+	}
 	return exec.Run(ctx, r.workspaceRoot, r.execTimeout, r.execOutputLimit, req)
+}
+
+// execInShadow runs a preview turn's command in its shadow workspace: the
+// shadow carries the staged edits before the command runs, and what the
+// command wrote is staged after it (shadowWorkspace).
+func (r *Runner) execInShadow(ctx context.Context, t *Turn, req ExecRunRequest) (*ExecRunResponse, error) {
+	sh, err := r.shadowReady(ctx, t, req.Command)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := exec.Run(ctx, sh.Root(), r.execTimeout, r.execOutputLimit, req)
+	if _, note := sh.collect(r.overlayAt(ctx), r.fsTools); note != "" && resp != nil {
+		if resp.Stderr != "" && !strings.HasSuffix(resp.Stderr, "\n") {
+			resp.Stderr += "\n"
+		}
+		resp.Stderr += "[orchestra] preview: " + note + "\n"
+	}
+	return resp, err
+}
+
+// shadowReady is the turn's shadow with the staged edits of the agent
+// behind ctx written in, or the refusal a command gets when there can be
+// none.
+func (r *Runner) shadowReady(ctx context.Context, t *Turn, command string) (*shadowWorkspace, error) {
+	sh, err := t.shadow()
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed,
+			"commands cannot run in this preview: "+err.Error()+". "+
+				"Answer without running commands, or tell the user that running it needs a turn with changes applied",
+			map[string]any{"command": command})
+	}
+	if err := sh.sync(r.overlayAt(ctx)); err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "preview shadow: "+err.Error(), map[string]any{"command": command})
+	}
+	return sh, nil
 }
 
 // execEnv is the environment of a command the model runs: the core's own
@@ -72,9 +110,19 @@ func (r *Runner) ExecBashBackground(ctx context.Context, req ExecRunRequest) (*E
 	if strings.TrimSpace(req.Command) == "" {
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "command is empty", nil)
 	}
-	absDir := r.workspaceRoot
+	root := r.workspaceRoot
+	if t := r.TurnAt(ctx); t.CommandsInShadow() {
+		// A background command of a preview runs in the shadow too; what it
+		// writes there is staged by the turn's next foreground command.
+		sh, err := r.shadowReady(ctx, t, req.Command)
+		if err != nil {
+			return nil, err
+		}
+		root = sh.Root()
+	}
+	absDir := root
 	if w := strings.TrimSpace(req.Workdir); w != "" {
-		p, _, err := toolpath.ResolveWorkspacePath(r.workspaceRoot, w)
+		p, _, err := toolpath.ResolveWorkspacePath(root, w)
 		if err != nil {
 			return nil, err
 		}

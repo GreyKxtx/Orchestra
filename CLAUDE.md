@@ -98,7 +98,7 @@ orchestra trust [--status|--revoke]          # trust this workspace's machine-le
 - **Filesystem**: `ls/read/glob/write/edit/fs.delete/fs.rename/diff.preview`. `write`/`edit` write to a per-run **staging overlay** in dry-run mode (`internal/tools/staging.go`) — disk is only touched when `--apply` is set or `agent.run apply: true`.
 - **Search/nav**: `grep` (auto-fallback to `rg`), `symbols`, `explore` (CKG: package / type / symbol level).
 - **LSP**: `lsp.definition/references/hover/diagnostics/rename`; diagnostics auto-injected into agent history after successful `edit`/`write`.
-- **Exec / web**: `bash` (`exec.run`, gated by `--allow-exec` or `exec.confirm:false`), `webfetch`, `websearch` (`--allow-web`).
+- **Exec / web**: `bash` (`exec.run`, gated by `--allow-exec` or `exec.confirm:false`), `webfetch`, `websearch` (`--allow-web`). In a core preview turn (apply off) a command runs in a **shadow of the workspace** (`internal/tools/shadow.go`, `exec.shadow`, default on): a copy without `.git`, `.orchestra` and `exclude_dirs` (linked in), brought up to date with the disk and the turn's staged edits before each command; what the command writes comes back as staged edits (binary or > 1 MiB stays in the shadow), and the workspace is untouched. A workspace over 20k files / 512 MiB keeps refusing commands in a preview.
 - **Git / GitHub**: read-only `git.status/log/diff`, mutating `git.commit/branch/checkout/push` (allowExec-gated), `gh.pr.list/view/create`, `gh.issue.list/view`.
 - **Browser**: 10 Playwright-MCP tools registered only under `--allow-browser`.
 - **Subagents/session**: `task_spawn/wait/cancel/result`, `todowrite/todoread`, `memory_write`, `plan_exit` (plan mode), legacy `plan_enter` stub, `question`, `runtime_query`.

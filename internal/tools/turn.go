@@ -30,6 +30,13 @@ type Turn struct {
 	sessionID              string
 	memoryCfg              memory.Config
 	deptLessonWrites       int
+
+	// shadowWS is where this turn's commands run while it previews (see
+	// shadowWorkspace), made on the first command; shadowErr is why one
+	// could not be made, remembered so the copy is not attempted again.
+	shadowMu  sync.Mutex
+	shadowWS  *shadowWorkspace
+	shadowErr error
 }
 
 // TurnOptions says how a turn runs.
@@ -168,6 +175,7 @@ func (t *Turn) Close() {
 	delete(t.r.turns, t)
 	t.r.turnsMu.Unlock()
 	t.ClearStaged()
+	t.closeShadow()
 }
 
 // Overlay is the turn's staging overlay.
@@ -221,14 +229,50 @@ func (t *Turn) SetCommitsToDisk(v bool) {
 
 // ExecRefused reports whether every command is refused in this turn: a
 // preview on a runner that blocks commands there (the core), not unlocked by
-// apply.
+// apply, with no shadow to run them in.
 func (t *Turn) ExecRefused() bool {
 	if t == nil || t.r == nil {
 		return false
 	}
+	return t.previewBlocksCommands() && !t.r.shadowExec
+}
+
+// CommandsInShadow reports whether this turn's commands run in a shadow of
+// the workspace: a preview the runner would otherwise refuse them in.
+func (t *Turn) CommandsInShadow() bool {
+	if t == nil || t.r == nil {
+		return false
+	}
+	return t.previewBlocksCommands() && t.r.shadowExec
+}
+
+func (t *Turn) previewBlocksCommands() bool {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.dryRun && t.r.blockExecInDryRun && !t.allowExecDespiteDryRun
+}
+
+// shadow is the turn's shadow workspace, made on first use. An error is
+// remembered: a workspace too large to copy stays so for the turn.
+func (t *Turn) shadow() (*shadowWorkspace, error) {
+	t.shadowMu.Lock()
+	defer t.shadowMu.Unlock()
+	if t.shadowWS != nil || t.shadowErr != nil {
+		return t.shadowWS, t.shadowErr
+	}
+	t.shadowWS, t.shadowErr = newShadowWorkspace(t.r.workspaceRoot, t.r.excludeDirs)
+	return t.shadowWS, t.shadowErr
+}
+
+func (t *Turn) closeShadow() {
+	if t == nil {
+		return
+	}
+	t.shadowMu.Lock()
+	ws := t.shadowWS
+	t.shadowWS, t.shadowErr = nil, nil
+	t.shadowMu.Unlock()
+	ws.Close()
 }
 
 // SessionID is the session whose memory the turn writes.

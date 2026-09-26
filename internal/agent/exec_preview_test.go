@@ -47,4 +47,24 @@ func TestAgent_OffersNoCommandsToATurnThatWillRefuseThem(t *testing.T) {
 	if !offered()["bash"] {
 		t.Error("with apply unlocking commands the turn must be offered bash")
 	}
+
+	// A preview whose commands run in a shadow of the workspace (exec.shadow)
+	// refuses nothing, so it is offered bash.
+	shadowed, err := tools.NewRunner(t.TempDir(), tools.RunnerOptions{BlockExecInDryRun: true, ShadowExec: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = shadowed.Close() })
+	shadowed.SetDryRun(true)
+	ag, err := New(&questionLLM{}, v, shadowed, Options{Mode: ModeBuild, AllowExec: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = map[string]bool{}
+	for _, d := range ag.buildToolDefs() {
+		got[d.Function.Name] = true
+	}
+	if !got["bash"] {
+		t.Error("a preview with a shadow workspace must be offered bash: its commands run there")
+	}
 }

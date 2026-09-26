@@ -64,7 +64,7 @@
 
 | Имя | Внутреннее | Статус | Что делает |
 |-----|-----------|--------|------------|
-| `bash` | `exec.run` | ✅ | Shell-команда, timeout + output cap; требует `--allow-exec`. С `run_in_background: true` — возвращает `bg_id` сразу |
+| `bash` | `exec.run` | ✅ | Shell-команда, timeout + output cap; требует `--allow-exec`. С `run_in_background: true` — возвращает `bg_id` сразу. В preview-ходе ядра (apply off) команда выполняется в теневой копии рабочего пространства со staged-правками хода (`exec.shadow`, по умолчанию on): видит правки модели, её записи возвращаются staged-правками, диск не трогается; без `.git` и `exclude_dirs` (те подлинкованы) |
 | `bash.output` | — | ✅ | Новый stdout/stderr с прошлого опроса + статус/exit code для bg-процесса; `peek: true` без сдвига курсора |
 | `bash.kill` | — | ✅ | Терминирует bg-процесс |
 | `webfetch` | `web.fetch` | ✅ | HTTP GET URL → текст; SSRF-защита; требует `--allow-web` (в `core` — `web.confirm: false`) |
