@@ -10,6 +10,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed — the RPC handler is a table; consent is the turn's (2026-09)
 
+- **`orchestra apply` is four short functions.** `runApply` was 445 lines that read the flags, ran one of four modes and printed the summary in one body. The flags and the config now resolve into one `applyRun` before anything runs (the refusals — no query, an unknown profile or provider, a subagent-only mode — live there, with tests), each mode fills an `applyOutcome`, and one report prints it. Same flags, same output, same artifacts.
+
 - **One decode for every method.** `RPCHandler.Handle` was a 538-line switch that repeated the same decode-and-refuse block for each of its 52 methods. The methods are a table now (`rpcMethods`), one line each, built by a generic `serve` that decodes the params once; a test holds the table to the wire's method list. Same methods, same params, same errors — `ops.apply`'s `InvalidParams` now names the method in its data like every other.
 - **A consent prompt reaches the turn that raised it.** The client that answers permission requests was set on the shared tool runner by whichever turn started last, so a language server the LSP manager had to install under one session's tool call could ask another session's client. The requester rides in the turn's context now; the runner has no consent setter.
 

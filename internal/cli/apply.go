@@ -20,6 +20,7 @@ import (
 	promptpkg "github.com/orchestra/orchestra/internal/prompt"
 	"github.com/orchestra/orchestra/internal/retention"
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/internal/usage"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/applier"
 	"github.com/orchestra/orchestra/patch/fsutil"
@@ -92,36 +93,137 @@ func init() {
 	rootCmd.AddCommand(applyCmd)
 }
 
+// applyRun is one `orchestra apply`, resolved once from its flags and the
+// project config: what to run, on which project, writing where, with which
+// consent. The modes below take it and fill an applyOutcome.
+type applyRun struct {
+	cfg *config.ProjectConfig
+	cwd string
+	// query is the task; --from-plan takes it from the plan when the command
+	// line has none.
+	query string
+
+	dryRun bool
+	backup bool
+	// applyOutput is config.ApplyOutputDisk or config.ApplyOutputPatch;
+	// patchOutPath is the --output-patch path when the user gave one.
+	applyOutput  string
+	patchOutPath string
+
+	profile string
+	// mode is --mode, or the agent a --skill was materialised as.
+	mode string
+
+	allowExec    bool
+	allowWeb     bool
+	allowBrowser bool
+
+	usage *usage.Tracker
+}
+
+// applyOutcome is what a mode produced: the plan for plan.json, the apply
+// response for diff.txt and the summary, and the patch path a core already
+// wrote. A mode fills it as it goes, so a run that fails midway still
+// records what it had.
+type applyOutcome struct {
+	mode          string
+	steps         int
+	plan          planArtifact
+	applyResp     *tools.FSApplyOpsResponse
+	corePatchPath string
+}
+
 func runApply(cmd *cobra.Command, args []string) (retErr error) {
+	r, err := resolveApplyRun(cmd, args)
+	if err != nil {
+		return err
+	}
+	startedAt := time.Now()
+	out := &applyOutcome{mode: "direct", plan: newPlanArtifact(r.query, startedAt)}
+	r.usage = newUsageTracker("apply", r.cfg)
+
+	defer func() {
+		// Always write artifacts once we know projectRoot.
+		if err := writeApplyArtifacts(r.cfg.ProjectRoot, out.plan, out.applyResp, r.dryRun, startedAt, time.Now(), out.mode, out.steps, retErr); err != nil {
+			fmt.Fprintf(os.Stderr, "[orchestra] %v\n", err)
+			if retErr == nil {
+				retErr = err
+			}
+		}
+		finalizeUsage(r.usage, r.cfg)
+		if retErr != nil {
+			if pe, ok := protocol.AsError(retErr); ok {
+				fmt.Fprintf(os.Stderr, "error_code=%s reason=%s\n", pe.Code, pe.Message)
+			}
+		}
+	}()
+
+	if err := r.checkGitStatus(); err != nil {
+		retErr = err
+		return retErr
+	}
+	if debugMode {
+		fmt.Fprintf(os.Stderr, "[orchestra] debug: llm_timeout_s=%d\n", r.cfg.LLM.TimeoutS)
+	}
+
+	// cmd.Context is nil when the command runs outside cobra's Execute
+	// (tests call runApply directly).
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	switch {
+	case strings.TrimSpace(fromPlan) != "":
+		err = r.runFromPlan(ctx, out)
+	case viaCore:
+		err = r.runViaCore(cmd, out)
+	case pipelineMode:
+		err = r.runPipeline(ctx, out)
+	default:
+		err = r.runDirect(ctx, out)
+	}
+	if err != nil {
+		retErr = err
+		return retErr
+	}
+	return r.report(out)
+}
+
+// resolveApplyRun reads the flags and the project config into an applyRun:
+// the checks that refuse a command before it does anything live here.
+func resolveApplyRun(cmd *cobra.Command, args []string) (*applyRun, error) {
 	query := ""
 	if len(args) > 0 {
 		query = strings.TrimSpace(args[0])
 	}
 	if strings.TrimSpace(fromPlan) == "" && query == "" && strings.TrimSpace(applyResume) == "" {
-		return fmt.Errorf("missing query (or use --from-plan, or --resume)")
+		return nil, fmt.Errorf("missing query (or use --from-plan, or --resume)")
 	}
 
-	dryRun := planOnly || !applyFlag
-	backup := !dryRun
+	r := &applyRun{query: query}
+	r.dryRun = planOnly || !applyFlag
+	r.backup = !r.dryRun
 
 	// 1. Load config
 	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("failed to get current directory: %w", err)
+		return nil, fmt.Errorf("failed to get current directory: %w", err)
 	}
+	r.cwd = cwd
 
 	configPath := filepath.Join(cwd, ".orchestra.yml")
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w (run 'orchestra init' first)", err)
+		return nil, fmt.Errorf("failed to load config: %w (run 'orchestra init' first)", err)
 	}
+	r.cfg = cfg
 	warnUntrusted(cfg)
 	cfg.FprintWarnings(os.Stderr)
 
 	if wt := strings.TrimSpace(applyWorktree); wt != "" {
 		wtPath, wtErr := git.ResolveManagedWorktree(cfg.ProjectRoot, wt)
 		if wtErr != nil {
-			return fmt.Errorf("--worktree %q: %w", wt, wtErr)
+			return nil, fmt.Errorf("--worktree %q: %w", wt, wtErr)
 		}
 		cfg.ProjectRoot = wtPath
 	}
@@ -143,367 +245,325 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 		limCancel()
 	}
 
-	applyOutput := strings.ToLower(strings.TrimSpace(cfg.Apply.Output))
-	if applyOutput == "" {
-		applyOutput = config.ApplyOutputDisk
+	r.applyOutput = strings.ToLower(strings.TrimSpace(cfg.Apply.Output))
+	if r.applyOutput == "" {
+		r.applyOutput = config.ApplyOutputDisk
 	}
-	patchOutPath := ""
 	if cmd.Flags().Changed("output-patch") {
-		applyOutput = config.ApplyOutputPatch
+		r.applyOutput = config.ApplyOutputPatch
 		if outputPatch != "" && outputPatch != "AUTO" {
-			patchOutPath = outputPatch
+			r.patchOutPath = outputPatch
 		}
 	}
-	if applyOutput == config.ApplyOutputPatch {
+	if r.applyOutput == config.ApplyOutputPatch {
 		if applyFlag {
-			return fmt.Errorf("--output-patch / apply.output=patch is mutually exclusive with --apply")
+			return nil, fmt.Errorf("--output-patch / apply.output=patch is mutually exclusive with --apply")
 		}
-		dryRun = true
-		backup = false
+		r.dryRun = true
+		r.backup = false
 	}
 
-	profileName := strings.TrimSpace(cfg.Agent.Profile)
+	r.profile = strings.TrimSpace(cfg.Agent.Profile)
 	if applyProfile != "" {
-		profileName = applyProfile
+		r.profile = applyProfile
 	}
-	if !agent.IsKnownProfile(profileName) {
-		return fmt.Errorf("unknown --profile / agent.profile %q (want fast|precision)", profileName)
+	if !agent.IsKnownProfile(r.profile) {
+		return nil, fmt.Errorf("unknown --profile / agent.profile %q (want fast|precision)", r.profile)
 	}
 
 	if applyProvider != "" {
 		provCfg, ok := cfg.FindProvider(applyProvider)
 		if !ok {
-			return fmt.Errorf("--provider %q: not found in .orchestra.yml providers: section\nAvailable: %s",
+			return nil, fmt.Errorf("--provider %q: not found in .orchestra.yml providers: section\nAvailable: %s",
 				applyProvider, providerNames(cfg))
 		}
 		cfg.LLM = provCfg
 	}
 
+	r.mode = agentMode
 	if applySkill != "" {
-		if agentMode != "" {
-			return fmt.Errorf("--skill and --mode are mutually exclusive")
+		if r.mode != "" {
+			return nil, fmt.Errorf("--skill and --mode are mutually exclusive")
 		}
 		def, err := resolveSkillAgent(cfg.ProjectRoot, applySkill, query)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if cfg.FindAgent(def.Name) != nil {
-			return fmt.Errorf("--skill %q: name collides with an existing entry in agents: in .orchestra.yml", def.Name)
+			return nil, fmt.Errorf("--skill %q: name collides with an existing entry in agents: in .orchestra.yml", def.Name)
 		}
 		cfg.Agents = append(cfg.Agents, *def)
-		agentMode = def.Name
+		r.mode = def.Name
 	}
 
-	if agentMode != "" {
-		if kind, builtIn := config.BuiltInModeKind(agentMode); builtIn {
+	if r.mode != "" {
+		if kind, builtIn := config.BuiltInModeKind(r.mode); builtIn {
 			// worker/verifier/product/documentation get their input from a
 			// WorkOrder and answer through task_result; started top-level they
 			// have neither, so refuse with the reason instead of running a
 			// half-wired agent.
 			if kind != config.ModeKindTopLevel {
-				return fmt.Errorf("agent mode %q runs only as a subagent (spawned via task / task_spawn), not from --mode; available modes: %s",
-					agentMode, strings.Join(config.UserSelectableModeNames(), ", "))
+				return nil, fmt.Errorf("agent mode %q runs only as a subagent (spawned via task / task_spawn), not from --mode; available modes: %s",
+					r.mode, strings.Join(config.UserSelectableModeNames(), ", "))
 			}
-		} else if cfg.FindAgent(agentMode) == nil {
-			return fmt.Errorf("unknown agent mode %q: not a built-in mode and not defined in agents: in .orchestra.yml", agentMode)
+		} else if cfg.FindAgent(r.mode) == nil {
+			return nil, fmt.Errorf("unknown agent mode %q: not a built-in mode and not defined in agents: in .orchestra.yml", r.mode)
 		}
 	}
 
-	startedAt := time.Now()
-	mode := "direct"
-	steps := 0
-	plan := planArtifact{
+	// exec.confirm=false / web.confirm=false in config stand for the flag;
+	// the browser always needs the flag.
+	r.allowExec = allowExec || (cfg.Exec.Confirm != nil && !*cfg.Exec.Confirm)
+	r.allowWeb = allowWeb || (cfg.Web.Confirm != nil && !*cfg.Web.Confirm)
+	r.allowBrowser = allowBrowser
+	return r, nil
+}
+
+// newPlanArtifact is the plan.json header of a run that has produced no
+// ops yet.
+func newPlanArtifact(query string, at time.Time) planArtifact {
+	return planArtifact{
 		ProtocolVersion: protocol.ProtocolVersion,
 		OpsVersion:      protocol.OpsVersion,
 		ToolsVersion:    protocol.ToolsVersion,
 		Query:           query,
-		GeneratedAtUnix: startedAt.Unix(),
+		GeneratedAtUnix: at.Unix(),
 	}
-	var applyResp *tools.FSApplyOpsResponse
-	corePatchPath := ""
-	usageTracker := newUsageTracker("apply", cfg)
+}
 
-	defer func() {
-		// Always write artifacts once we know projectRoot.
-		if err := writeApplyArtifacts(cfg.ProjectRoot, plan, applyResp, dryRun, startedAt, time.Now(), mode, steps, retErr); err != nil {
-			fmt.Fprintf(os.Stderr, "[orchestra] %v\n", err)
-			if retErr == nil {
-				retErr = err
-			}
-		}
-		finalizeUsage(usageTracker, cfg)
-		if retErr != nil {
-			if pe, ok := protocol.AsError(retErr); ok {
-				fmt.Fprintf(os.Stderr, "error_code=%s reason=%s\n", pe.Code, pe.Message)
-			}
-		}
-	}()
-
-	// 1.5. Check git status (if in git repo)
-	if git.IsRepo(cfg.ProjectRoot) {
-		clean, status, err := git.IsClean(cfg.ProjectRoot)
-		if err == nil && !clean {
-			if gitStrict {
-				retErr = fmt.Errorf("git repo has uncommitted changes:\n%s\n\nCommit or stash changes before running orchestra, or remove --git-strict flag", status)
-				return retErr
-			}
-			fmt.Fprintf(os.Stderr, "[orchestra] WARNING: git repo has uncommitted changes:\n%s\n\n", status)
-		}
+// checkGitStatus warns about, or with --git-strict refuses, a dirty repository.
+func (r *applyRun) checkGitStatus() error {
+	if !git.IsRepo(r.cfg.ProjectRoot) {
+		return nil
 	}
-
-	// If exec.confirm=false in config, we can allow exec without interactive consent.
-	allowExecEffective := allowExec
-	if cfg.Exec.Confirm != nil && !*cfg.Exec.Confirm {
-		allowExecEffective = true
+	clean, status, err := git.IsClean(r.cfg.ProjectRoot)
+	if err != nil || clean {
+		return nil
 	}
-	// If web.confirm=false in config, we can allow webfetch without --allow-web.
-	allowWebEffective := allowWeb
-	if cfg.Web.Confirm != nil && !*cfg.Web.Confirm {
-		allowWebEffective = true
+	if gitStrict {
+		return fmt.Errorf("git repo has uncommitted changes:\n%s\n\nCommit or stash changes before running orchestra, or remove --git-strict flag", status)
 	}
-	allowBrowserEffective := allowBrowser
-	// (no config override for browser — always requires explicit flag)
-	if debugMode {
-		fmt.Fprintf(os.Stderr, "[orchestra] debug: llm_timeout_s=%d\n", cfg.LLM.TimeoutS)
+	fmt.Fprintf(os.Stderr, "[orchestra] WARNING: git repo has uncommitted changes:\n%s\n\n", status)
+	return nil
+}
+
+// runFromPlan replays a saved plan.json through the applier, with no model.
+func (r *applyRun) runFromPlan(ctx context.Context, out *applyOutcome) error {
+	out.mode = "from_plan"
+	p := strings.TrimSpace(fromPlan)
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(r.cwd, p)
 	}
+	p, _ = filepath.Abs(p)
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return err
+	}
+	var loaded planArtifact
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		return fmt.Errorf("failed to parse plan file: %w", err)
+	}
+	if r.query == "" {
+		r.query = strings.TrimSpace(loaded.Query)
+	}
+	if r.query == "" {
+		r.query = "(from plan)"
+	}
+	out.plan = loaded
+	out.plan.ProtocolVersion = protocol.ProtocolVersion
+	out.plan.OpsVersion = protocol.OpsVersion
+	out.plan.ToolsVersion = protocol.ToolsVersion
+	out.plan.Query = r.query
+	out.plan.GeneratedAtUnix = time.Now().Unix()
 
-	// --- Mode: --from-plan (no LLM) ---
-	if strings.TrimSpace(fromPlan) != "" {
-		mode = "from_plan"
-		p := strings.TrimSpace(fromPlan)
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(cwd, p)
-		}
-		p, _ = filepath.Abs(p)
-		data, err := os.ReadFile(p)
-		if err != nil {
-			retErr = err
-			return retErr
-		}
-		var loaded planArtifact
-		if err := json.Unmarshal(data, &loaded); err != nil {
-			retErr = fmt.Errorf("failed to parse plan file: %w", err)
-			return retErr
-		}
-		if query == "" {
-			query = strings.TrimSpace(loaded.Query)
-		}
-		if query == "" {
-			query = "(from plan)"
-		}
-		plan = loaded
-		plan.ProtocolVersion = protocol.ProtocolVersion
-		plan.OpsVersion = protocol.OpsVersion
-		plan.ToolsVersion = protocol.ToolsVersion
-		plan.Query = query
-		plan.GeneratedAtUnix = time.Now().Unix()
+	runner, err := tools.NewRunner(r.cfg.ProjectRoot, cliRunnerOptions(r.cfg, r.dryRun, r.allowBrowser))
+	if err != nil {
+		return err
+	}
+	defer runner.Close()
 
-		runner, err := tools.NewRunner(cfg.ProjectRoot, cliRunnerOptions(cfg, dryRun, allowBrowserEffective))
-		if err != nil {
-			retErr = err
-			return retErr
-		}
-		defer runner.Close()
+	resp, err := runner.FSApplyOps(ctx, tools.FSApplyOpsRequest{
+		Ops:    out.plan.Ops,
+		DryRun: r.dryRun,
+		Backup: r.backup,
+	})
+	if err != nil {
+		return err
+	}
+	out.applyResp = resp
+	return nil
+}
 
-		resp, err := runner.FSApplyOps(cmd.Context(), tools.FSApplyOpsRequest{
-			Ops:    plan.Ops,
-			DryRun: dryRun,
-			Backup: backup,
-		})
-		if err != nil {
-			retErr = err
-			return retErr
-		}
-		applyResp = resp
+// runViaCore drives an `orchestra core` subprocess over stdio JSON-RPC.
+func (r *applyRun) runViaCore(cmd *cobra.Command, out *applyOutcome) error {
+	out.mode = "via_core"
+	res, err := runApplyViaCore(cmd, r.cfg, r.query, r.allowExec, r.dryRun, r.backup, r.applyOutput, r.patchOutPath, r.profile)
+	if err != nil {
+		return err
+	}
+	out.steps, out.plan, out.applyResp, out.corePatchPath = takeCoreResult(r.query, res)
+	return nil
+}
 
-	} else if viaCore {
-		// --- Mode: via core subprocess (stdio JSON-RPC) ---
-		mode = "via_core"
-		out, err := runApplyViaCore(cmd, cfg, query, allowExecEffective, dryRun, backup, applyOutput, patchOutPath, profileName)
-		if err != nil {
-			retErr = err
-			return retErr
-		}
-		steps, plan, applyResp, corePatchPath = takeCoreResult(query, out)
+// runPipeline runs the Investigator → Coder → Critic pipeline.
+func (r *applyRun) runPipeline(ctx context.Context, out *applyOutcome) error {
+	out.mode = "pipeline"
+	cfg := r.cfg
 
-	} else if pipelineMode {
-		// --- Mode: multi-agent pipeline (Investigator → Coder → Critic) ---
-		mode = "pipeline"
-
-		var llmClient llm.Client
-		if getTestLLMClient() != nil {
-			llmClient = getTestLLMClient()
-		} else {
-			c, _, err := app.ClientFor(cfg, "", "", llm.NewLogger(cfg.ProjectRoot))
-			if err != nil {
-				retErr = err
-				return retErr
-			}
-			llmClient = c
-		}
-
-		validator, err := schema.NewValidator()
-		if err != nil {
-			retErr = err
-			return retErr
-		}
-		runner, err := tools.NewRunner(cfg.ProjectRoot, cliRunnerOptions(cfg, dryRun, allowBrowserEffective))
-		if err != nil {
-			retErr = err
-			return retErr
-		}
-		defer runner.Close()
-
-		respFmt := agent.ResolveResponseFormat(cfg.LLM, providerLabelFor(cfg, applyProvider), agent.ResponseFormatToolAgent)
-
-		agentLogger := llm.LoggerOf(llmClient)
-
-		cliRenderer := buildCLIRenderer()
-		var onPipelineEvent func(stage string, ev agent.AgentEvent)
-		if cliRenderer != nil {
-			var lastStage string
-			onPipelineEvent = func(stage string, ev agent.AgentEvent) {
-				if stage != lastStage {
-					fmt.Fprintf(os.Stderr, "\n[pipeline:%s]\n", stage)
-					lastStage = stage
-				}
-				cliRenderer(ev)
-			}
-		}
-
-		var traceCtx *pipeline.TraceContext
-		if pipelineTraceID != "" {
-			traceCtx = &pipeline.TraceContext{TraceID: pipelineTraceID}
-		}
-
-		pipelineCompactionClient, pipelineCompactionCtxTokens := compactionClientFor(cfg, agentLogger)
-		pipeRes, err := pipeline.Run(cmd.Context(), llmClient, validator, runner, query, pipeline.Options{
-			UsageTracker:            usageTracker,
-			ProviderLabel:           providerLabelFor(cfg, applyProvider),
-			ModelLabel:              cfg.LLM.Model,
-			MaxCoderAttempts:        pipelineMaxAttempts,
-			Apply:                   !dryRun,
-			Backup:                  backup,
-			TraceCtx:                traceCtx,
-			MaxStepsCoder:           cfg.Agent.MaxSteps,
-			MaxInvalidRetries:       cfg.Agent.MaxInvalidRetries,
-			MaxDeniedToolRepeats:    cfg.Agent.MaxDeniedRepeats,
-			MaxToolErrorRepeats:     cfg.Agent.MaxToolErrors,
-			MaxFinalFailures:        cfg.Agent.MaxFinalFailures,
-			MaxPromptBytes:          cfg.EffectiveMaxPromptBytes(),
-			CompactThresholdPct:     cfg.EffectiveCompactThresholdPct(),
-			ModelContextTokens:      int(cfg.EffectiveNumCtx()),
-			CompletionMaxTokens:     cfg.LLM.MaxTokens,
-			LLMStepTimeout:          time.Duration(cfg.LLM.TimeoutS) * time.Second,
-			PromptFamily:            promptpkg.ResolvePromptFamily(cfg.LLM.PromptFamily, cfg.LLM.Model),
-			CompactionClient:        pipelineCompactionClient,
-			CompactionContextTokens: pipelineCompactionCtxTokens,
-			ResponseFormat:          respFmt,
-			Debug:                   debugMode,
-			AgentLogger:             agentLogger,
-			OnEvent:                 onPipelineEvent,
-			PermissionRules:         cfg.Permissions.Rules,
-		})
-		if err != nil {
-			retErr = err
-			return retErr
-		}
-
-		totalSteps := 0
-		for _, sr := range pipeRes.StageResults {
-			totalSteps += sr.Steps
-		}
-		steps = totalSteps
-
-		if !pipeRes.Accepted {
-			fmt.Fprintln(os.Stderr, "[pipeline] WARNING: Critic did not accept after all attempts — using last Coder output")
-		} else {
-			fmt.Fprintf(os.Stderr, "[pipeline] Critic accepted after %d attempt(s)\n", pipeRes.Attempts)
-		}
-
-		plan = planArtifact{
-			ProtocolVersion: protocol.ProtocolVersion,
-			OpsVersion:      protocol.OpsVersion,
-			ToolsVersion:    protocol.ToolsVersion,
-			Query:           query,
-			GeneratedAtUnix: time.Now().Unix(),
-			Patches:         pipeRes.Patches,
-			Ops:             pipeRes.Ops,
-		}
-		applyResp = pipeRes.ApplyResponse
-
+	var llmClient llm.Client
+	if getTestLLMClient() != nil {
+		llmClient = getTestLLMClient()
 	} else {
-		// --- Mode: direct: the core, in this process ---
-		mode = "direct"
-		imageParts, err := loadImageParts(applyImages)
+		c, _, err := app.ClientFor(cfg, "", "", llm.NewLogger(cfg.ProjectRoot))
 		if err != nil {
-			retErr = err
-			return retErr
+			return err
 		}
-		if len(imageParts) > 0 && !cfg.LLM.Multimodal {
-			retErr = fmt.Errorf("--image: configured LLM is not marked multimodal in .orchestra.yml (set llm.multimodal: true after switching to a VL model)")
-			return retErr
-		}
-		// cmd.Context is nil when the command runs outside cobra's Execute
-		// (tests call runApply directly).
-		ctx := cmd.Context()
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		out, err := runApplyInProcess(ctx, cfg, core.AgentRunParams{
-			Query:             query,
-			Apply:             !dryRun,
-			Backup:            backup,
-			MaxSteps:          cfg.Agent.MaxSteps,
-			MaxInvalidRetries: cfg.Agent.MaxInvalidRetries,
-			MaxPromptBytes:    cfg.EffectiveMaxPromptBytes(),
-			AllowExec:         allowExecEffective,
-			AllowWeb:          allowWebEffective,
-			AllowBrowser:      allowBrowserEffective,
-			Debug:             debugMode,
-			Mode:              agentMode,
-			ApplyOutput:       applyOutput,
-			PatchPath:         patchOutPath,
-			Profile:           profileName,
-			QuestionAsker:     buildQuestionAsker(agentMode, len(cfg.Orchestra.RequiredGates()) > 0),
-			OnAgentEvent:      buildCLIRenderer(),
-			UserImages:        imageParts,
-			Resume:            strings.TrimSpace(applyResume),
-		})
-		if err != nil {
-			printResumeHint(cfg.ProjectRoot)
-			retErr = err
-			return retErr
-		}
-		steps, plan, applyResp, corePatchPath = takeCoreResult(query, out)
+		llmClient = c
 	}
 
+	validator, err := schema.NewValidator()
+	if err != nil {
+		return err
+	}
+	runner, err := tools.NewRunner(cfg.ProjectRoot, cliRunnerOptions(cfg, r.dryRun, r.allowBrowser))
+	if err != nil {
+		return err
+	}
+	defer runner.Close()
+
+	respFmt := agent.ResolveResponseFormat(cfg.LLM, providerLabelFor(cfg, applyProvider), agent.ResponseFormatToolAgent)
+	agentLogger := llm.LoggerOf(llmClient)
+
+	cliRenderer := buildCLIRenderer()
+	var onPipelineEvent func(stage string, ev agent.AgentEvent)
+	if cliRenderer != nil {
+		var lastStage string
+		onPipelineEvent = func(stage string, ev agent.AgentEvent) {
+			if stage != lastStage {
+				fmt.Fprintf(os.Stderr, "\n[pipeline:%s]\n", stage)
+				lastStage = stage
+			}
+			cliRenderer(ev)
+		}
+	}
+
+	var traceCtx *pipeline.TraceContext
+	if pipelineTraceID != "" {
+		traceCtx = &pipeline.TraceContext{TraceID: pipelineTraceID}
+	}
+
+	compactionClient, compactionCtxTokens := compactionClientFor(cfg, agentLogger)
+	pipeRes, err := pipeline.Run(ctx, llmClient, validator, runner, r.query, pipeline.Options{
+		UsageTracker:            r.usage,
+		ProviderLabel:           providerLabelFor(cfg, applyProvider),
+		ModelLabel:              cfg.LLM.Model,
+		MaxCoderAttempts:        pipelineMaxAttempts,
+		Apply:                   !r.dryRun,
+		Backup:                  r.backup,
+		TraceCtx:                traceCtx,
+		MaxStepsCoder:           cfg.Agent.MaxSteps,
+		MaxInvalidRetries:       cfg.Agent.MaxInvalidRetries,
+		MaxDeniedToolRepeats:    cfg.Agent.MaxDeniedRepeats,
+		MaxToolErrorRepeats:     cfg.Agent.MaxToolErrors,
+		MaxFinalFailures:        cfg.Agent.MaxFinalFailures,
+		MaxPromptBytes:          cfg.EffectiveMaxPromptBytes(),
+		CompactThresholdPct:     cfg.EffectiveCompactThresholdPct(),
+		ModelContextTokens:      int(cfg.EffectiveNumCtx()),
+		CompletionMaxTokens:     cfg.LLM.MaxTokens,
+		LLMStepTimeout:          time.Duration(cfg.LLM.TimeoutS) * time.Second,
+		PromptFamily:            promptpkg.ResolvePromptFamily(cfg.LLM.PromptFamily, cfg.LLM.Model),
+		CompactionClient:        compactionClient,
+		CompactionContextTokens: compactionCtxTokens,
+		ResponseFormat:          respFmt,
+		Debug:                   debugMode,
+		AgentLogger:             agentLogger,
+		OnEvent:                 onPipelineEvent,
+		PermissionRules:         cfg.Permissions.Rules,
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, sr := range pipeRes.StageResults {
+		out.steps += sr.Steps
+	}
+	if !pipeRes.Accepted {
+		fmt.Fprintln(os.Stderr, "[pipeline] WARNING: Critic did not accept after all attempts — using last Coder output")
+	} else {
+		fmt.Fprintf(os.Stderr, "[pipeline] Critic accepted after %d attempt(s)\n", pipeRes.Attempts)
+	}
+	out.plan = newPlanArtifact(r.query, time.Now())
+	out.plan.Patches = pipeRes.Patches
+	out.plan.Ops = pipeRes.Ops
+	out.applyResp = pipeRes.ApplyResponse
+	return nil
+}
+
+// runDirect runs the turn through a core in this process.
+func (r *applyRun) runDirect(ctx context.Context, out *applyOutcome) error {
+	out.mode = "direct"
+	imageParts, err := loadImageParts(applyImages)
+	if err != nil {
+		return err
+	}
+	if len(imageParts) > 0 && !r.cfg.LLM.Multimodal {
+		return fmt.Errorf("--image: configured LLM is not marked multimodal in .orchestra.yml (set llm.multimodal: true after switching to a VL model)")
+	}
+	res, err := runApplyInProcess(ctx, r.cfg, core.AgentRunParams{
+		Query:             r.query,
+		Apply:             !r.dryRun,
+		Backup:            r.backup,
+		MaxSteps:          r.cfg.Agent.MaxSteps,
+		MaxInvalidRetries: r.cfg.Agent.MaxInvalidRetries,
+		MaxPromptBytes:    r.cfg.EffectiveMaxPromptBytes(),
+		AllowExec:         r.allowExec,
+		AllowWeb:          r.allowWeb,
+		AllowBrowser:      r.allowBrowser,
+		Debug:             debugMode,
+		Mode:              r.mode,
+		ApplyOutput:       r.applyOutput,
+		PatchPath:         r.patchOutPath,
+		Profile:           r.profile,
+		QuestionAsker:     buildQuestionAsker(r.mode, len(r.cfg.Orchestra.RequiredGates()) > 0),
+		OnAgentEvent:      buildCLIRenderer(),
+		UserImages:        imageParts,
+		Resume:            strings.TrimSpace(applyResume),
+	})
+	if err != nil {
+		printResumeHint(r.cfg.ProjectRoot)
+		return err
+	}
+	out.steps, out.plan, out.applyResp, out.corePatchPath = takeCoreResult(r.query, res)
+	return nil
+}
+
+// report writes the patch a patch-mode run asked for, prints the summary
+// and makes the --git-commit.
+func (r *applyRun) report(out *applyOutcome) error {
 	changed := []string(nil)
-	if applyResp != nil {
-		changed = applyResp.ChangedFiles
+	if out.applyResp != nil {
+		changed = out.applyResp.ChangedFiles
 	}
 
-	if applyOutput == config.ApplyOutputPatch {
-		resolvedPatch := corePatchPath
+	if r.applyOutput == config.ApplyOutputPatch {
+		resolvedPatch := out.corePatchPath
 		if resolvedPatch == "" {
 			var err error
-			resolvedPatch, err = resolvePatchOutputPath(cfg, cwd, patchOutPath)
+			resolvedPatch, err = resolvePatchOutputPath(r.cfg, r.cwd, r.patchOutPath)
 			if err != nil {
-				retErr = err
-				return retErr
+				return err
 			}
 			var diffs []applier.FileDiff
-			if applyResp != nil {
-				diffs = applyResp.Diffs
+			if out.applyResp != nil {
+				diffs = out.applyResp.Diffs
 			}
 			if err := applier.WriteUnifiedPatch(resolvedPatch, diffs); err != nil {
-				retErr = fmt.Errorf("write patch: %w", err)
-				return retErr
+				return fmt.Errorf("write patch: %w", err)
 			}
 			// apply.patch_dir keeps the newest retention.patches files; a
 			// --output-patch path of the user's own is left alone.
-			if patchOutPath == "" {
-				retention.PruneFiles(filepath.Dir(resolvedPatch), ".patch", cfg.Retention.Patches)
+			if r.patchOutPath == "" {
+				retention.PruneFiles(filepath.Dir(resolvedPatch), ".patch", r.cfg.Retention.Patches)
 			}
 		}
 		fmt.Printf("Patch mode: workspace untouched\n")
@@ -515,26 +575,25 @@ func runApply(cmd *cobra.Command, args []string) (retErr error) {
 	} else {
 		fmt.Printf("Changed files: %s\n", strings.Join(changed, ", "))
 	}
-	fmt.Printf("Dry-run: %v\n", dryRun)
-	fmt.Printf("Plan saved to: %s\n", filepath.Join(cfg.ProjectRoot, ".orchestra", "plan.json"))
-	fmt.Printf("Diff saved to: %s\n", filepath.Join(cfg.ProjectRoot, ".orchestra", "diff.txt"))
+	fmt.Printf("Dry-run: %v\n", r.dryRun)
+	fmt.Printf("Plan saved to: %s\n", filepath.Join(r.cfg.ProjectRoot, ".orchestra", "plan.json"))
+	fmt.Printf("Diff saved to: %s\n", filepath.Join(r.cfg.ProjectRoot, ".orchestra", "diff.txt"))
 
 	// Git commit (if requested).
 	if gitCommit {
-		if dryRun {
+		if r.dryRun {
 			return fmt.Errorf("--git-commit requires --apply (not dry-run)")
 		}
-		if !git.IsRepo(cfg.ProjectRoot) {
+		if !git.IsRepo(r.cfg.ProjectRoot) {
 			return fmt.Errorf("--git-commit requires a git repository")
 		}
-		commitMsg := fmt.Sprintf("feat(orchestra): %s", query)
-		if err := git.CommitAll(cfg.ProjectRoot, commitMsg); err != nil {
+		commitMsg := fmt.Sprintf("feat(orchestra): %s", r.query)
+		if err := git.CommitAll(r.cfg.ProjectRoot, commitMsg); err != nil {
 			fmt.Fprintf(os.Stderr, "[orchestra] WARNING: failed to create git commit: %v\n", err)
 		} else {
 			fmt.Printf("✓ Created git commit: %s\n", commitMsg)
 		}
 	}
-
 	return nil
 }
 
