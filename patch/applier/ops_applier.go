@@ -118,6 +118,57 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 		}
 		defer release()
 	}
+	b, err := newApplyBatch(root)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.collect(in); err != nil {
+		return nil, err
+	}
+	if err := b.plan(); err != nil {
+		return nil, err
+	}
+	result := b.preview()
+	if opts.DryRun {
+		return result, nil
+	}
+	if err := b.revalidate(); err != nil {
+		return nil, err
+	}
+	if err := b.applyMkdirs(); err != nil {
+		return nil, err
+	}
+	if opts.Backup && opts.BackupSuffix != "" {
+		if err := b.writeBackups(opts.BackupSuffix); err != nil {
+			return nil, err
+		}
+	}
+	if err := b.writeFiles(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// applyBatch is one ApplyAnyOps run: the ops grouped by kind and canonical
+// path, then the plan of every file they touch. Its methods are the phases,
+// in the order ApplyAnyOps runs them; each validates what it takes and
+// returns the first error, so nothing is written before every op has been
+// checked.
+type applyBatch struct {
+	resolver *pathResolver
+	rootReal string
+
+	replaceByPath map[string][]ops.ReplaceRangeOp
+	writeByPath   map[string]ops.WriteAtomicOp
+	mkdirByPath   map[string]ops.MkdirAllOp
+
+	plans map[string]*filePlan
+	// paths is every planned file, sorted: the order of the preview, the
+	// revalidation and the writes.
+	paths []string
+}
+
+func newApplyBatch(root string) (*applyBatch, error) {
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("abs root: %w", err)
@@ -126,161 +177,182 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 	if rp, err := filepath.EvalSymlinks(rootAbs); err == nil {
 		rootReal = rp
 	}
-	resolver := newPathResolver(rootAbs, rootReal)
+	return &applyBatch{
+		resolver:      newPathResolver(rootAbs, rootReal),
+		rootReal:      rootReal,
+		replaceByPath: make(map[string][]ops.ReplaceRangeOp),
+		writeByPath:   make(map[string]ops.WriteAtomicOp),
+		mkdirByPath:   make(map[string]ops.MkdirAllOp),
+		plans:         make(map[string]*filePlan),
+	}, nil
+}
 
-	// Collect ops by kind/path (using canonical slash paths for stable ordering).
-	replaceByPath := make(map[string][]ops.ReplaceRangeOp)
-	writeByPath := make(map[string]ops.WriteAtomicOp)
-	mkdirByPath := make(map[string]ops.MkdirAllOp)
-
+// collect groups the ops by kind and canonical slash path (stable ordering
+// later), validating each path against the workspace as it goes.
+func (b *applyBatch) collect(in []ops.AnyOp) error {
 	for _, anyOp := range in {
 		opName := strings.TrimSpace(anyOp.Op)
+		var err error
 		switch opName {
 		case ops.OpFileReplaceRange:
 			if anyOp.ReplaceRange == nil {
-				return nil, protocol.NewError(protocol.InvalidLLMOutput, "missing replace_range payload", map[string]any{"op": opName})
+				return protocol.NewError(protocol.InvalidLLMOutput, "missing replace_range payload", map[string]any{"op": opName})
 			}
-			rr := *anyOp.ReplaceRange
-			if rr.Op == "" {
-				rr.Op = ops.OpFileReplaceRange
-			}
-			rel, err := resolver.canonRel(rr.Path)
-			if err != nil {
-				return nil, err
-			}
-			rr.Path = rel
-			if _, err := resolver.getAbs(rel); err != nil {
-				return nil, err
-			}
-			replaceByPath[rel] = append(replaceByPath[rel], rr)
-
+			err = b.collectReplaceRange(*anyOp.ReplaceRange)
 		case ops.OpFileWriteAtomic:
 			if anyOp.WriteAtomic == nil {
-				return nil, protocol.NewError(protocol.InvalidLLMOutput, "missing write_atomic payload", map[string]any{"op": opName})
+				return protocol.NewError(protocol.InvalidLLMOutput, "missing write_atomic payload", map[string]any{"op": opName})
 			}
-			wa := *anyOp.WriteAtomic
-			if wa.Op == "" {
-				wa.Op = ops.OpFileWriteAtomic
-			}
-			rel, err := resolver.canonRel(wa.Path)
-			if err != nil {
-				return nil, err
-			}
-			wa.Path = rel
-			if _, ok := replaceByPath[rel]; ok {
-				return nil, protocol.NewError(protocol.InvalidLLMOutput, "conflicting ops for same path", map[string]any{"path": rel})
-			}
-			if _, exists := writeByPath[rel]; exists {
-				return nil, protocol.NewError(protocol.InvalidLLMOutput, "duplicate write_atomic for path", map[string]any{"path": rel})
-			}
-			if _, err := resolver.getAbs(rel); err != nil {
-				return nil, err
-			}
-			writeByPath[rel] = wa
-
+			err = b.collectWriteAtomic(*anyOp.WriteAtomic)
 		case ops.OpFileMkdirAll:
 			if anyOp.MkdirAll == nil {
-				return nil, protocol.NewError(protocol.InvalidLLMOutput, "missing mkdir_all payload", map[string]any{"op": opName})
+				return protocol.NewError(protocol.InvalidLLMOutput, "missing mkdir_all payload", map[string]any{"op": opName})
 			}
-			md := *anyOp.MkdirAll
-			if md.Op == "" {
-				md.Op = ops.OpFileMkdirAll
-			}
-			rel, err := resolver.canonRel(md.Path)
-			if err != nil {
-				return nil, err
-			}
-			md.Path = rel
-			if _, err := resolver.getAbs(rel); err != nil {
-				return nil, err
-			}
-			// M16 in audit ledger: dedupe by canonical rel path BUT reject
-			// conflicting Mode values for the same path. Previously last-
-			// write-wins silently picked one Mode, hiding patch bugs that
-			// emit the same directory with different perms.
-			if existing, ok := mkdirByPath[rel]; ok && existing.Mode != 0 && md.Mode != 0 && existing.Mode != md.Mode {
-				return nil, protocol.NewError(protocol.InvalidLLMOutput,
-					"conflicting mkdir_all mode for same path",
-					map[string]any{"path": rel, "mode_a": existing.Mode, "mode_b": md.Mode})
-			}
-			mkdirByPath[rel] = md // dedupe by canonical rel path
-
+			err = b.collectMkdirAll(*anyOp.MkdirAll)
 		default:
 			if opName == "" {
 				opName = "<empty>"
 			}
-			return nil, protocol.NewError(protocol.InvalidLLMOutput, "unsupported op", map[string]any{"op": opName})
+			return protocol.NewError(protocol.InvalidLLMOutput, "unsupported op", map[string]any{"op": opName})
+		}
+		if err != nil {
+			return err
 		}
 	}
+	return nil
+}
 
-	plans := make(map[string]*filePlan, len(replaceByPath)+len(writeByPath))
-	loadPlan := func(rel string) (*filePlan, error) {
-		if fp, ok := plans[rel]; ok {
-			return fp, nil
-		}
-		abs, err := resolver.getAbs(rel)
-		if err != nil {
-			return nil, err
-		}
+func (b *applyBatch) collectReplaceRange(rr ops.ReplaceRangeOp) error {
+	if rr.Op == "" {
+		rr.Op = ops.OpFileReplaceRange
+	}
+	rel, err := b.resolver.canonRel(rr.Path)
+	if err != nil {
+		return err
+	}
+	rr.Path = rel
+	if _, err := b.resolver.getAbs(rel); err != nil {
+		return err
+	}
+	b.replaceByPath[rel] = append(b.replaceByPath[rel], rr)
+	return nil
+}
 
-		st, statErr := os.Stat(abs)
-		exists := false
-		perm := os.FileMode(0644)
-		var before []byte
-		if statErr == nil {
-			if st.IsDir() {
-				return nil, protocol.NewError(protocol.InvalidLLMOutput, "path is a directory", map[string]any{"path": rel})
-			}
-			exists = true
-			perm = st.Mode().Perm()
-			b, rerr := os.ReadFile(abs)
-			if rerr != nil {
-				return nil, fmt.Errorf("failed to read file %s: %w", rel, rerr)
-			}
-			before = b
-		} else if !os.IsNotExist(statErr) {
-			return nil, fmt.Errorf("failed to stat file %s: %w", rel, statErr)
-		}
+func (b *applyBatch) collectWriteAtomic(wa ops.WriteAtomicOp) error {
+	if wa.Op == "" {
+		wa.Op = ops.OpFileWriteAtomic
+	}
+	rel, err := b.resolver.canonRel(wa.Path)
+	if err != nil {
+		return err
+	}
+	wa.Path = rel
+	if _, ok := b.replaceByPath[rel]; ok {
+		return protocol.NewError(protocol.InvalidLLMOutput, "conflicting ops for same path", map[string]any{"path": rel})
+	}
+	if _, exists := b.writeByPath[rel]; exists {
+		return protocol.NewError(protocol.InvalidLLMOutput, "duplicate write_atomic for path", map[string]any{"path": rel})
+	}
+	if _, err := b.resolver.getAbs(rel); err != nil {
+		return err
+	}
+	b.writeByPath[rel] = wa
+	return nil
+}
 
-		fp := &filePlan{
-			rel:    rel,
-			abs:    abs,
-			exists: exists,
-			perm:   perm,
-			before: before,
-			after:  append([]byte(nil), before...),
-		}
-		plans[rel] = fp
+func (b *applyBatch) collectMkdirAll(md ops.MkdirAllOp) error {
+	if md.Op == "" {
+		md.Op = ops.OpFileMkdirAll
+	}
+	rel, err := b.resolver.canonRel(md.Path)
+	if err != nil {
+		return err
+	}
+	md.Path = rel
+	if _, err := b.resolver.getAbs(rel); err != nil {
+		return err
+	}
+	// M16 in audit ledger: dedupe by canonical rel path BUT reject
+	// conflicting Mode values for the same path. Previously last-
+	// write-wins silently picked one Mode, hiding patch bugs that
+	// emit the same directory with different perms.
+	if existing, ok := b.mkdirByPath[rel]; ok && existing.Mode != 0 && md.Mode != 0 && existing.Mode != md.Mode {
+		return protocol.NewError(protocol.InvalidLLMOutput,
+			"conflicting mkdir_all mode for same path",
+			map[string]any{"path": rel, "mode_a": existing.Mode, "mode_b": md.Mode})
+	}
+	b.mkdirByPath[rel] = md // dedupe by canonical rel path
+	return nil
+}
+
+// loadPlan reads the file an op touches, once per file.
+func (b *applyBatch) loadPlan(rel string) (*filePlan, error) {
+	if fp, ok := b.plans[rel]; ok {
 		return fp, nil
 	}
+	abs, err := b.resolver.getAbs(rel)
+	if err != nil {
+		return nil, err
+	}
 
-	// Plan replace_range edits.
-	for rel, fileOps := range replaceByPath {
-		fp, err := loadPlan(rel)
+	st, statErr := os.Stat(abs)
+	exists := false
+	perm := os.FileMode(0644)
+	var before []byte
+	if statErr == nil {
+		if st.IsDir() {
+			return nil, protocol.NewError(protocol.InvalidLLMOutput, "path is a directory", map[string]any{"path": rel})
+		}
+		exists = true
+		perm = st.Mode().Perm()
+		bs, rerr := os.ReadFile(abs)
+		if rerr != nil {
+			return nil, fmt.Errorf("failed to read file %s: %w", rel, rerr)
+		}
+		before = bs
+	} else if !os.IsNotExist(statErr) {
+		return nil, fmt.Errorf("failed to stat file %s: %w", rel, statErr)
+	}
+
+	fp := &filePlan{
+		rel:    rel,
+		abs:    abs,
+		exists: exists,
+		perm:   perm,
+		before: before,
+		after:  append([]byte(nil), before...),
+	}
+	b.plans[rel] = fp
+	return fp, nil
+}
+
+// plan computes every file's content after its ops: the replace_range edits,
+// then the write_atomic writes with their conditions. Nothing touches disk.
+func (b *applyBatch) plan() error {
+	for rel, fileOps := range b.replaceByPath {
+		fp, err := b.loadPlan(rel)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		after, err := applyReplaceRangeOps(rel, fp.before, fileOps)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		fp.after = after
 	}
-
-	// Plan write_atomic writes.
-	for rel, wa := range writeByPath {
-		fp, err := loadPlan(rel)
+	for rel, wa := range b.writeByPath {
+		fp, err := b.loadPlan(rel)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if wa.Conditions.MustNotExist && fp.exists {
-			return nil, protocol.NewError(protocol.AlreadyExists, "file already exists", map[string]any{
+			return protocol.NewError(protocol.AlreadyExists, "file already exists", map[string]any{
 				"path": rel,
 			})
 		}
 		actualHash := fsutil.ComputeSHA256(fp.before)
 		if strings.TrimSpace(wa.Conditions.FileHash) != "" && strings.TrimSpace(wa.Conditions.FileHash) != actualHash {
-			return nil, protocol.NewError(protocol.StaleContent, "cannot apply op: file_hash mismatch", map[string]any{
+			return protocol.NewError(protocol.StaleContent, "cannot apply op: file_hash mismatch", map[string]any{
 				"path":          rel,
 				"expected_hash": wa.Conditions.FileHash,
 				"actual_hash":   actualHash,
@@ -296,20 +368,23 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 		fp.perm = perm
 		fp.after = []byte(wa.Content)
 	}
-
-	// Prepare deterministic output.
-	paths := make([]string, 0, len(plans))
-	for p := range plans {
-		paths = append(paths, p)
+	b.paths = make([]string, 0, len(b.plans))
+	for p := range b.plans {
+		b.paths = append(b.paths, p)
 	}
-	sort.Strings(paths)
+	sort.Strings(b.paths)
+	return nil
+}
 
+// preview is the result the caller reads: a diff per planned file and the
+// files a write would change, in path order.
+func (b *applyBatch) preview() *ApplyResult {
 	result := &ApplyResult{
-		Diffs:        make([]FileDiff, 0, len(paths)),
-		ChangedFiles: make([]string, 0, len(paths)),
+		Diffs:        make([]FileDiff, 0, len(b.paths)),
+		ChangedFiles: make([]string, 0, len(b.paths)),
 	}
-	for _, rel := range paths {
-		fp := plans[rel]
+	for _, rel := range b.paths {
+		fp := b.plans[rel]
 		// M11 + M12 in audit ledger: cap each side of the diff at 64 KiB
 		// and refuse binary content (NUL byte in first 8 KiB). A 100 MB
 		// file with a 1-line change otherwise produced 200 MB of strings
@@ -326,23 +401,23 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 			result.ChangedFiles = append(result.ChangedFiles, rel)
 		}
 	}
+	return result
+}
 
-	if opts.DryRun {
-		return result, nil
-	}
-
-	// TOCTOU re-validation (N2 in audit ledger, Sprint 6).
-	//
-	// The cross-process apply lock (acquireProjectLock) keeps two Orchestra
-	// processes from racing each other, but a NON-Orchestra writer (vim,
-	// IDE auto-save, build tool) can mutate a file between loadPlan reading
-	// it above and atomicWriteFile below. If we noticed that during planning
-	// (file_hash check at lines 257-264 and 395-399), we'd already have
-	// returned StaleContent — but the planning read happened earlier, and
-	// the mutation could land in the gap. Re-hash each modified file right
-	// before we touch it and bail before any write if it has drifted.
-	for _, rel := range paths {
-		fp := plans[rel]
+// revalidate re-reads every file about to be written and refuses the batch
+// if one drifted since it was planned (TOCTOU, N2 in audit ledger).
+//
+// The cross-process apply lock (acquireProjectLock) keeps two Orchestra
+// processes from racing each other, but a NON-Orchestra writer (vim, IDE
+// auto-save, build tool) can mutate a file between loadPlan reading it and
+// atomicWriteFile below. If we noticed that during planning (the file_hash
+// checks), we'd already have returned StaleContent — but the planning read
+// happened earlier, and the mutation could land in the gap. Re-hash each
+// modified file right before we touch it and bail before any write if it has
+// drifted.
+func (b *applyBatch) revalidate() error {
+	for _, rel := range b.paths {
+		fp := b.plans[rel]
 		if !planWrites(fp.exists, fp.before, fp.after) {
 			// We're not going to write this file (no change planned), so
 			// drift here doesn't matter.
@@ -352,95 +427,97 @@ func ApplyAnyOps(root string, in []ops.AnyOp, opts ApplyOptions) (*ApplyResult, 
 		switch {
 		case statErr == nil:
 			if !fp.exists {
-				return nil, protocol.NewError(protocol.StaleContent,
+				return protocol.NewError(protocol.StaleContent,
 					"file created between plan and apply",
 					map[string]any{"path": rel})
 			}
 			if fsutil.ComputeSHA256(current) != fsutil.ComputeSHA256(fp.before) {
-				return nil, protocol.NewError(protocol.StaleContent,
+				return protocol.NewError(protocol.StaleContent,
 					"file changed between plan and apply",
 					map[string]any{"path": rel})
 			}
 		case os.IsNotExist(statErr):
 			if fp.exists {
-				return nil, protocol.NewError(protocol.StaleContent,
+				return protocol.NewError(protocol.StaleContent,
 					"file deleted between plan and apply",
 					map[string]any{"path": rel})
 			}
 		default:
-			return nil, fmt.Errorf("revalidate %s: %w", rel, statErr)
+			return fmt.Errorf("revalidate %s: %w", rel, statErr)
 		}
 	}
+	return nil
+}
 
-	// Apply mkdir_all (sorted for determinism).
-	mkdirPaths := make([]string, 0, len(mkdirByPath))
-	for p := range mkdirByPath {
+// applyMkdirs creates the mkdir_all directories, sorted for determinism.
+func (b *applyBatch) applyMkdirs() error {
+	mkdirPaths := make([]string, 0, len(b.mkdirByPath))
+	for p := range b.mkdirByPath {
 		mkdirPaths = append(mkdirPaths, p)
 	}
 	sort.Strings(mkdirPaths)
 	for _, rel := range mkdirPaths {
-		md := mkdirByPath[rel]
-		abs, err := resolver.getAbs(rel)
+		md := b.mkdirByPath[rel]
+		abs, err := b.resolver.getAbs(rel)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		mode := os.FileMode(0755)
 		if md.Mode != 0 {
 			mode = os.FileMode(md.Mode) & os.ModePerm
 		}
 		if err := os.MkdirAll(abs, mode); err != nil {
-			return nil, fmt.Errorf("failed to create directory %s: %w", rel, err)
+			return fmt.Errorf("failed to create directory %s: %w", rel, err)
 		}
 		// Best-effort: ensure directory doesn't escape via symlink/junction.
-		if realDir, err := filepath.EvalSymlinks(abs); err == nil && !isWithinRoot(rootReal, realDir) {
-			return nil, protocol.NewError(protocol.PathTraversal, "path escapes workspace (via symlink/junction)", map[string]any{
+		if realDir, err := filepath.EvalSymlinks(abs); err == nil && !isWithinRoot(b.rootReal, realDir) {
+			return protocol.NewError(protocol.PathTraversal, "path escapes workspace (via symlink/junction)", map[string]any{
 				"path": rel,
 			})
 		}
 	}
+	return nil
+}
 
-	// Phase 1: write backups in parallel for files that need them.
-	//
-	// P4 in audit ledger (Sprint 6): backups were written sequentially on
-	// the hot path, one atomicWriteFile per file before each main write.
-	// For a 1-3 file batch that was already fine; for larger batches the
-	// sync I/O accumulated. Backups are independent — a parallel fan-out
-	// (capped at 8 to avoid disk saturation) preserves the
-	// "backup-before-write" invariant without changing the main-write
-	// loop's determinism.
-	if opts.Backup && opts.BackupSuffix != "" {
-		var backupTargets []backupSpec
-		for _, rel := range paths {
-			fp := plans[rel]
-			if fp.exists && !bytes.Equal(fp.before, fp.after) {
-				backupTargets = append(backupTargets, backupSpec{
-					rel:  rel,
-					abs:  fp.abs,
-					data: fp.before,
-					perm: fp.perm,
-				})
-			}
-		}
-		if err := writeBackupsParallel(backupTargets, opts.BackupSuffix, rootReal); err != nil {
-			return nil, err
+// writeBackups keeps the pre-edit version of every file about to change,
+// in parallel, before any main write.
+//
+// P4 in audit ledger (Sprint 6): backups were written sequentially on the
+// hot path, one atomicWriteFile per file before each main write. For a 1-3
+// file batch that was already fine; for larger batches the sync I/O
+// accumulated. Backups are independent — a parallel fan-out (capped at 8 to
+// avoid disk saturation) preserves the "backup-before-write" invariant
+// without changing the main-write loop's determinism.
+func (b *applyBatch) writeBackups(suffix string) error {
+	var targets []backupSpec
+	for _, rel := range b.paths {
+		fp := b.plans[rel]
+		if fp.exists && !bytes.Equal(fp.before, fp.after) {
+			targets = append(targets, backupSpec{
+				rel:  rel,
+				abs:  fp.abs,
+				data: fp.before,
+				perm: fp.perm,
+			})
 		}
 	}
+	return writeBackupsParallel(targets, suffix, b.rootReal)
+}
 
-	// Phase 2: apply file writes in deterministic path order. Sequential
-	// because writes carry order-sensitive correctness (e.g. an mkdir
-	// preceding a file write within the same batch).
-	for _, rel := range paths {
-		fp := plans[rel]
+// writeFiles applies the planned writes in path order. Sequential because
+// writes carry order-sensitive correctness (e.g. an mkdir preceding a file
+// write within the same batch).
+func (b *applyBatch) writeFiles() error {
+	for _, rel := range b.paths {
+		fp := b.plans[rel]
 		if !planWrites(fp.exists, fp.before, fp.after) {
 			continue
 		}
-
-		if err := atomicWriteFile(fp.abs, fp.after, fp.perm, rootReal); err != nil {
-			return nil, fmt.Errorf("failed to write file: %w", err)
+		if err := atomicWriteFile(fp.abs, fp.after, fp.perm, b.rootReal); err != nil {
+			return fmt.Errorf("failed to write file: %w", err)
 		}
 	}
-
-	return result, nil
+	return nil
 }
 
 // planWrites reports whether a planned file has to be written to disk.
