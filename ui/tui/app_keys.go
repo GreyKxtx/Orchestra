@@ -83,56 +83,82 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return a, cmd, true
 	}
 
-	switch m.String() {
-	case "ctrl+g":
-		// Toggle mouse passthrough: when on, mouse reporting is disabled so the
-		// terminal can handle native text selection. When off, restore our handlers.
-		a.mousePassthrough = !a.mousePassthrough
-		if a.mousePassthrough {
-			a.updateStatusHints()
-			a.showToast("Выделение текста · Ctrl+G для возврата")
-			return a, tea.DisableMouse, true
+	// Each key belongs to one router; a router that leaves its key alone
+	// (a letter with no permission prompt up, Down with no history to walk)
+	// lets it fall through to the textarea.
+	key := m.String()
+	for _, route := range []func(string) (tea.Model, tea.Cmd, bool){
+		a.routeSelectionKey,
+		a.routeHistoryKey,
+		a.routePermissionKey,
+		a.routeChromeKey,
+		a.routeEscape,
+		a.routeEditKey,
+	} {
+		if next, cmd, handled := route(key); handled {
+			return next, cmd, true
 		}
-		a.updateStatusHints()
-		a.showToast("Управление мышью восстановлено")
-		return a, tea.EnableMouseCellMotion, true
+	}
+	// Clear selection when a non-shift navigation key falls through to textarea.
+	// left/right/home/end/ctrl|alt+left|right are handled above when a selection
+	// is active (collapse to edge). Remaining keys clear then fall through.
+	switch key {
+	case "up", "down":
+		a.input.ClearSelection()
+	}
+	return a, nil, false
+}
 
-	case "shift+left":
+// selectionExtendKeys extend the selection from the cursor — the anchor is
+// set on the first of them — and move the cursor with the textarea's own key.
+var selectionExtendKeys = map[string]tea.KeyType{
+	"shift+left":       tea.KeyLeft,
+	"shift+right":      tea.KeyRight,
+	"ctrl+shift+left":  tea.KeyCtrlLeft,
+	"ctrl+shift+right": tea.KeyCtrlRight,
+	"alt+shift+left":   tea.KeyCtrlLeft,
+	"alt+shift+right":  tea.KeyCtrlRight,
+	"shift+up":         tea.KeyUp,
+	"shift+down":       tea.KeyDown,
+}
+
+// selectionCollapseKeys move the cursor; with a selection active they collapse
+// it to its start (the left-going ones) or its end (the right-going ones)
+// instead.
+var selectionCollapseKeys = map[string]struct {
+	key   tea.KeyType
+	toEnd bool
+}{
+	"left":       {tea.KeyLeft, false},
+	"right":      {tea.KeyRight, true},
+	"home":       {tea.KeyHome, false},
+	"end":        {tea.KeyEnd, true},
+	"alt+left":   {tea.KeyCtrlLeft, false},
+	"alt+right":  {tea.KeyCtrlRight, true},
+	"ctrl+left":  {tea.KeyCtrlLeft, false},
+	"ctrl+right": {tea.KeyCtrlRight, true},
+}
+
+// routeSelectionKey is the input's selection and clipboard keys.
+func (a *App) routeSelectionKey(key string) (tea.Model, tea.Cmd, bool) {
+	if kt, ok := selectionExtendKeys[key]; ok {
 		if !a.input.HasSelection() {
 			a.input.SetAnchor(a.input.CursorPos())
 		}
-		return a, a.sendKeyToTA(tea.KeyLeft), true
-
-	case "shift+right":
-		if !a.input.HasSelection() {
-			a.input.SetAnchor(a.input.CursorPos())
+		return a, a.sendKeyToTA(kt), true
+	}
+	if mv, ok := selectionCollapseKeys[key]; ok {
+		if a.input.HasSelection() {
+			if mv.toEnd {
+				a.input.CollapseSelectionToEnd()
+			} else {
+				a.input.CollapseSelectionToStart()
+			}
+			return a, nil, true
 		}
-		return a, a.sendKeyToTA(tea.KeyRight), true
-
-	case "ctrl+shift+left":
-		if !a.input.HasSelection() {
-			a.input.SetAnchor(a.input.CursorPos())
-		}
-		return a, a.sendKeyToTA(tea.KeyCtrlLeft), true
-
-	case "ctrl+shift+right":
-		if !a.input.HasSelection() {
-			a.input.SetAnchor(a.input.CursorPos())
-		}
-		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
-
-	case "alt+shift+left":
-		if !a.input.HasSelection() {
-			a.input.SetAnchor(a.input.CursorPos())
-		}
-		return a, a.sendKeyToTA(tea.KeyCtrlLeft), true
-
-	case "alt+shift+right":
-		if !a.input.HasSelection() {
-			a.input.SetAnchor(a.input.CursorPos())
-		}
-		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
-
+		return a, a.sendKeyToTA(mv.key), true
+	}
+	switch key {
 	case "ctrl+a":
 		a.input.SelectAll()
 		return a, nil, true
@@ -165,7 +191,6 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	case "ctrl+shift+end":
 		a.input.SelectToDocEnd()
 		return a, nil, true
-
 	case "ctrl+home":
 		a.input.ClearSelection()
 		a.input.MoveCursorAbs(0)
@@ -175,68 +200,15 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		runes := []rune(a.input.Value())
 		a.input.MoveCursorAbs(len(runes))
 		return a, nil, true
+	}
+	return a, nil, false
+}
 
-	case "shift+up":
-		if !a.input.HasSelection() {
-			a.input.SetAnchor(a.input.CursorPos())
-		}
-		return a, a.sendKeyToTA(tea.KeyUp), true
-	case "shift+down":
-		if !a.input.HasSelection() {
-			a.input.SetAnchor(a.input.CursorPos())
-		}
-		return a, a.sendKeyToTA(tea.KeyDown), true
-
-	case "ctrl+left":
-		if a.input.HasSelection() {
-			a.input.CollapseSelectionToStart()
-			return a, nil, true
-		}
-		return a, a.sendKeyToTA(tea.KeyCtrlLeft), true
-	case "ctrl+right":
-		if a.input.HasSelection() {
-			a.input.CollapseSelectionToEnd()
-			return a, nil, true
-		}
-		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
-
-	case "left":
-		if a.input.HasSelection() {
-			a.input.CollapseSelectionToStart()
-			return a, nil, true
-		}
-		return a, a.sendKeyToTA(tea.KeyLeft), true
-	case "right":
-		if a.input.HasSelection() {
-			a.input.CollapseSelectionToEnd()
-			return a, nil, true
-		}
-		return a, a.sendKeyToTA(tea.KeyRight), true
-	case "home":
-		if a.input.HasSelection() {
-			a.input.CollapseSelectionToStart()
-			return a, nil, true
-		}
-		return a, a.sendKeyToTA(tea.KeyHome), true
-	case "end":
-		if a.input.HasSelection() {
-			a.input.CollapseSelectionToEnd()
-			return a, nil, true
-		}
-		return a, a.sendKeyToTA(tea.KeyEnd), true
-	case "alt+left":
-		if a.input.HasSelection() {
-			a.input.CollapseSelectionToStart()
-			return a, nil, true
-		}
-		return a, a.sendKeyToTA(tea.KeyCtrlLeft), true
-	case "alt+right":
-		if a.input.HasSelection() {
-			a.input.CollapseSelectionToEnd()
-			return a, nil, true
-		}
-		return a, a.sendKeyToTA(tea.KeyCtrlRight), true
-
+// routeHistoryKey is Up and Down: the palette's cursor while one is open,
+// the textarea's own line movement in a multi-line input, the prompt
+// history otherwise.
+func (a *App) routeHistoryKey(key string) (tea.Model, tea.Cmd, bool) {
+	switch key {
 	case "up":
 		if a.paletteActive {
 			a.slashPalette.CursorUp()
@@ -273,61 +245,79 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			a.input.SetValue(text)
 			return a, nil, true
 		}
+	}
+	return a, nil, false
+}
+
+// routePermissionKey answers the permission prompt with y / a / t / n while
+// one is up; the letters are the user's otherwise.
+func (a *App) routePermissionKey(key string) (tea.Model, tea.Cmd, bool) {
+	if a.permModal == nil {
+		return a, nil, false
+	}
+	rule := a.permModal.Kind == "lesson_rule"
+	switch key {
 	case "y":
-		if a.permModal != nil {
-			if a.permModal.Kind == "lesson_rule" {
-				return a, a.respondRuleSuggestion(true), true
-			}
-			a.respondShellPermission(true, false, false)
-			return a, nil, true
+		if rule {
+			return a, a.respondRuleSuggestion(true), true
 		}
+		a.respondShellPermission(true, false, false)
+		return a, nil, true
 	case "a":
-		if a.permModal != nil {
-			if a.permModal.Kind != "lesson_rule" {
-				a.respondShellPermission(true, true, false)
-			}
-			return a, nil, true
+		if !rule {
+			a.respondShellPermission(true, true, false)
 		}
+		return a, nil, true
 	case "t":
-		if a.permModal != nil {
-			if a.permModal.Kind != "lesson_rule" {
-				a.respondShellPermission(true, false, true)
-			}
-			return a, nil, true
+		if !rule {
+			a.respondShellPermission(true, false, true)
 		}
-		if a.tryChromeHotkey("t") {
-			return a, nil, true
-		}
+		return a, nil, true
 	case "n":
-		if a.permModal != nil {
-			if a.permModal.Kind == "lesson_rule" {
-				return a, a.respondRuleSuggestion(false), true
-			}
-			a.respondShellPermission(false, false, false)
+		if rule {
+			return a, a.respondRuleSuggestion(false), true
+		}
+		a.respondShellPermission(false, false, false)
+		return a, nil, true
+	}
+	return a, nil, false
+}
+
+// routeChromeKey is the chrome: the panels' hotkeys, scrolling, the mouse
+// mode, the palettes and dialogs, the mode and permission cycles.
+func (a *App) routeChromeKey(key string) (tea.Model, tea.Cmd, bool) {
+	switch key {
+	case "t", "d", "ctrl+r":
+		if a.tryChromeHotkey(key) {
 			return a, nil, true
 		}
-	case "pgup":
+	case "ctrl+t":
+		a.tryChromeHotkey(key)
+		return a, nil, true
+	case "ctrl+d":
+		if a.tryChromeHotkey(key) {
+			return a, nil, true
+		}
+		a.chat.ScrollDown(0)
+		return a, nil, true
+	case "pgup", "ctrl+u":
 		a.chat.ScrollUp(0)
 		return a, nil, true
 	case "pgdown":
 		a.chat.ScrollDown(0)
 		return a, nil, true
-	case "ctrl+u":
-		a.chat.ScrollUp(0)
-		return a, nil, true
-	case "ctrl+d":
-		if a.tryChromeHotkey("ctrl+d") {
-			return a, nil, true
+	case "ctrl+g":
+		// Toggle mouse passthrough: when on, mouse reporting is disabled so the
+		// terminal can handle native text selection. When off, restore our handlers.
+		a.mousePassthrough = !a.mousePassthrough
+		if a.mousePassthrough {
+			a.updateStatusHints()
+			a.showToast("Выделение текста · Ctrl+G для возврата")
+			return a, tea.DisableMouse, true
 		}
-		a.chat.ScrollDown(0)
-		return a, nil, true
-	case "ctrl+t":
-		a.tryChromeHotkey("ctrl+t")
-		return a, nil, true
-	case "ctrl+r":
-		if a.tryChromeHotkey("ctrl+r") {
-			return a, nil, true
-		}
+		a.updateStatusHints()
+		a.showToast("Управление мышью восстановлено")
+		return a, tea.EnableMouseCellMotion, true
 	case "ctrl+k":
 		if a.commandModal == nil {
 			a.commandModal = view.NewPaletteModal(a.width, a.height)
@@ -349,61 +339,6 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		a.showOnboarding = true
 		endpoint := "http://localhost:1234"
 		return a, fetchModelsCmd(endpoint), true
-	case "esc":
-		if a.input.HasSelection() {
-			a.input.ClearSelection()
-			return a, nil, true
-		}
-		if a.mentionActive {
-			a.mentionActive = false
-			a.layout()
-			a.updateStatusHints()
-			return a, nil, true
-		}
-		if a.paletteActive {
-			a.paletteActive = false
-			a.input.Reset()
-			a.layout()
-			a.updateStatusHints()
-			return a, nil, true
-		}
-		if a.questionModal != nil {
-			reqID := a.questionReqID
-			a.questionReqID = 0
-			a.questionModal = nil
-			a.input.Reset()
-			a.updateStatusHints()
-			a.layout()
-			if a.rpc != nil {
-				a.rpc.RespondQuestion(reqID, nil)
-			}
-			return a, nil, true
-		}
-		if a.permModal != nil {
-			a.respondShellPermission(false, false, false)
-			return a, nil, true
-		}
-		// While a long-running RPC is in flight, Esc cancels it. The local
-		// context cancel unblocks the rpcclient.Call which auto-sends
-		// `$/cancelRequest` to the server — the server then cancels its
-		// per-request ctx so agent.run / workflow.run / skill.invoke unwind
-		// promptly. The visible "busy" state clears via the result/error
-		// event path (EventAgentRunCompleted, workflowResultMsg, etc.).
-		if a.turn.CanCancel() && a.activeCancel != nil {
-			a.clearActiveCancel()
-			// The cancelled call comes back as "context canceled" — the error
-			// for the context closed right here. The turn did not go wrong.
-			a.turnCancelled = true
-			a.session.AppendMessage(state.Message{
-				Role:       state.RoleSystem,
-				SystemKind: state.SystemKindInfo,
-				Text:       "ход отменён",
-			})
-			a.chat.SetMessages(a.session.Messages)
-			return a, nil, true
-		}
-		a.input.Reset()
-		return a, nil, true
 	case "tab":
 		if a.mentionActive {
 			if sel := a.mentionPalette.Selected(); sel != "" {
@@ -422,10 +357,76 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		// Cycle shell ask ↔ allow (Claude Code–style bypass permissions).
 		a.cycleShellPerms()
 		return a, nil, true
-	case "d":
-		if a.tryChromeHotkey("d") {
-			return a, nil, true
+	}
+	return a, nil, false
+}
+
+// routeEscape is Esc, which closes the innermost thing that is open: the
+// selection, a palette, the question or permission prompt, the turn in
+// flight, and last the input's text.
+func (a *App) routeEscape(key string) (tea.Model, tea.Cmd, bool) {
+	if key != "esc" {
+		return a, nil, false
+	}
+	if a.input.HasSelection() {
+		a.input.ClearSelection()
+		return a, nil, true
+	}
+	if a.mentionActive {
+		a.mentionActive = false
+		a.layout()
+		a.updateStatusHints()
+		return a, nil, true
+	}
+	if a.paletteActive {
+		a.paletteActive = false
+		a.input.Reset()
+		a.layout()
+		a.updateStatusHints()
+		return a, nil, true
+	}
+	if a.questionModal != nil {
+		reqID := a.questionReqID
+		a.questionReqID = 0
+		a.questionModal = nil
+		a.input.Reset()
+		a.updateStatusHints()
+		a.layout()
+		if a.rpc != nil {
+			a.rpc.RespondQuestion(reqID, nil)
 		}
+		return a, nil, true
+	}
+	if a.permModal != nil {
+		a.respondShellPermission(false, false, false)
+		return a, nil, true
+	}
+	// While a long-running RPC is in flight, Esc cancels it. The local
+	// context cancel unblocks the rpcclient.Call which auto-sends
+	// `$/cancelRequest` to the server — the server then cancels its
+	// per-request ctx so agent.run / workflow.run / skill.invoke unwind
+	// promptly. The visible "busy" state clears via the result/error
+	// event path (EventAgentRunCompleted, workflowResultMsg, etc.).
+	if a.turn.CanCancel() && a.activeCancel != nil {
+		a.clearActiveCancel()
+		// The cancelled call comes back as "context canceled" — the error
+		// for the context closed right here. The turn did not go wrong.
+		a.turnCancelled = true
+		a.session.AppendMessage(state.Message{
+			Role:       state.RoleSystem,
+			SystemKind: state.SystemKindInfo,
+			Text:       "ход отменён",
+		})
+		a.chat.SetMessages(a.session.Messages)
+		return a, nil, true
+	}
+	a.input.Reset()
+	return a, nil, true
+}
+
+// routeEditKey is the input's editing keys and Enter.
+func (a *App) routeEditKey(key string) (tea.Model, tea.Cmd, bool) {
+	switch key {
 	case "backspace":
 		a.input.DeleteBackward()
 		a.input.SyncHeight(5)
@@ -446,13 +447,6 @@ func (a *App) routeKey(m tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return a, nil, true
 	case "enter":
 		return a.handleEnter()
-	}
-	// Clear selection when a non-shift navigation key falls through to textarea.
-	// left/right/home/end/ctrl|alt+left|right are handled above when a selection
-	// is active (collapse to edge). Remaining keys clear then fall through.
-	switch m.String() {
-	case "up", "down":
-		a.input.ClearSelection()
 	}
 	return a, nil, false
 }

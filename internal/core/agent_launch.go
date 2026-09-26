@@ -182,74 +182,50 @@ func resolveProfileName(cfg *config.ProjectConfig, profile string) (string, erro
 	return name, nil
 }
 
+// turnPrep is what prepareAgentLaunch resolves on the way to the turn's
+// options: its consents and budget, its recorder and event sink, its route,
+// its client and tools, its task runner.
+type turnPrep struct {
+	spec     agentLaunchSpec
+	settings app.Settings
+	profile  string
+	env      EventEnvelope
+
+	allowExec, allowWeb, allowBrowser    bool
+	maxSteps, maxRetries, maxPromptBytes int
+
+	trajectory  *trajectory.Writer
+	onEvent     func(agent.AgentEvent)
+	agentLogger *llm.Logger
+	hooks       agent.HooksRunner
+
+	requestedMode, effectiveMode string
+	routeReason                  string
+	routeConfidence              float64
+
+	custom     customAgentOpts
+	usage      *usage.Tracker
+	childCfg   tasks.ChildAgentConfig
+	taskRunner *tasks.TaskRunner
+}
+
 func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (launch *agentLaunch, retErr error) {
 	if c == nil || c.cfg == nil {
 		return nil, protocol.NewError(protocol.ExecFailed, "core config is nil", nil)
 	}
-
 	// LSP auto-provision for this turn asks this turn's client. Warmup is
 	// best-effort and must not block the agent loop on npm/go install.
 	if c.tools != nil {
 		c.WarmupLSP(permission.WithRequester(context.Background(), spec.PermissionRequester))
 	}
-
 	profileName, err := resolveProfileName(c.cfg, spec.Profile)
 	if err != nil {
 		return nil, err
 	}
-	// One answer for the turn, its subagents and its skills.
-	allowBrowser := spec.AllowBrowser && agent.ProfileAllowsBrowser(profileName)
-
-	respFmt := agent.ResolveResponseFormat(c.cfg.LLM, providerLabelOf(c.cfg), agent.ResponseFormatToolAgent)
-
-	settings := app.SettingsFrom(c.cfg)
-	maxSteps := spec.MaxSteps
-	if maxSteps <= 0 {
-		maxSteps = settings.MaxSteps
-	}
-	maxRetries := spec.MaxInvalidRetries
-	if maxRetries <= 0 {
-		maxRetries = settings.MaxInvalidRetries
-	}
-	maxPromptBytes := spec.MaxPromptBytes
-	if maxPromptBytes <= 0 {
-		maxPromptBytes = settings.MaxPromptBytes
-	}
-
-	env := spec.EventEnvelope
-	if env.TurnID == "" {
-		env.TurnID = NewTurnID()
-	}
+	p := c.newTurnPrep(spec, profileName)
 	// The mode router below calls the model on the turn's behalf.
-	ctx = llm.WithTrace(ctx, llm.Trace{RunID: env.TurnID})
-
-	// One tee for every consumer of spec.OnEvent below. There are four, and
-	// wrapping them individually would drop whichever one a later change adds.
-	var tw *trajectory.Writer
-	if spec.SessionID != "" || spec.RecordRun {
-		var w *trajectory.Writer
-		var err error
-		if spec.SessionID != "" {
-			w, err = trajectory.NewWriter(c.workspaceRoot, spec.SessionID)
-		} else {
-			w, err = trajectory.NewRunWriter(c.workspaceRoot, env.TurnID)
-		}
-		if err != nil {
-			// Observability must never block work: carry on with no recorder
-			// rather than failing the turn.
-			fmt.Fprintf(os.Stderr, "core: turn %s trajectory recording disabled: %v\n", env.TurnID, err)
-		} else {
-			tw = w
-			spec.OnEvent = teeToTrajectory(spec.OnEvent, tw)
-			// The first line of the turn, written before the agent can emit
-			// anything, so a turn that produces no notifications at all is
-			// still visible as a turn that ran.
-			_ = tw.Append(trajectory.TypeTurnStart, map[string]any{
-				"turn_id":    env.TurnID,
-				"session_id": spec.SessionID,
-			})
-		}
-	}
+	ctx = llm.WithTrace(ctx, llm.Trace{RunID: p.env.TurnID})
+	c.recordTurn(p)
 	// The launch owns the writer once it exists, and its three callers defer
 	// Close. Between here and that construction sit error returns, and a
 	// writer abandoned there would leak its handle: on Windows an open handle
@@ -259,11 +235,114 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	// keeps that true for error paths added later — patching the two that
 	// exist today would not.
 	defer func() {
-		if retErr != nil && tw != nil {
-			_ = tw.Close()
+		if retErr != nil && p.trajectory != nil {
+			_ = p.trajectory.Close()
 		}
 	}()
+	p.onEvent = turnEventSink(p.spec, p.env)
+	c.routeTurn(ctx, p)
+	if err := c.resolveTurnAgent(p); err != nil {
+		return nil, err
+	}
+	c.newTurnTaskRunner(p)
+	opts, err := c.turnOptions(p)
+	if err != nil {
+		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
+	}
+	return &agentLaunch{
+		Opts:            opts,
+		Custom:          p.custom,
+		Usage:           p.usage,
+		TaskRunner:      p.taskRunner,
+		Profile:         p.profile,
+		RequestedMode:   p.requestedMode,
+		EffectiveMode:   p.effectiveMode,
+		RouteReason:     p.routeReason,
+		RouteConfidence: p.routeConfidence,
+		EventEnvelope:   p.env,
+		Trajectory:      p.trajectory,
+		turnStartedAt:   time.Now(),
+		sessionID:       spec.SessionID,
+	}, nil
+}
 
+// newTurnPrep resolves what the turn may do and how much of it there may
+// be — one answer for the turn, its subagents and its skills — and where
+// its own lines go.
+func (c *Core) newTurnPrep(spec agentLaunchSpec, profile string) *turnPrep {
+	p := &turnPrep{spec: spec, settings: app.SettingsFrom(c.cfg), profile: profile, env: spec.EventEnvelope}
+	if p.env.TurnID == "" {
+		p.env.TurnID = NewTurnID()
+	}
+	p.allowBrowser = spec.AllowBrowser && agent.ProfileAllowsBrowser(profile)
+	p.allowExec = spec.AllowExec
+	if c.cfg.Exec.Confirm != nil && !*c.cfg.Exec.Confirm {
+		p.allowExec = true
+	}
+	// Web consent is web.confirm: false, or the consent a run in-process was
+	// started with; the turn, its skills and its subagents all take it from
+	// here.
+	p.allowWeb = spec.AllowWeb || (c.cfg.Web.Confirm != nil && !*c.cfg.Web.Confirm)
+	p.maxSteps = spec.MaxSteps
+	if p.maxSteps <= 0 {
+		p.maxSteps = p.settings.MaxSteps
+	}
+	p.maxRetries = spec.MaxInvalidRetries
+	if p.maxRetries <= 0 {
+		p.maxRetries = p.settings.MaxInvalidRetries
+	}
+	p.maxPromptBytes = spec.MaxPromptBytes
+	if p.maxPromptBytes <= 0 {
+		p.maxPromptBytes = p.settings.MaxPromptBytes
+	}
+	// The agent's own lines (tool calls, results, classifications) go to
+	// llm_log.jsonl whatever the provider: the client's logger when it has
+	// one, a fresh handle on the same file otherwise.
+	p.agentLogger = llm.LoggerOf(c.llmClient)
+	if p.agentLogger == nil {
+		p.agentLogger = llm.NewLogger(c.workspaceRoot)
+	}
+	if hr := hooks.New(c.cfg.Hooks, c.workspaceRoot).WithSession(spec.SessionID); hr != nil {
+		p.hooks = hr
+	}
+	return p
+}
+
+// recordTurn opens the turn's trajectory — the session's log, or for a
+// one-shot agent.run the run's — and tees every notification into it: one
+// tee for every consumer of spec.OnEvent (there are four, and wrapping them
+// individually would drop whichever one a later change adds). Observability
+// never blocks work: a log that cannot be opened leaves the turn unrecorded.
+func (c *Core) recordTurn(p *turnPrep) {
+	if p.spec.SessionID == "" && !p.spec.RecordRun {
+		return
+	}
+	var w *trajectory.Writer
+	var err error
+	if p.spec.SessionID != "" {
+		w, err = trajectory.NewWriter(c.workspaceRoot, p.spec.SessionID)
+	} else {
+		w, err = trajectory.NewRunWriter(c.workspaceRoot, p.env.TurnID)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "core: turn %s trajectory recording disabled: %v\n", p.env.TurnID, err)
+		return
+	}
+	p.trajectory = w
+	p.spec.OnEvent = teeToTrajectory(p.spec.OnEvent, w)
+	// The first line of the turn, written before the agent can emit
+	// anything, so a turn that produces no notifications at all is still
+	// visible as a turn that ran.
+	_ = w.Append(trajectory.TypeTurnStart, map[string]any{
+		"turn_id":    p.env.TurnID,
+		"session_id": p.spec.SessionID,
+	})
+}
+
+// turnEventSink is where the top-level agent's events go: the client's
+// notifications, and beside them the direct sink a run in-process renders
+// from.
+func turnEventSink(spec agentLaunchSpec, env EventEnvelope) func(agent.AgentEvent) {
 	var onEvent func(agent.AgentEvent)
 	if spec.OnEvent != nil {
 		onEvent = buildAgentOnEvent(spec.OnEvent, env)
@@ -278,206 +357,188 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 			onEvent = direct
 		}
 	}
+	return onEvent
+}
 
-	allowExec := spec.AllowExec
-	if c.cfg.Exec.Confirm != nil && !*c.cfg.Exec.Confirm {
-		allowExec = true
+// routeTurn settles the turn's mode: the one asked for, or for mode=agent
+// the one the router picks for the query — kept off a mode without browser
+// tools when the browser is on. The client hears of a routed turn.
+func (c *Core) routeTurn(ctx context.Context, p *turnPrep) {
+	p.requestedMode = strings.TrimSpace(p.spec.Mode)
+	p.effectiveMode = p.requestedMode
+	if !strings.EqualFold(p.requestedMode, string(agent.ModeAgent)) {
+		return
 	}
-	// Web consent is web.confirm: false, or the consent a run in-process was
-	// started with; the turn, its skills and its subagents all take it from
-	// here.
-	allowWeb := spec.AllowWeb || (c.cfg.Web.Confirm != nil && !*c.cfg.Web.Confirm)
-
-	// The agent's own lines (tool calls, results, classifications) go to
-	// llm_log.jsonl whatever the provider: the client's logger when it has
-	// one, a fresh handle on the same file otherwise.
-	agentLogger := llm.LoggerOf(c.llmClient)
-	if agentLogger == nil {
-		agentLogger = llm.NewLogger(c.workspaceRoot)
+	dec := c.classifyAgentMode(ctx, p.spec.Query, p.agentLogger)
+	p.effectiveMode, p.routeReason, p.routeConfidence = dec.Mode, dec.Reason, dec.Confidence
+	if mode, kept := agent.ModeForRoutedTurn(p.effectiveMode, p.allowBrowser); kept {
+		p.routeReason = fmt.Sprintf("the browser is on and %s mode has no browser tools; router: %s", p.effectiveMode, p.routeReason)
+		p.effectiveMode = mode
 	}
-
-	var hooksRunner agent.HooksRunner
-	if hr := hooks.New(c.cfg.Hooks, c.workspaceRoot).WithSession(spec.SessionID); hr != nil {
-		hooksRunner = hr
+	if p.spec.OnEvent != nil {
+		p.spec.OnEvent(wire.NotifyAgentEvent, p.env.stamp(wire.AgentEvent{
+			Type: wire.EventModeRoute,
+			Data: wire.ModeRoute{
+				From:       string(agent.ModeAgent),
+				To:         p.effectiveMode,
+				Reason:     p.routeReason,
+				Confidence: p.routeConfidence,
+			},
+		}, nil))
 	}
+}
 
-	requestedMode := strings.TrimSpace(spec.Mode)
-	effectiveMode := requestedMode
-	routeReason := ""
-	routeConfidence := 0.0
-
-	if strings.EqualFold(requestedMode, string(agent.ModeAgent)) {
-		dec := c.classifyAgentMode(ctx, spec.Query, agentLogger)
-		effectiveMode = dec.Mode
-		routeReason = dec.Reason
-		routeConfidence = dec.Confidence
-		if mode, kept := agent.ModeForRoutedTurn(effectiveMode, allowBrowser); kept {
-			routeReason = fmt.Sprintf("the browser is on and %s mode has no browser tools; router: %s", effectiveMode, routeReason)
-			effectiveMode = mode
-		}
-		if spec.OnEvent != nil {
-			spec.OnEvent(wire.NotifyAgentEvent, env.stamp(wire.AgentEvent{
-				Type: wire.EventModeRoute,
-				Data: wire.ModeRoute{
-					From:       string(agent.ModeAgent),
-					To:         effectiveMode,
-					Reason:     routeReason,
-					Confidence: routeConfidence,
-				},
-			}, nil))
-		}
-	}
-
-	customOpts, err := c.resolveCustomAgentOpts(effectiveMode, tools.Capabilities{Exec: allowExec, Web: allowWeb, Browser: allowBrowser}, agentLogger)
+// resolveTurnAgent is the client and the tools the turn runs with: a custom
+// agent's when the mode names one, the orchestra planner's for a Lead when
+// one is configured.
+func (c *Core) resolveTurnAgent(p *turnPrep) error {
+	custom, err := c.resolveCustomAgentOpts(p.effectiveMode, tools.Capabilities{Exec: p.allowExec, Web: p.allowWeb, Browser: p.allowBrowser}, p.agentLogger)
 	if err != nil {
-		return nil, protocol.NewError(protocol.InvalidLLMOutput, err.Error(), nil)
+		return protocol.NewError(protocol.InvalidLLMOutput, err.Error(), nil)
 	}
-
-	// Orchestra Lead uses orchestra.planner provider/model when configured.
-	if strings.EqualFold(effectiveMode, string(agent.ModeOrchestra)) {
-		if client, pl, ml, ok := c.resolveOrchestraPlanner(agentLogger); ok {
-			customOpts.llmClient = client
-			if pl != "" {
-				// labels applied below via opts
-				_ = ml
-			}
+	if strings.EqualFold(p.effectiveMode, string(agent.ModeOrchestra)) {
+		if client, _, _, ok := c.resolveOrchestraPlanner(p.agentLogger); ok {
+			custom.llmClient = client
 		}
 	}
+	p.custom = custom
+	return nil
+}
 
-	usageLabel := spec.UsageLabel
+// newTurnTaskRunner is the runner of the turn's subtasks. Subagents take the
+// turn's breakers and permission rules — a deny rule is the project's, not
+// the top-level agent's alone — and get the browser and the web when the
+// turn has them; the agent refuses browser.* to any run without it, children
+// included. The Question Barrier (spec §4.3) shares the interactive channel
+// with the question tool; nil (core stdio mode) keeps the barrier off.
+func (c *Core) newTurnTaskRunner(p *turnPrep) {
+	usageLabel := p.spec.UsageLabel
 	if usageLabel == "" {
 		usageLabel = "agent.run"
 	}
-	usageTracker := newAgentUsageTracker(c.cfg, usageLabel)
-	childCfg := c.buildChildAgentConfig(maxPromptBytes, usageTracker, allowExec, agentLogger)
-	// Subagents take the turn's breakers and permission rules: a deny rule is
-	// the project's, not the top-level agent's alone.
-	childCfg.Settings = &settings
-	childCfg.Agency, childCfg.Agents = tasks.AgencyFromConfig(c.cfg, effectiveMode)
-	childCfg.RunID = env.TurnID
-	childCfg.Budget = tasks.BudgetFromConfig(c.cfg.Agent.TurnBudget)
-	// Subagents get the browser and the web when the turn has them; the agent
-	// refuses browser.* to any run without it, children included.
-	childCfg.Caps.Browser = allowBrowser
-	childCfg.Caps.Web = allowWeb
-	// Question Barrier (spec §4.3) shares the interactive channel with the
-	// question tool; nil (core stdio mode) keeps the barrier off.
-	childCfg.QuestionAsker = spec.QuestionAsker
-	childCfg.OnGraphChange = spec.OnGraphChange
-	if spec.OnEvent != nil {
-		childCfg.NotifyAgentEvent = func(ev wire.AgentEvent) {
-			spec.OnEvent(wire.NotifyAgentEvent, env.stamp(ev, nil))
+	p.usage = newAgentUsageTracker(c.cfg, usageLabel)
+	cfg := c.buildChildAgentConfig(p.maxPromptBytes, p.usage, p.allowExec, p.agentLogger)
+	cfg.Settings = &p.settings
+	cfg.Agency, cfg.Agents = tasks.AgencyFromConfig(c.cfg, p.effectiveMode)
+	cfg.RunID = p.env.TurnID
+	cfg.Budget = tasks.BudgetFromConfig(c.cfg.Agent.TurnBudget)
+	cfg.Caps.Browser = p.allowBrowser
+	cfg.Caps.Web = p.allowWeb
+	cfg.QuestionAsker = p.spec.QuestionAsker
+	cfg.OnGraphChange = p.spec.OnGraphChange
+	if notify := p.spec.OnEvent; notify != nil {
+		env := p.env
+		cfg.NotifyAgentEvent = func(ev wire.AgentEvent) {
+			notify(wire.NotifyAgentEvent, env.stamp(ev, nil))
 		}
-		childCfg.ChildEventSink = func(taskID, parentToolCallID, subagentType string) func(agent.AgentEvent) {
+		cfg.ChildEventSink = func(taskID, parentToolCallID, subagentType string) func(agent.AgentEvent) {
 			meta := &ChildScopeMeta{
 				TaskID:           taskID,
 				ParentToolCallID: parentToolCallID,
 				SubagentType:     subagentType,
 			}
-			return buildAgentOnEventWithChild(spec.OnEvent, env, meta)
+			return buildAgentOnEventWithChild(notify, env, meta)
 		}
 	}
-	taskRunner := tasks.New(customOpts.llmClient, c.validator, c.tools, childCfg)
+	p.childCfg = cfg
+	p.taskRunner = tasks.New(p.custom.llmClient, c.validator, c.tools, cfg)
+}
 
-	planPath := strings.TrimSpace(spec.PlanPath)
+// turnOptions builds the turn's agent.Options through the composition root.
+func (c *Core) turnOptions(p *turnPrep) (agent.Options, error) {
+	planPath := strings.TrimSpace(p.spec.PlanPath)
 	if planPath == "" {
-		planPath = resolvePlanPath(effectiveMode, "", "")
+		planPath = resolvePlanPath(p.effectiveMode, "", "")
 	}
-
-	providerLabel := providerLabelOf(c.cfg)
-	modelLabel := c.cfg.LLM.Model
-	if strings.EqualFold(effectiveMode, string(agent.ModeOrchestra)) {
-		if p := strings.TrimSpace(c.cfg.Orchestra.Planner.Provider); p != "" {
-			providerLabel = p
-		}
-		if m := strings.TrimSpace(c.cfg.Orchestra.Planner.Model); m != "" {
-			modelLabel = m
-		}
-	}
-
-	opts, err := app.TurnOptions(settings, profileName, func(o *agent.Options) {
-		o.MaxSteps = maxSteps
-		o.MaxInvalidRetries = maxRetries
-		o.MaxPromptBytes = maxPromptBytes
-		o.Apply = spec.Apply
-		o.Backup = spec.Backup
-		o.AllowExec = allowExec
-		o.AllowWeb = allowWeb
-		o.AllowBrowser = allowBrowser
-		o.InitialTodos = spec.InitialTodos
-		o.Debug = spec.Debug
+	providerLabel, modelLabel := c.turnLabels(p.effectiveMode)
+	respFmt := agent.ResolveResponseFormat(c.cfg.LLM, providerLabelOf(c.cfg), agent.ResponseFormatToolAgent)
+	requester := convertPermissionRequester(p.spec.PermissionRequester)
+	return app.TurnOptions(p.settings, p.profile, func(o *agent.Options) {
+		o.MaxSteps = p.maxSteps
+		o.MaxInvalidRetries = p.maxRetries
+		o.MaxPromptBytes = p.maxPromptBytes
+		o.Apply = p.spec.Apply
+		o.Backup = p.spec.Backup
+		o.AllowExec = p.allowExec
+		o.AllowWeb = p.allowWeb
+		o.AllowBrowser = p.allowBrowser
+		o.InitialTodos = p.spec.InitialTodos
+		o.Debug = p.spec.Debug
 		o.ResponseFormat = respFmt
-		o.Mode = agent.Mode(effectiveMode)
-		o.SystemPromptOverride = customOpts.systemPromptOverride
-		o.CustomTools = customOpts.customTools
-		o.OnEvent = onEvent
-		o.AgentLogger = agentLogger
-		o.SubtaskRunner = taskRunner
-		o.HooksRunner = hooksRunner
+		o.Mode = agent.Mode(p.effectiveMode)
+		o.SystemPromptOverride = p.custom.systemPromptOverride
+		o.CustomTools = p.custom.customTools
+		o.OnEvent = p.onEvent
+		o.AgentLogger = p.agentLogger
+		o.SubtaskRunner = p.taskRunner
+		o.HooksRunner = p.hooks
 		o.ExtraTools = c.extraToolDefs()
-		o.PermissionRequester = convertPermissionRequester(spec.PermissionRequester)
-		o.QuestionAsker = spec.QuestionAsker
-		o.UsageTracker = usageTracker
+		o.PermissionRequester = requester
+		o.QuestionAsker = p.spec.QuestionAsker
+		o.UsageTracker = p.usage
 		o.ProviderLabel = providerLabel
 		o.ModelLabel = modelLabel
 		o.PlanPath = planPath
-		o.SessionID = spec.SessionID
-		o.AutoSessionMemory = spec.AutoSessionMemory
+		o.SessionID = p.spec.SessionID
+		o.AutoSessionMemory = p.spec.AutoSessionMemory
 		// Skills in TUI/core (parity with `orchestra apply`). Skip for
 		// read-only / plan-only modes so skill_invoke cannot bypass write
 		// guards via a child.
-		if skillsAllowedInMode(effectiveMode) {
-			if discovered, err := skills.DiscoverCached(c.workspaceRoot); err == nil && len(discovered) > 0 {
-				refs, _ := skills.DiscoverRefs(c.workspaceRoot)
-				o.Skills = skillrun.Specs(discovered)
-				o.SkillRunner = skillrun.New(skillrun.Config{
-					Cfg:                 c.cfg,
-					Skills:              discovered,
-					Refs:                refs,
-					Client:              customOpts.llmClient,
-					FixedClient:         c.llmClientInjected,
-					Validator:           c.validator,
-					Runner:              c.tools,
-					AgentLogger:         agentLogger,
-					MaxSteps:            c.cfg.Agent.MaxSteps,
-					AllowExec:           allowExec,
-					AllowWeb:            allowWeb,
-					AllowBrowser:        allowBrowser,
-					PermissionRequester: convertPermissionRequester(spec.PermissionRequester),
-					Events:              app.ChildEvents{Notify: childCfg.NotifyAgentEvent, Stream: childCfg.ChildEventSink},
-				})
-			}
+		if skillsAllowedInMode(p.effectiveMode) {
+			o.Skills, o.SkillRunner = c.turnSkills(p, requester)
 		}
-		if cc, ctxTok := c.compactionClientWithContext(agentLogger); cc != nil {
+		if cc, ctxTok := c.compactionClientWithContext(p.agentLogger); cc != nil {
 			o.CompactionClient = cc
 			o.CompactionContextTokens = ctxTok
 		}
-		if len(spec.UserImages) > 0 {
-			o.UserImages = spec.UserImages
+		if len(p.spec.UserImages) > 0 {
+			o.UserImages = p.spec.UserImages
 		}
-		if spec.Multimodal || (c.cfg.LLM.Multimodal && len(spec.UserImages) > 0) {
+		if p.spec.Multimodal || (c.cfg.LLM.Multimodal && len(p.spec.UserImages) > 0) {
 			o.MultimodalLLM = c.cfg.LLM.Multimodal
 		}
 	})
-	if err != nil {
-		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
-	}
+}
 
-	return &agentLaunch{
-		Opts:            opts,
-		Custom:          customOpts,
-		Usage:           usageTracker,
-		TaskRunner:      taskRunner,
-		Profile:         profileName,
-		RequestedMode:   requestedMode,
-		EffectiveMode:   effectiveMode,
-		RouteReason:     routeReason,
-		RouteConfidence: routeConfidence,
-		EventEnvelope:   env,
-		Trajectory:      tw,
-		turnStartedAt:   time.Now(),
-		sessionID:       spec.SessionID,
-	}, nil
+// turnLabels names the provider and the model the turn's prompt is written
+// for: the orchestra planner's for a Lead, when configured.
+func (c *Core) turnLabels(mode string) (provider, model string) {
+	provider, model = providerLabelOf(c.cfg), c.cfg.LLM.Model
+	if strings.EqualFold(mode, string(agent.ModeOrchestra)) {
+		if p := strings.TrimSpace(c.cfg.Orchestra.Planner.Provider); p != "" {
+			provider = p
+		}
+		if m := strings.TrimSpace(c.cfg.Orchestra.Planner.Model); m != "" {
+			model = m
+		}
+	}
+	return provider, model
+}
+
+// turnSkills is the turn's file-based skills and the runner that invokes
+// them as children of the turn; none when none are discovered.
+func (c *Core) turnSkills(p *turnPrep, requester agent.PermissionRequester) ([]agent.SkillSpec, agent.SkillRunner) {
+	discovered, err := skills.DiscoverCached(c.workspaceRoot)
+	if err != nil || len(discovered) == 0 {
+		return nil, nil
+	}
+	refs, _ := skills.DiscoverRefs(c.workspaceRoot)
+	return skillrun.Specs(discovered), skillrun.New(skillrun.Config{
+		Cfg:                 c.cfg,
+		Skills:              discovered,
+		Refs:                refs,
+		Client:              p.custom.llmClient,
+		FixedClient:         c.llmClientInjected,
+		Validator:           c.validator,
+		Runner:              c.tools,
+		AgentLogger:         p.agentLogger,
+		MaxSteps:            c.cfg.Agent.MaxSteps,
+		AllowExec:           p.allowExec,
+		AllowWeb:            p.allowWeb,
+		AllowBrowser:        p.allowBrowser,
+		PermissionRequester: requester,
+		Events:              app.ChildEvents{Notify: p.childCfg.NotifyAgentEvent, Stream: p.childCfg.ChildEventSink},
+	})
 }
 
 func skillsAllowedInMode(mode string) bool {

@@ -377,25 +377,76 @@ type spawnExtra struct {
 	id string
 }
 
+// spawnPlan is what admission decided about a task before it exists: who
+// runs it, for which department, with what budget, and — for a worker —
+// the scope, refs, key and dependencies its WorkOrder gave it.
+type spawnPlan struct {
+	target       spawnTarget
+	dept         string
+	maxSteps     int
+	timeoutMS    int
+	editPaths    map[string]struct{}
+	contractRefs []contract.Ref
+	key          string
+	dependsOn    []string
+}
+
 func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.SubtaskSpawnRequest, extra spawnExtra) (string, error) {
+	taskID, err := r.newTaskID(extra.id)
+	if err != nil {
+		return "", err
+	}
+	spawned := spawnInputs{req: req, from: from, extra: extra}
+	plan, err := r.admit(ctx, from, &req, extra)
+	if err != nil {
+		return "", err
+	}
+	// Inherit parent cancellation so finishing/cancelling the parent turn
+	// stops orphaned children. Timeout still applies when TimeoutMS > 0.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	taskCtx, cancel := taskContext(ctx, plan.timeoutMS)
+	entry := newTaskEntry(taskID, from, req, extra, plan, cancel, spawned)
+	taskCtx = r.attachTask(ctx, taskCtx, entry)
+	conflicts, err := r.register(from, entry, plan)
+	if err != nil {
+		cancel(nil)
+		return "", err
+	}
+	r.graphChanged()
+	scope := from.child(plan.target.address, plan.target.role, plan.target.name, taskID)
+	scope.dept = plan.dept
+	go r.runTask(ctx, taskCtx, entry, req, plan, scope, conflicts, extra.history)
+	return taskID, nil
+}
+
+// newTaskID is the next task id — or id itself, when a task a crash
+// interrupted restarts under the id its spawner knows.
+func (r *TaskRunner) newTaskID(id string) (string, error) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.closed {
-		r.mu.Unlock()
 		return "", ErrRunnerClosed
 	}
 	r.seq++
-	taskID := fmt.Sprintf("task_%d_%d", r.seq, time.Now().UnixNano()%100000)
-	if extra.id != "" {
-		taskID = extra.id
+	if id != "" {
+		return id, nil
 	}
-	r.mu.Unlock()
-	spawned := spawnInputs{req: req, from: from, extra: extra}
+	return fmt.Sprintf("task_%d_%d", r.seq, time.Now().UnixNano()%100000), nil
+}
 
-	r.applyTaskTypeRoute(&req)
+// admit is what every spawn passes before a task exists: the route, the
+// target and its department, the flows, the read-only rule, the profile's
+// defaults, the step budget, the phase guard and, for a worker, its
+// WorkOrder's gates. req is completed on the way — its route, its goal's
+// scratchpad, its profile's provider, model, tier and steps.
+func (r *TaskRunner) admit(ctx context.Context, from agentScope, req *agent.SubtaskSpawnRequest, extra spawnExtra) (spawnPlan, error) {
+	r.applyTaskTypeRoute(req)
 	dept := strings.TrimSpace(req.Dept)
 	target, err := r.resolveTarget(req.SubagentType, dept)
 	if err != nil {
-		return "", err
+		return spawnPlan{}, err
 	}
 	// A Lead's workers work for the Lead's department unless told otherwise:
 	// its scratchpad, playbook and lessons are theirs too. Only workers — a
@@ -410,10 +461,10 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		verb = "delegate to"
 	}
 	if err := r.checkReach(from, target, verb); err != nil {
-		return "", err
+		return spawnPlan{}, err
 	}
 	if req.ReadOnlyChildren && target.changesFiles() {
-		return "", fmt.Errorf("%s: %s can change files, and this turn only reads (plan, architecture and ask modes); delegate to explore, scout, ask or verifier, and describe the change in your answer",
+		return spawnPlan{}, fmt.Errorf("%s: %s can change files, and this turn only reads (plan, architecture and ask modes); delegate to explore, scout, ask or verifier, and describe the change in your answer",
 			from.address, target.address)
 	}
 	if p := target.profile; p != nil {
@@ -442,91 +493,99 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 			guardRole = "general"
 		}
 		if err := r.child.GuardSpawn(ctx, guardRole); err != nil {
-			return "", err
+			return spawnPlan{}, err
 		}
 	}
-	isWorker := strings.EqualFold(target.role, "worker")
-	key := strings.TrimSpace(req.Key)
-	dependsOn := append([]string(nil), req.DependsOn...)
-	var editPaths map[string]struct{}
-	var contractRefs []contract.Ref
-	if isWorker {
-		goal := strings.TrimSpace(req.Goal)
-		var wo *WorkOrder
-		if goal != "" && json.Valid([]byte(goal)) {
-			goal = withDefaultScratchpad(goal, dept)
-			req.Goal = goal
-			wo, err = ParseWorkOrderJSON(goal)
-			if err != nil {
-				return "", err
-			}
-		} else {
-			// A worker whose goal is prose is a WorkOrder with nothing in
-			// it, and the gates judge it as one (ORC-8): in execution with
-			// a frozen contract it is refused the way a WorkOrder without
-			// contract_refs is, and a department whose playbook demands a
-			// brief gets no worker without one, however the task is put.
-			wo = proseWorkOrder(dept)
-		}
-		if r.child.GuardContractRefs != nil {
-			if err := r.child.GuardContractRefs(ctx, wo.ContractRefs); err != nil {
-				return "", err
-			}
-		}
-		// Brief completeness gate (spec §6.2): active only when the
-		// dept playbook opted in via brief_required_fields.
-		if err := checkBriefCompleteness(r.toolRunner.WorkspaceRoot(), r.toolRunner.View(ctx), wo); err != nil {
-			return "", err
-		}
-		editPaths = normalizeEditPathSet(EditScopePaths(wo))
-		contractRefs = wo.ContractRefs
-		if key == "" {
-			key = strings.TrimSpace(wo.TaskID)
-		}
-		dependsOn = append(dependsOn, wo.DependsOn...)
+	plan := spawnPlan{
+		target:   target,
+		dept:     dept,
+		maxSteps: maxSteps,
+		// lead_brief_s (spec §4.5): architecture children without an explicit
+		// timeout get the Lead brief wall-clock cap in orchestrated sessions.
+		timeoutMS: r.leadBriefTimeoutMS(target.role, req.TimeoutMS),
+		key:       strings.TrimSpace(req.Key),
+		dependsOn: append([]string(nil), req.DependsOn...),
 	}
+	if strings.EqualFold(target.role, "worker") {
+		if err := r.admitWorker(ctx, req, &plan); err != nil {
+			return spawnPlan{}, err
+		}
+	}
+	return plan, nil
+}
 
-	// Inherit parent cancellation so finishing/cancelling the parent turn
-	// stops orphaned children. Timeout still applies when TimeoutMS > 0.
-	parent := ctx
-	if parent == nil {
-		parent = context.Background()
-	}
-	var taskCtx context.Context
-	var cancel context.CancelCauseFunc
-	// lead_brief_s (spec §4.5): architecture children without an explicit
-	// timeout get the Lead brief wall-clock cap in orchestrated sessions.
-	effectiveTimeoutMS := r.leadBriefTimeoutMS(target.role, req.TimeoutMS)
-	if effectiveTimeoutMS > 0 {
-		var tcancel context.CancelFunc
-		taskCtx, tcancel = context.WithTimeout(parent, time.Duration(effectiveTimeoutMS)*time.Millisecond)
-		cancelable, ccancel := context.WithCancelCause(taskCtx)
-		taskCtx = cancelable
-		cancel = func(cause error) {
-			ccancel(cause)
-			tcancel()
+// admitWorker judges a worker's WorkOrder — the contract gate, the brief
+// gate — and takes its scope, refs, key and dependencies into the plan. A
+// goal in prose is a WorkOrder with nothing in it, and the gates judge it as
+// one (ORC-8): in execution with a frozen contract it is refused the way a
+// WorkOrder without contract_refs is, and a department whose playbook
+// demands a brief gets no worker without one, however the task is put.
+func (r *TaskRunner) admitWorker(ctx context.Context, req *agent.SubtaskSpawnRequest, plan *spawnPlan) error {
+	goal := strings.TrimSpace(req.Goal)
+	var wo *WorkOrder
+	if goal != "" && json.Valid([]byte(goal)) {
+		goal = withDefaultScratchpad(goal, plan.dept)
+		req.Goal = goal
+		parsed, err := ParseWorkOrderJSON(goal)
+		if err != nil {
+			return err
 		}
+		wo = parsed
 	} else {
-		taskCtx, cancel = context.WithCancelCause(parent)
+		wo = proseWorkOrder(plan.dept)
 	}
+	if r.child.GuardContractRefs != nil {
+		if err := r.child.GuardContractRefs(ctx, wo.ContractRefs); err != nil {
+			return err
+		}
+	}
+	// Brief completeness gate (spec §6.2): active only when the dept
+	// playbook opted in via brief_required_fields.
+	if err := checkBriefCompleteness(r.toolRunner.WorkspaceRoot(), r.toolRunner.View(ctx), wo); err != nil {
+		return err
+	}
+	plan.editPaths = normalizeEditPathSet(EditScopePaths(wo))
+	plan.contractRefs = wo.ContractRefs
+	if plan.key == "" {
+		plan.key = strings.TrimSpace(wo.TaskID)
+	}
+	plan.dependsOn = append(plan.dependsOn, wo.DependsOn...)
+	return nil
+}
 
+// taskContext is the task's context: its parent's, so a turn that ends
+// stops its children, under the timeout when there is one.
+func taskContext(parent context.Context, timeoutMS int) (context.Context, context.CancelCauseFunc) {
+	if timeoutMS <= 0 {
+		return context.WithCancelCause(parent)
+	}
+	timed, tcancel := context.WithTimeout(parent, time.Duration(timeoutMS)*time.Millisecond)
+	cancelable, ccancel := context.WithCancelCause(timed)
+	return cancelable, func(cause error) {
+		ccancel(cause)
+		tcancel()
+	}
+}
+
+// newTaskEntry is the task as the runner will hold it, queued.
+func newTaskEntry(taskID string, from agentScope, req agent.SubtaskSpawnRequest, extra spawnExtra, plan spawnPlan, cancel context.CancelCauseFunc, spawned spawnInputs) *taskEntry {
 	entry := &taskEntry{
 		id:           taskID,
 		cancel:       cancel,
 		done:         make(chan struct{}),
-		editPaths:    editPaths,
-		contractRefs: contractRefs,
-		key:          key,
-		address:      target.address,
-		role:         target.role,
+		editPaths:    plan.editPaths,
+		contractRefs: plan.contractRefs,
+		key:          plan.key,
+		address:      plan.target.address,
+		role:         plan.target.role,
 		parent:       from.address,
 		parentTaskID: from.taskID,
 		depth:        from.depth + 1,
 		goal:         firstLine(req.Goal, 120),
 		status:       "queued",
 		started:      time.Now(),
-		worker:       isWorker,
-		fingerprint:  taskFingerprint(target.address, req.Goal),
+		worker:       strings.EqualFold(plan.target.role, "worker"),
+		fingerprint:  taskFingerprint(plan.target.address, req.Goal),
 		spawner:      from.taskID,
 		spawned:      spawned,
 	}
@@ -534,156 +593,157 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 		entry.parent = extra.owner.address
 		entry.parentTaskID = extra.owner.taskID
 	}
-	// The child's model calls and tool calls are logged under its own
-	// identity (llm.Trace), not its parent's: llm_log.jsonl is shared by the
-	// whole tree, and this is what tells its lines apart.
+	return entry
+}
+
+// attachTask gives the task its identity in the log and its layer over its
+// spawner's view. The child's model calls and tool calls are logged under
+// its own identity (llm.Trace), not its parent's: llm_log.jsonl is shared by
+// the whole tree, and this is what tells its lines apart. The task writes
+// into its own layer (ORC-1): the edits reach the spawner only when the
+// task succeeds (commitLayer), and go with it otherwise. Reads see the
+// spawner's view live, so a task waiting on dependencies sees what they
+// committed.
+func (r *TaskRunner) attachTask(parent, taskCtx context.Context, entry *taskEntry) context.Context {
 	runID := r.child.RunID
 	if runID == "" {
 		runID = llm.TraceFrom(parent).RunID
 	}
 	taskCtx = llm.WithTrace(taskCtx, llm.Trace{
 		RunID:        runID,
-		TaskID:       taskID,
+		TaskID:       entry.id,
 		ParentTaskID: entry.parentTaskID,
 		Depth:        entry.depth,
 	})
-	// The task writes into its own layer over its spawner's view (ORC-1): the
-	// edits reach the spawner only when the task succeeds (commitLayer), and
-	// go with it otherwise. Reads see the spawner's view live, so a task
-	// waiting on dependencies sees what they committed.
-	layer := r.toolRunner.ForkLayer(parent)
-	taskCtx = tools.WithLayer(taskCtx, layer)
-	entry.layer = layer
+	entry.layer = r.toolRunner.ForkLayer(parent)
+	return tools.WithLayer(taskCtx, entry.layer)
+}
 
-	// Disjoint check (spec §5.6): collect running worker tasks whose edit
-	// scope intersects ours. Registration and conflict collection happen
-	// under one lock, so two overlapping spawns cannot both see a clear
-	// field. Each task waits only for tasks registered before it — the
-	// wait graph is acyclic by construction, and so is the depends_on
-	// graph: a dependency must already be registered.
+// register adds the task to the runner and returns the unfinished tasks
+// whose edit scope overlaps its own (spec §5.6). Registration and conflict
+// collection happen under one lock, so two overlapping spawns cannot both
+// see a clear field. Each task waits only for tasks registered before it —
+// the wait graph is acyclic by construction, and so is the depends_on
+// graph: a dependency must already be registered.
+func (r *TaskRunner) register(from agentScope, entry *taskEntry, plan spawnPlan) ([]*taskEntry, error) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.closed {
-		r.mu.Unlock()
-		cancel(nil)
-		return "", ErrRunnerClosed
+		return nil, ErrRunnerClosed
 	}
 	if err := r.admitLocked(entry.fingerprint); err != nil {
-		r.mu.Unlock()
-		cancel(nil)
-		return "", err
+		return nil, err
 	}
-	deps, depErr := r.resolveDepsLocked(from.taskID, dependsOn)
-	if depErr != nil {
-		r.mu.Unlock()
-		cancel(nil)
-		return "", depErr
+	deps, err := r.resolveDepsLocked(from.taskID, plan.dependsOn)
+	if err != nil {
+		return nil, err
 	}
 	entry.deps = deps
 	r.startWallClockLocked()
-	conflicts := r.conflictingTasksLocked(editPaths)
-	r.tasks[taskID] = entry
+	conflicts := r.conflictingTasksLocked(plan.editPaths)
+	r.tasks[entry.id] = entry
 	r.all = append(r.all, entry)
-	if key != "" {
+	if plan.key != "" {
 		// A re-spawned WorkOrder takes its key over: later dependents mean
 		// the attempt that is still to come, not the one that failed.
-		r.byKey[keyOf(from.taskID, key)] = entry
+		r.byKey[keyOf(from.taskID, plan.key)] = entry
 	}
-	r.mu.Unlock()
-	r.graphChanged()
+	return conflicts, nil
+}
 
-	childScope := from.child(target.address, target.role, target.name, taskID)
-	childScope.dept = dept
-
-	go func() {
-		defer close(entry.done)
-		// Before done closes: whoever waits for the task sees its edits
-		// committed, or gone. A task that committed has nothing left to drop.
-		defer r.toolRunner.DropLayer(tools.LayerContext(parent), layer)
-		defer cancel(nil)
-		defer r.markFinished(entry)
-		// Every task closes with exactly one child_done, however it ended:
-		// ran to a result, failed a dependency, was cancelled while queued
-		// behind a conflict or waiting for a slot, or panicked. A task that
-		// never announced its end stayed "running" in the UI forever and left
-		// a hole in the tree the log is read back into.
-		defer func() {
-			r.mu.Lock()
-			res := entry.result
-			r.mu.Unlock()
-			r.notifyChildDone(entry, req.ParentToolCallID, target.name, res)
-		}()
-		// Resilience audit P1: a panic escaping runChild (agent loop, prompt
-		// assembly, verification pipeline) in this goroutine would kill the
-		// whole core process — parent orchestrator, sibling workers and the
-		// RPC server. Contain it and surface it as a normal task error.
-		defer func() {
-			if rec := recover(); rec != nil {
-				fmt.Fprintf(os.Stderr, "tasks: child %s panicked: %v\n%s\n", taskID, rec, debug.Stack())
-				r.mu.Lock()
-				if entry.result == nil {
-					entry.result = &agent.SubtaskResult{
-						TaskID: taskID,
-						Status: "error",
-						Error:  fmt.Sprintf("child agent panicked: %v", rec),
-					}
-				}
-				r.mu.Unlock()
-			}
-		}()
-
-		upstream, upstreamTaint := "", ""
-		if len(deps) > 0 {
-			r.setStatus(entry, "waiting_deps")
-			var res *agent.SubtaskResult
-			upstream, upstreamTaint, res = r.awaitDeps(taskCtx, entry)
-			if res != nil {
-				r.mu.Lock()
-				entry.result = res
-				r.mu.Unlock()
-				return
-			}
-		}
-
-		if len(conflicts) > 0 {
-			r.notifyQueued(taskID, req.ParentToolCallID, conflicts)
-			for _, c := range conflicts {
-				select {
-				case <-c.done:
-				case <-taskCtx.Done():
-					r.mu.Lock()
-					entry.result = &agent.SubtaskResult{
-						TaskID: taskID,
-						Status: "timeout",
-						Error:  "cancelled while queued behind a conflicting WorkOrder (overlapping target_files)",
-					}
-					r.mu.Unlock()
-					return
-				}
-			}
-		}
-
-		release, err := r.acquireSlot(taskCtx, entry, req.ParentToolCallID)
-		if err != nil {
-			r.mu.Lock()
-			entry.result = &agent.SubtaskResult{
-				TaskID: taskID,
-				Status: "timeout",
-				Error:  "cancelled while waiting for a free slot (agency.max_parallel)",
-			}
-			r.mu.Unlock()
-			return
-		}
-		defer release()
-		r.setStatus(entry, "running")
-
-		result := r.runChild(taskCtx, taskID, req, target, childScope, maxSteps, extra.history, upstream, upstreamTaint)
-
+// runTask is the task's goroutine: it waits its turn — dependencies, the
+// tasks it conflicts with, a slot — runs the child and records the result.
+func (r *TaskRunner) runTask(parent, taskCtx context.Context, entry *taskEntry, req agent.SubtaskSpawnRequest, plan spawnPlan, scope agentScope, conflicts []*taskEntry, history []llm.Message) {
+	defer close(entry.done)
+	// Before done closes: whoever waits for the task sees its edits
+	// committed, or gone. A task that committed has nothing left to drop.
+	defer r.toolRunner.DropLayer(tools.LayerContext(parent), entry.layer)
+	defer entry.cancel(nil)
+	defer r.markFinished(entry)
+	// Every task closes with exactly one child_done, however it ended:
+	// ran to a result, failed a dependency, was cancelled while queued
+	// behind a conflict or waiting for a slot, or panicked. A task that
+	// never announced its end stayed "running" in the UI forever and left
+	// a hole in the tree the log is read back into.
+	defer func() {
 		r.mu.Lock()
-		entry.result = result
+		res := entry.result
 		r.mu.Unlock()
+		r.notifyChildDone(entry, req.ParentToolCallID, plan.target.name, res)
+	}()
+	// Resilience audit P1: a panic escaping runChild (agent loop, prompt
+	// assembly, verification pipeline) in this goroutine would kill the
+	// whole core process — parent orchestrator, sibling workers and the
+	// RPC server. Contain it and surface it as a normal task error.
+	defer func() {
+		if rec := recover(); rec != nil {
+			fmt.Fprintf(os.Stderr, "tasks: child %s panicked: %v\n%s\n", entry.id, rec, debug.Stack())
+			r.mu.Lock()
+			if entry.result == nil {
+				entry.result = &agent.SubtaskResult{
+					TaskID: entry.id,
+					Status: "error",
+					Error:  fmt.Sprintf("child agent panicked: %v", rec),
+				}
+			}
+			r.mu.Unlock()
+		}
 	}()
 
-	return taskID, nil
+	upstream, upstreamTaint := "", ""
+	if len(entry.deps) > 0 {
+		r.setStatus(entry, "waiting_deps")
+		var res *agent.SubtaskResult
+		upstream, upstreamTaint, res = r.awaitDeps(taskCtx, entry)
+		if res != nil {
+			r.setResult(entry, res)
+			return
+		}
+	}
+	if res := r.waitForConflicts(taskCtx, entry, req.ParentToolCallID, conflicts); res != nil {
+		r.setResult(entry, res)
+		return
+	}
+	release, err := r.acquireSlot(taskCtx, entry, req.ParentToolCallID)
+	if err != nil {
+		r.setResult(entry, &agent.SubtaskResult{
+			TaskID: entry.id,
+			Status: "timeout",
+			Error:  "cancelled while waiting for a free slot (agency.max_parallel)",
+		})
+		return
+	}
+	defer release()
+	r.setStatus(entry, "running")
+	r.setResult(entry, r.runChild(taskCtx, entry.id, req, plan.target, scope, plan.maxSteps, history, upstream, upstreamTaint))
+}
+
+// waitForConflicts holds the task behind the unfinished tasks whose scope
+// overlaps its own; the result is the cancellation, when the task's context
+// ends first.
+func (r *TaskRunner) waitForConflicts(ctx context.Context, entry *taskEntry, parentToolCallID string, conflicts []*taskEntry) *agent.SubtaskResult {
+	if len(conflicts) == 0 {
+		return nil
+	}
+	r.notifyQueued(entry.id, parentToolCallID, conflicts)
+	for _, c := range conflicts {
+		select {
+		case <-c.done:
+		case <-ctx.Done():
+			return &agent.SubtaskResult{
+				TaskID: entry.id,
+				Status: "timeout",
+				Error:  "cancelled while queued behind a conflicting WorkOrder (overlapping target_files)",
+			}
+		}
+	}
+	return nil
+}
+
+func (r *TaskRunner) setResult(entry *taskEntry, res *agent.SubtaskResult) {
+	r.mu.Lock()
+	entry.result = res
+	r.mu.Unlock()
 }
 
 // proseWorkOrder is the WorkOrder a worker with a goal in prose stands for
@@ -818,57 +878,106 @@ func (r *TaskRunner) resolveChildLLM(req agent.SubtaskSpawnRequest, subagentType
 	return r.llmClient, pl, ml
 }
 
+// childTaint is the first untrusted source a child read (SEC-8): its result
+// carries it, however the child ended.
+type childTaint struct {
+	mu     sync.Mutex
+	source string
+}
+
+func (t *childTaint) note(source string) {
+	if source == "" {
+		return
+	}
+	t.mu.Lock()
+	if t.source == "" {
+		t.source = source
+	}
+	t.mu.Unlock()
+}
+
+func (t *childTaint) current() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.source
+}
+
+// childRun is one child's run as runChild readies it: who it is, what it was
+// asked, the client and the options it runs with, and what it read that it
+// must not trust.
+type childRun struct {
+	taskID       string
+	req          agent.SubtaskSpawnRequest
+	target       spawnTarget
+	scope        agentScope
+	subagentType string
+	mode         agent.Mode
+	workOrder    *WorkOrder
+	client       llm.Client
+	modelLabel   string
+	opts         agent.Options
+	taint        *childTaint
+}
+
+func (c *childRun) worker() bool { return c.mode == agent.ModeWorker }
+
 func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.SubtaskSpawnRequest, target spawnTarget, scope agentScope, maxSteps int, history []llm.Message, upstream, upstreamTaint string) (out *agent.SubtaskResult) {
+	c, err := r.newChildRun(taskID, req, target, scope, maxSteps, upstreamTaint)
 	// A child that read untrusted text hands its parent an untrusted result,
 	// however it ended (SEC-8): its error carries its progress too.
-	var taintMu sync.Mutex
-	tainted := ""
-	onTaint := func(source string) {
-		taintMu.Lock()
-		if tainted == "" {
-			tainted = source
-		}
-		taintMu.Unlock()
-	}
-	startTaint := func() string {
-		taintMu.Lock()
-		defer taintMu.Unlock()
-		return tainted
-	}
 	defer func() {
-		taintMu.Lock()
-		defer taintMu.Unlock()
-		if out != nil && tainted != "" {
-			out.Tainted = tainted
+		if src := c.taint.current(); out != nil && src != "" {
+			out.Tainted = src
 		}
 	}()
-	// What the child is handed before its first step can be untrusted too:
-	// a tainted dependency's result, a tainted agent's note.
-	onTaint(upstreamTaint)
-	subagentType := target.role
-	childTools := r.childToolsForTarget(target, scope)
-	var workOrder *WorkOrder
-	if strings.EqualFold(subagentType, "worker") {
+	if err != nil {
+		return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: err.Error()}
+	}
+	r.notifyChildStarted(c)
+	goal := r.childGoal(ctx, c, upstream)
+	c.opts.Tainted = c.taint.current()
+	hist, res, runErr := r.runChildAgent(ctx, c, history, goal)
+	r.settleInbox(c)
+	if runErr != nil {
+		return r.childFailed(ctx, c, hist, runErr)
+	}
+	return r.childDone(ctx, c, hist, res)
+}
+
+// newChildRun readies the child: its WorkOrder, its client, its options.
+// What the child is handed before its first step can be untrusted too — a
+// tainted dependency's result, a tainted agent's note — so the taint starts
+// with upstreamTaint.
+func (r *TaskRunner) newChildRun(taskID string, req agent.SubtaskSpawnRequest, target spawnTarget, scope agentScope, maxSteps int, upstreamTaint string) (*childRun, error) {
+	c := &childRun{
+		taskID: taskID, req: req, target: target, scope: scope,
+		subagentType: target.role,
+		mode:         modeForSubagent(target.role),
+		taint:        &childTaint{},
+	}
+	c.taint.note(upstreamTaint)
+	if strings.EqualFold(c.subagentType, "worker") {
 		goal := strings.TrimSpace(req.Goal)
 		if goal != "" && json.Valid([]byte(goal)) {
 			wo, err := ParseWorkOrderJSON(goal)
 			if err != nil {
-				return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: err.Error()}
+				return c, err
 			}
-			workOrder = wo
+			c.workOrder = wo
 		}
 	}
-	client, providerLabel, modelLabel := r.resolveChildLLM(req, subagentType)
-	mode := modeForSubagent(subagentType)
+	client, providerLabel, modelLabel := r.resolveChildLLM(req, c.subagentType)
+	c.client, c.modelLabel = client, modelLabel
 	maxPrompt := r.child.MaxPromptBytes
 	if maxPrompt <= 0 {
 		maxPrompt = 64 * 1024
 	}
 	// Workers: tight budget — no parent dialog, only WorkOrder + tool reads.
-	if mode == agent.ModeWorker && maxPrompt > 48*1024 {
+	if c.worker() && maxPrompt > 48*1024 {
 		maxPrompt = 48 * 1024
 	}
-	opts := app.ChildOptions(r.child.Settings, func(o *agent.Options) {
+	childTools := r.childToolsForTarget(target, scope)
+	c.opts = app.ChildOptions(r.child.Settings, func(o *agent.Options) {
 		o.MaxSteps = maxSteps
 		o.MaxPromptBytes = maxPrompt
 		o.CompactThresholdPct = r.child.CompactThresholdPct
@@ -881,9 +990,9 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		o.CompactionClient = r.child.CompactionClient
 		o.CompactionContextTokens = r.child.CompactionContextTokens
 		o.CustomTools = childTools
-		o.Mode = mode
+		o.Mode = c.mode
 		o.Dept = scope.dept
-		o.OnTaint = onTaint
+		o.OnTaint = c.taint.note
 		o.UsageTracker = r.child.UsageTracker
 		// Children run on their own tier model, which may be a different
 		// family from the parent's; ChildOptions takes the prompt family from
@@ -892,11 +1001,11 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		o.ModelLabel = modelLabel
 		// Workers: no parent dialog, no project memory inject, no session notes.
 		o.AutoSessionMemory = false
-		o.SkipMemoryInject = mode == agent.ModeWorker
+		o.SkipMemoryInject = c.worker()
 		o.AllowExec = r.child.Caps.Exec
 		o.AllowWeb = r.child.Caps.Web
 		o.AllowBrowser = r.child.Caps.Browser
-		if mode == agent.ModeWorker {
+		if c.worker() {
 			wsOff := false
 			o.WorkingState = &wsOff
 			o.TurnDigestKeep = 0
@@ -904,71 +1013,81 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 		}
 	})
 	if r.child.OnChildEvent != nil {
-		opts.OnEvent = r.child.OnChildEvent
+		c.opts.OnEvent = r.child.OnChildEvent
 	}
 	if r.child.ChildEventSink != nil {
-		opts.OnEvent = r.child.ChildEventSink(taskID, req.ParentToolCallID, subagentType)
+		c.opts.OnEvent = r.child.ChildEventSink(taskID, req.ParentToolCallID, c.subagentType)
 	}
 	if r.child.Agency.Enabled {
-		opts.SubtaskRunner = &scopedRunner{r: r, s: scope}
+		c.opts.SubtaskRunner = &scopedRunner{r: r, s: scope}
 	}
-	if r.child.NotifyAgentEvent != nil {
-		eventTier := strings.TrimSpace(req.Tier)
-		if eventTier == "" && childTier(subagentType) == roles.TierLead {
-			eventTier = "lead" // L4 badge in UI even without explicit spawn tier
-		}
-		ev := wire.AgentEvent{
-			Type:             wire.EventChildStarted,
-			TaskID:           taskID,
-			ParentToolCallID: req.ParentToolCallID,
-			SubagentType:     target.name,
-			Tier:             eventTier,
-			Model:            modelLabel,
-			Content:          req.Goal,
-			Agent:            scope.address,
-			Depth:            scope.depth,
-			ParentTaskID:     scope.parentTaskID,
-		}
-		if len(scope.chain) > 1 {
-			ev.ParentAgent = scope.chain[len(scope.chain)-2]
-		}
-		r.child.NotifyAgentEvent(ev)
+	if c.worker() && r.child.MaxWorkerRetries > 0 {
+		c.opts.MaxFinalFailures = r.child.MaxWorkerRetries
+		c.opts.MaxInvalidRetries = r.child.MaxWorkerRetries
+		c.opts.MaxToolErrorRepeats = r.child.MaxWorkerRetries
 	}
-	if mode == agent.ModeWorker && r.child.MaxWorkerRetries > 0 {
-		opts.MaxFinalFailures = r.child.MaxWorkerRetries
-		opts.MaxInvalidRetries = r.child.MaxWorkerRetries
-		opts.MaxToolErrorRepeats = r.child.MaxWorkerRetries
+	return c, nil
+}
+
+// notifyChildStarted announces the child to the client.
+func (r *TaskRunner) notifyChildStarted(c *childRun) {
+	if r.child.NotifyAgentEvent == nil {
+		return
 	}
-	childGoal := FormatChildGoal(subagentType, req.Tier, req.Goal)
-	if mode == agent.ModeWorker {
-		childGoal = exploreFirstWorkerPolicy(workOrder) + "\n\n" + childGoal
+	eventTier := strings.TrimSpace(c.req.Tier)
+	if eventTier == "" && childTier(c.subagentType) == roles.TierLead {
+		eventTier = "lead" // L4 badge in UI even without explicit spawn tier
 	}
-	if conv := loadProjectConventions(r.toolRunner.View(ctx), mode); conv != "" {
+	ev := wire.AgentEvent{
+		Type:             wire.EventChildStarted,
+		TaskID:           c.taskID,
+		ParentToolCallID: c.req.ParentToolCallID,
+		SubagentType:     c.target.name,
+		Tier:             eventTier,
+		Model:            c.modelLabel,
+		Content:          c.req.Goal,
+		Agent:            c.scope.address,
+		Depth:            c.scope.depth,
+		ParentTaskID:     c.scope.parentTaskID,
+	}
+	if len(c.scope.chain) > 1 {
+		ev.ParentAgent = c.scope.chain[len(c.scope.chain)-2]
+	}
+	r.child.NotifyAgentEvent(ev)
+}
+
+// childGoal is the goal the child is handed: the task, and around it what
+// it needs to know — outermost first in reading order: who the child is,
+// what its department already knows, what it was told while idle, and what
+// the tasks it waited for produced.
+func (r *TaskRunner) childGoal(ctx context.Context, c *childRun, upstream string) string {
+	childGoal := FormatChildGoal(c.subagentType, c.req.Tier, c.req.Goal)
+	if c.worker() {
+		childGoal = exploreFirstWorkerPolicy(c.workOrder) + "\n\n" + childGoal
+	}
+	if conv := loadProjectConventions(r.toolRunner.View(ctx), c.mode); conv != "" {
 		childGoal = conv + "\n\n" + childGoal
 	}
-	if dec := loadDecisionLog(r.toolRunner.WorkspaceRoot(), mode); dec != "" {
+	if dec := loadDecisionLog(r.toolRunner.WorkspaceRoot(), c.mode); dec != "" {
 		childGoal = dec + "\n\n" + childGoal
 	}
-	if les := loadDeptLessons(r.toolRunner.WorkspaceRoot(), mode, workOrder); les != "" {
+	if les := loadDeptLessons(r.toolRunner.WorkspaceRoot(), c.mode, c.workOrder); les != "" {
 		childGoal = les + "\n\n" + childGoal
 	}
-	if pb := loadDeptPlaybook(r.toolRunner.View(ctx), mode, workOrder); pb != "" {
+	if pb := loadDeptPlaybook(r.toolRunner.View(ctx), c.mode, c.workOrder); pb != "" {
 		childGoal = pb + "\n\n" + childGoal
 	}
-	// Agency context, outermost first in reading order: who the child is,
-	// what its department already knows, what it was told while idle, and
-	// what the tasks it waited for produced.
 	if upstream != "" {
 		childGoal = upstream + "\n\n" + childGoal
 	}
 	// A department's inbox and scratchpad are its Lead's: workers share the
 	// address to hear each other live, but must not consume the notes left
 	// for the Lead.
-	if mode != agent.ModeWorker {
-		if notes := r.takeInbox(scope.address); len(notes) > 0 {
+	if !c.worker() {
+		if notes := r.takeInbox(c.scope.address); len(notes) > 0 {
 			for _, n := range notes {
 				if n.Tainted != "" {
-					onTaint("a note from " + n.From + " (read " + n.Tainted + ")")
+					c.taint.note("a note from " + n.From + " (read " + n.Tainted + ")")
 					break
 				}
 			}
@@ -978,71 +1097,78 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 			// them on its first steps instead of never.
 			if len(rest) > 0 {
 				r.mu.Lock()
-				if e := r.findEntryLocked(taskID); e != nil {
+				if e := r.findEntryLocked(c.taskID); e != nil {
 					e.inbox = append(append([]agent.InboxMessage(nil), rest...), e.inbox...)
 				}
 				r.mu.Unlock()
 			}
 		}
-		if sp := loadDeptScratchpadForLead(r.toolRunner.WorkspaceRoot(), scope.dept); sp != "" {
+		if sp := loadDeptScratchpadForLead(r.toolRunner.WorkspaceRoot(), c.scope.dept); sp != "" {
 			childGoal = sp + "\n\n" + childGoal
 		}
 	}
-	if target.profile != nil && target.profile.SystemPrompt != "" {
-		childGoal = formatAgentRole(target.profile) + "\n\n" + childGoal
+	if c.target.profile != nil && c.target.profile.SystemPrompt != "" {
+		childGoal = formatAgentRole(c.target.profile) + "\n\n" + childGoal
 	}
-	if mode == agent.ModeWorker && workOrder != nil {
-		opts.WorkerEditPaths = EditScopePaths(workOrder)
+	return childGoal
+}
+
+// runChildAgent runs the child: a worker through its verification rounds,
+// anyone else through the launcher with the history it was handed.
+func (r *TaskRunner) runChildAgent(ctx context.Context, c *childRun, history []llm.Message, goal string) ([]llm.Message, *agent.Result, error) {
+	if c.worker() && c.workOrder != nil {
+		c.opts.WorkerEditPaths = EditScopePaths(c.workOrder)
 		// WorkOrder-driven worker → schema-enforced task_result
 		// (spec checklist 31, local L3/L1 drift protection).
-		opts.WorkerStrictResult = true
+		c.opts.WorkerStrictResult = true
 	}
-	opts.Tainted = startTaint()
-	var hist []llm.Message
-	var res *agent.Result
-	var runErr error
-	if mode == agent.ModeWorker {
-		hist, res, runErr = r.runWorkerWithVerification(ctx, client, opts, childGoal)
-	} else {
-		hist, res, runErr = r.launchChild(ctx, client, opts, append([]llm.Message(nil), history...), childGoal)
+	if c.worker() {
+		return r.runWorkerWithVerification(ctx, c.client, c.opts, goal)
 	}
-	// Notes that arrived after the child's last step would be lost with it;
-	// they go to its inbox for the next agent at this address. A worker's
-	// leftovers are sibling chatter about a batch that is over — dropped
-	// rather than handed to the department's next Lead.
-	if mode != agent.ModeWorker {
-		r.flushLiveInbox(taskID, scope.address)
-	} else {
-		r.drainTaskInbox(taskID)
-	}
-	status := "done"
-	errMsg := ""
-	if runErr != nil {
-		status, errMsg = classifyChildRunErr(ctx, runErr)
-	}
-	if runErr != nil {
-		r.recordWorkerToDeptScratchpad(workOrder, "", status, errMsg)
-		// Attach what the child did manage to do. Without it the parent sees
-		// only an error string and redoes the whole task from nothing —
-		// including the reads the child already paid for.
-		if progress := agenthistory.FormatSubagentProgress(subagentType, req.Goal, hist, r.child.ToolDigestBytes); progress != "" {
-			errMsg = errMsg + "\n\n" + progress
-		}
-		out := &agent.SubtaskResult{TaskID: taskID, Status: status, Error: errMsg}
-		if mode == agent.ModeWorker {
-			if hint := recordWorkerLesson(r.toolRunner.WorkspaceRoot(), workOrder, hist, errMsg, status); hint != "" {
-				out.Result = annotateLessonPromoteSuggestion(`{"status":"error"}`, hint)
-			}
-		}
-		return out
-	}
+	return r.launchChild(ctx, c.client, c.opts, append([]llm.Message(nil), history...), goal)
+}
 
+// settleInbox is what happens to the notes that arrived after the child's
+// last step: they would be lost with it, so they go to its inbox for the
+// next agent at this address. A worker's leftovers are sibling chatter
+// about a batch that is over — dropped rather than handed to the
+// department's next Lead.
+func (r *TaskRunner) settleInbox(c *childRun) {
+	if c.worker() {
+		r.drainTaskInbox(c.taskID)
+		return
+	}
+	r.flushLiveInbox(c.taskID, c.scope.address)
+}
+
+// childFailed is the result of a child whose run ended in an error: the
+// error, classified, with what the child did manage to do. Without that the
+// parent sees only an error string and redoes the whole task from nothing —
+// including the reads the child already paid for.
+func (r *TaskRunner) childFailed(ctx context.Context, c *childRun, hist []llm.Message, runErr error) *agent.SubtaskResult {
+	status, errMsg := classifyChildRunErr(ctx, runErr)
+	r.recordWorkerToDeptScratchpad(c.workOrder, "", status, errMsg)
+	if progress := agenthistory.FormatSubagentProgress(c.subagentType, c.req.Goal, hist, r.child.ToolDigestBytes); progress != "" {
+		errMsg = errMsg + "\n\n" + progress
+	}
+	out := &agent.SubtaskResult{TaskID: c.taskID, Status: status, Error: errMsg}
+	if c.worker() {
+		if hint := recordWorkerLesson(r.toolRunner.WorkspaceRoot(), c.workOrder, hist, errMsg, status); hint != "" {
+			out.Result = annotateLessonPromoteSuggestion(`{"status":"error"}`, hint)
+		}
+	}
+	return out
+}
+
+// childDone is the result of a child whose run ended: its edits committed
+// when they may be, its answer with what the runtime attaches to it.
+func (r *TaskRunner) childDone(ctx context.Context, c *childRun, hist []llm.Message, res *agent.Result) *agent.SubtaskResult {
 	// A task that is not a worker has succeeded once its run did: its edits go
 	// to its owner now, before anything it relays (a Lead's WorkOrders) starts
 	// on top of them.
-	if mode != agent.ModeWorker {
+	if !c.worker() {
 		if err := r.commitLayer(ctx); err != nil {
-			return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: err.Error()}
+			return &agent.SubtaskResult{TaskID: c.taskID, Status: "error", Error: err.Error()}
 		}
 	}
 
@@ -1053,9 +1179,8 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 			taskResult = fmt.Sprintf("completed with %d patch(es)", len(res.Patches))
 		}
 	}
-
-	if subagentType == "" || subagentType == "explore" {
-		taskResult = agenthistory.FormatSubagentResult(subagentType, req.Goal, hist, taskResult, r.child.ToolDigestBytes)
+	if c.subagentType == "" || c.subagentType == "explore" {
+		taskResult = agenthistory.FormatSubagentResult(c.subagentType, c.req.Goal, hist, taskResult, r.child.ToolDigestBytes)
 	}
 	// Question Barrier (spec §4.3): relay open_questions[] to the user via
 	// the runtime, append answers to decisions.md, attach them to the result.
@@ -1070,9 +1195,9 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	if held {
 		taskResult = holdBatchWorkOrders(taskResult)
 	} else {
-		taskResult = r.relayBatchWorkOrders(ctx, scope, target, taskResult)
+		taskResult = r.relayBatchWorkOrders(ctx, c.scope, c.target, taskResult)
 	}
-	taskResult = r.attachPlaybookPromoteHints(taskResult, workOrder)
+	taskResult = r.attachPlaybookPromoteHints(taskResult, c.workOrder)
 
 	// Phase timeouts (spec §4.5): stale-phase advisory + blocked escalation.
 	taskResult = r.annotatePhaseTimeout(taskResult)
@@ -1081,15 +1206,13 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 	// Re-check contract_refs on success (spec §5.3): the contract may have
 	// changed while the worker ran; a stale result must not reach the Lead
 	// as success, and its edits are dropped with its layer.
-	if mode == agent.ModeWorker && workOrder != nil && r.child.GuardContractRefs != nil {
-		if err := r.child.GuardContractRefs(ctx, workOrder.ContractRefs); err != nil {
+	if c.worker() && c.workOrder != nil && r.child.GuardContractRefs != nil {
+		if err := r.child.GuardContractRefs(ctx, c.workOrder.ContractRefs); err != nil {
 			msg := "stale_contract: contract changed during execution — result discarded, Lead must regenerate the WorkOrder; " + err.Error()
-			r.recordWorkerToDeptScratchpad(workOrder, "", "stale_contract", err.Error())
-			out := &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: msg}
-			if mode == agent.ModeWorker {
-				if hint := recordWorkerLesson(r.toolRunner.WorkspaceRoot(), workOrder, hist, msg, "error"); hint != "" {
-					out.Result = annotateLessonPromoteSuggestion(`{"status":"error","reason":"stale_contract"}`, hint)
-				}
+			r.recordWorkerToDeptScratchpad(c.workOrder, "", "stale_contract", err.Error())
+			out := &agent.SubtaskResult{TaskID: c.taskID, Status: "error", Error: msg}
+			if hint := recordWorkerLesson(r.toolRunner.WorkspaceRoot(), c.workOrder, hist, msg, "error"); hint != "" {
+				out.Result = annotateLessonPromoteSuggestion(`{"status":"error","reason":"stale_contract"}`, hint)
 			}
 			return out
 		}
@@ -1097,29 +1220,26 @@ func (r *TaskRunner) runChild(ctx context.Context, taskID string, req agent.Subt
 
 	// A worker's edits reach its owner only when it verified: a failed,
 	// blocked or unverified worker's layer is dropped (ORC-1).
-	if mode == agent.ModeWorker && workerOutcomeSucceeded(taskResult) {
+	if c.worker() && workerOutcomeSucceeded(taskResult) {
 		if err := r.commitLayer(ctx); err != nil {
 			msg := err.Error() + " — the worker's edits were discarded; re-plan the WorkOrder against the current files"
-			r.recordWorkerToDeptScratchpad(workOrder, "", "error", msg)
-			return &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: msg}
+			r.recordWorkerToDeptScratchpad(c.workOrder, "", "error", msg)
+			return &agent.SubtaskResult{TaskID: c.taskID, Status: "error", Error: msg}
 		}
-	}
-
-	// Doc debt (spec §2.3.2): verified worker edits that hit a MANIFEST
-	// trigger put the mapped doc into state.md doc_debt for 6b.
-	if mode == agent.ModeWorker && workerOutcomeSucceeded(taskResult) {
+		// Doc debt (spec §2.3.2): verified worker edits that hit a MANIFEST
+		// trigger put the mapped doc into state.md doc_debt for 6b.
 		edited := CollectEditedPaths(hist, "")
 		recordDocDebt(r.toolRunner.WorkspaceRoot(), edited)
-		r.recordEdited(taskID, edited)
+		r.recordEdited(c.taskID, edited)
 	}
 
-	r.recordWorkerToDeptScratchpad(workOrder, taskResult, "done", "")
-	if mode == agent.ModeWorker {
-		if hint := recordWorkerLesson(r.toolRunner.WorkspaceRoot(), workOrder, hist, taskResult, "done"); hint != "" {
+	r.recordWorkerToDeptScratchpad(c.workOrder, taskResult, "done", "")
+	if c.worker() {
+		if hint := recordWorkerLesson(r.toolRunner.WorkspaceRoot(), c.workOrder, hist, taskResult, "done"); hint != "" {
 			taskResult = annotateLessonPromoteSuggestion(taskResult, hint)
 		}
 	}
-	return &agent.SubtaskResult{TaskID: taskID, Status: "done", Result: taskResult}
+	return &agent.SubtaskResult{TaskID: c.taskID, Status: "done", Result: taskResult}
 }
 
 // launchChild builds and runs one child agent through the one launcher
