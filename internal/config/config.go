@@ -141,6 +141,17 @@ type ExecConfig struct {
 	// …_SECRET, …_PASSWORD) that commands the agent runs still receive, e.g.
 	// a key the project's own test suite needs. All others are removed.
 	EnvPassthrough []string `yaml:"env_passthrough,omitempty"`
+	// Shadow runs the commands of a preview turn (the core with apply off)
+	// in a copy of the workspace carrying the turn's staged edits instead of
+	// refusing them: the command sees the model's edits, its writes come
+	// back as staged edits, the workspace is untouched. Default true.
+	Shadow *bool `yaml:"shadow,omitempty"`
+}
+
+// ShadowEnabled reports whether a preview's commands run in a shadow of the
+// workspace (exec.shadow, default true).
+func (e ExecConfig) ShadowEnabled() bool {
+	return e.Shadow == nil || *e.Shadow
 }
 
 // IsCommandAllowed reports whether cmd — a program name or a whole shell

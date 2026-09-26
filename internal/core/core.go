@@ -171,6 +171,9 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		// overlay. `orchestra apply` sets ExecInDryRun so bash inspection
 		// (git status, go test) keeps working in a preview at the terminal.
 		BlockExecInDryRun: !opts.ExecInDryRun,
+		// Where commands would be refused, they run in a shadow of the
+		// workspace with the turn's staged edits instead (exec.shadow).
+		ShadowExec: cfg.Exec.ShadowEnabled(),
 	})
 	if err != nil {
 		return nil, err

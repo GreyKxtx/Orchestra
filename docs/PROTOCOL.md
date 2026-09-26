@@ -1119,6 +1119,10 @@ Response `result`:
 }
 ```
 
+### Commands in a preview
+
+A turn with `apply: false` (`agent.run`, `session.message`) stages its edits and, with `exec.shadow` on (the default), runs its commands in a shadow of the workspace: a copy that carries the turn's staged edits and leaves out `.git`, `.orchestra` and `exclude_dirs`. The command sees the edits the model made; the files it writes come back as staged edits (a `tool_call_completed` for `bash` says which in its stderr trailer), and the workspace is untouched. With `exec.shadow: false` the core refuses every command in a preview, as before. A workspace too large to copy (20k files / 512 MiB) is refused the same way, with the reason.
+
 ### `skill.invoke`
 
 Runs a single skill end-to-end as one child agent turn — the same runner

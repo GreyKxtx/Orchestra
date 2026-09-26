@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — a preview runs its commands in a shadow of the workspace (2026-09)
+
+- **`bash` in a preview.** A core turn with apply off refused every command, so the model could not run the tests of the edits it had just staged — and at the terminal a preview's `go test` ran against the code on disk, not the staged one. A preview's commands now run in a shadow of the workspace (`exec.shadow`, default on): a copy without `.git`, `.orchestra` and `exclude_dirs` (those are linked in), brought up to date with the disk and with the turn's staged edits before each command. The command sees the model's edits; the files it writes come back as staged edits, like an edit the model made, and the tool's result says which; a binary or a file over 1 MiB stays in the shadow, and so does a deletion. The workspace is never touched. A workspace over 20 000 files or 512 MiB is refused as before, with the reason. `orchestra apply --allow-exec` at the terminal keeps running commands on the real tree.
+
 ### Changed — the RPC handler is a table; consent is the turn's (2026-09)
 
 - **The agent loop and the applier read in phases.** `Agent.run` was 417 lines; it is now the loop over a `turnLoop` whose methods are its phases — the history's preparation before a step (prune, the context-pressure notice, compaction with its convergence guard, the agency inbox, the step-limit reminder), the model step with its overflow recovery, the tool step, the final step, the end on max steps — with the same events, breakers and returns. `ApplyAnyOps` was 339 lines; it runs an `applyBatch` through collect, plan, preview, revalidate, mkdir, backups and writes, in that order, with the same error codes.

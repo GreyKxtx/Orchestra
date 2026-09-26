@@ -221,6 +221,7 @@ retention:                  # what .orchestra keeps; -1 lifts a bound
 
 exec:
   confirm: true             # false = allow exec.run without --allow-exec
+  shadow: true            # preview turns run commands in a shadow copy carrying the staged edits
 
 hooks:
   enabled: false

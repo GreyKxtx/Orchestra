@@ -586,3 +586,12 @@ func (o *Overlay) RestoreStaged(files []StagedSnapshot) {
 		}
 	}
 }
+
+// StageFromCommand stages content a command wrote in a preview's shadow
+// workspace, as write would: the staged hash is the content's.
+func (o *Overlay) StageFromCommand(c *Client, relSlash, content string) error {
+	if o == nil {
+		return fmt.Errorf("overlay is nil")
+	}
+	return o.stageFile(c, relSlash, content, fsutil.ComputeSHA256([]byte(content)))
+}

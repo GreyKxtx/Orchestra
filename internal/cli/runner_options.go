@@ -16,6 +16,7 @@ func cliRunnerOptions(cfg *config.ProjectConfig, dryRun, allowBrowser bool) tool
 		ExecTimeout:        time.Duration(cfg.Exec.TimeoutS) * time.Second,
 		ExecOutputLimit:    cfg.Exec.OutputLimitKB * 1024,
 		ExecEnvPassthrough: cfg.Exec.EnvPassthrough,
+		ShadowExec:         cfg.Exec.ShadowEnabled(),
 		WebFetchTimeout:    time.Duration(cfg.Web.FetchTimeoutS) * time.Second,
 		WebMaxContentBytes: cfg.Web.MaxContentBytes,
 		WebSearch:          cfg.Web.Search,
