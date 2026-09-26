@@ -50,6 +50,11 @@ type coreClient interface {
 	// Status polling.
 	QueryLSPStatusDetail(ctx context.Context) (status string, percent int, id string, err error)
 
+	// Workspace trust (docs/security.md): what the core ignores until the
+	// workspace is trusted, and the call that trusts it.
+	WorkspaceTrustStatus(ctx context.Context) (*rpcclient.WorkspaceTrust, error)
+	WorkspaceTrust(ctx context.Context, revoke bool) (*rpcclient.WorkspaceTrust, error)
+
 	// Answers to server-initiated permission/question requests.
 	RespondPermission(reqID int64, approved bool)
 	RespondPermissionDecision(reqID int64, d rpcclient.PermissionDecision)

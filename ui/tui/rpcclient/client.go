@@ -970,6 +970,51 @@ func (c *Client) QueryLSPStatusDetail(ctx context.Context) (status string, perce
 	return st, 0, "", nil
 }
 
+// WorkspaceTrust is workspace.trust_status's answer, and workspace.trust's:
+// whether the workspace's own machine-level settings are in effect and which
+// are left out until it is trusted (docs/security.md).
+type WorkspaceTrust struct {
+	Enforced bool     `json:"enforced"`
+	Trusted  bool     `json:"trusted"`
+	Ignored  []string `json:"ignored"`
+	Hash     string   `json:"hash"`
+	Warnings []string `json:"warnings"`
+}
+
+// Untrusted reports whether settings of the workspace are being ignored.
+func (w *WorkspaceTrust) Untrusted() bool {
+	return w != nil && w.Enforced && !w.Trusted && len(w.Ignored) > 0
+}
+
+// WorkspaceTrustStatus asks the core whether this workspace is trusted.
+func (c *Client) WorkspaceTrustStatus(ctx context.Context) (*WorkspaceTrust, error) {
+	if c == nil || c.rpc == nil {
+		return nil, fmt.Errorf("rpcclient: not connected")
+	}
+	var res WorkspaceTrust
+	if err := c.rpc.Call(ctx, "workspace.trust_status", map[string]any{}, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// WorkspaceTrust trusts the workspace's current settings (or, with revoke,
+// forgets them); the core reloads its config without a restart.
+func (c *Client) WorkspaceTrust(ctx context.Context, revoke bool) (*WorkspaceTrust, error) {
+	if c == nil || c.rpc == nil {
+		return nil, fmt.Errorf("rpcclient: not connected")
+	}
+	params := map[string]any{}
+	if revoke {
+		params["revoke"] = true
+	}
+	var res WorkspaceTrust
+	if err := c.rpc.Call(ctx, "workspace.trust", params, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
 // SessionCompactResult is the wire's (protocol/wire).
 type SessionCompactResult = wire.SessionCompactResult
 

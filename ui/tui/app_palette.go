@@ -245,6 +245,7 @@ const helpText = `Orchestra TUI — клавиши:
   Ctrl+T / t    tools → diff (d / Ctrl+D — diff)
   /compact      сжать LLM-контекст сессии
   /resume       продолжить прерванный ход сессии с checkpoint'а
+  /trust        доверить рабочей области её настройки (MCP, hooks, consent); /trust revoke — забыть
   /rewind       откатить историю к сообщению (файлы не откатываются)
   /memory       слои памяти + pinned facts
   /memory open  открыть ORCHESTRA.md (или fallback) в $EDITOR
@@ -303,6 +304,12 @@ func (a *App) executePaletteCmd(cmd string) tea.Cmd {
 	case "/resume":
 		dismissWelcome()
 		return a.cmdResumeTurn()
+	case "/trust":
+		dismissWelcome()
+		return a.cmdWorkspaceTrust(false)
+	case "/trust revoke":
+		dismissWelcome()
+		return a.cmdWorkspaceTrust(true)
 	case "/memory":
 		dismissWelcome()
 		return a.cmdShowMemory()

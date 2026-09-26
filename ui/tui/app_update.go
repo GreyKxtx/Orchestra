@@ -160,6 +160,9 @@ func (a *App) updateChromeMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case mcpTestMsg:
 		a.handleMCPTestMsg(m)
 		return a, nil, true
+	case workspaceTrustMsg:
+		a.handleWorkspaceTrust(m)
+		return a, nil, true
 	}
 	return a, nil, false
 }

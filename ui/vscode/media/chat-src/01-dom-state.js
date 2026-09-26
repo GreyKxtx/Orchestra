@@ -155,6 +155,7 @@
     { cmd: "/rewind", descKey: "cmd.rewind" },
     { cmd: "/sessions", descKey: "cmd.sessions" },
     { cmd: "/settings", descKey: "cmd.settings" },
+    { cmd: "/trust", descKey: "cmd.trust" },
   ];
 
   /** Loaded skills, each usable as its own "/<name>" command. Replaced

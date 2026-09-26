@@ -21,7 +21,6 @@ var AllSlashCmds = []SlashCmd{
 	{"/attach", "прикрепить файл: /attach <path>"},
 	{"/clear", "очистить историю чата"},
 	{"/compact", "сжать LLM-контекст сессии"},
-	{"/resume", "продолжить прерванный ход с checkpoint'а"},
 	{"/diff", "diff последнего commit"},
 	{"/help", "показать команды и клавиши"},
 	{"/mcp", "MCP servers: add / edit / test"},
@@ -30,6 +29,7 @@ var AllSlashCmds = []SlashCmd{
 	{"/model", "текущая модель"},
 	{"/orchestra", "planner + worker tiers"},
 	{"/quit", "выйти из Orchestra TUI"},
+	{"/resume", "продолжить прерванный ход с checkpoint'а"},
 	{"/rewind", "откатить историю к сообщению (файлы не откатываются)"},
 	{"/fork", "ветка от сообщения (оригинал остаётся)"},
 	{"/sessions", "сохранённые сессии · /sessions <текст> — поиск по сообщениям"},
@@ -38,6 +38,7 @@ var AllSlashCmds = []SlashCmd{
 	{"/skill", "запустить skill"},
 	{"/skills", "список skills"},
 	{"/theme", "тема: orchestra ↔ neutral"},
+	{"/trust", "доверить рабочей области её настройки; /trust revoke — забыть"},
 	{"/workflow", "запустить workflow"},
 	{"/workflows", "список workflows"},
 }

@@ -47,6 +47,10 @@
         "title": "Orchestra: Ping Core"
       },
       {
+        "command": "orchestra.trustWorkspace",
+        "title": "Orchestra: Trust Workspace"
+      },
+      {
         "command": "orchestra.openSettings",
         "title": "Orchestra: Settings"
       },

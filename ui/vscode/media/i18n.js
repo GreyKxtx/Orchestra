@@ -192,6 +192,7 @@
 
       "cmd.clear": "New chat",
       "cmd.compact": "Compress LLM context",
+      "cmd.trust": "Trust this workspace's settings",
       "cmd.help": "Show commands",
       "cmd.model": "Change model",
       "cmd.rewind": "Checkpoint rewind help",
@@ -357,6 +358,10 @@
       "web.no_workspace": "No workspace is open.",
       "web.opening": "The workspace is still opening…",
       "web.compacted": "Context compacted.",
+      "web.trust_ignored":
+        "This workspace is not trusted: its settings that act on this machine are not in effect — {ignored}. If the project is yours, /trust applies them (or `orchestra trust` in a terminal); /trust revoke forgets the trust.",
+      "web.trusted": "Workspace trusted: its settings are in effect.",
+      "web.trust_revoked": "Trust revoked: the workspace's machine-level settings are no longer in effect.",
       "web.switch_tabs": "Switch chats from the tabs in the title bar.",
       "web.use_model_pill": "Use the model pill in the composer to change model.",
       "web.search_usage": "/search text — find text across this workspace's chats.",
@@ -375,6 +380,7 @@
         "Slash commands:",
         "/clear — new chat",
         "/compact [hint] — compress LLM context",
+        "/trust [revoke] — trust this workspace's settings (MCP servers, hooks, consent)",
         "/search text — find text across saved chats",
         "/sessions — open the list of chats",
         "/model — open the model menu",
@@ -909,6 +915,7 @@
 
       "cmd.clear": "Новый чат",
       "cmd.compact": "Сжать контекст модели",
+      "cmd.trust": "Доверить рабочей области её настройки",
       "cmd.help": "Показать команды",
       "cmd.model": "Сменить модель",
       "cmd.rewind": "Справка по откату к контрольной точке",
@@ -1071,6 +1078,10 @@
       "web.no_workspace": "Проект не открыт.",
       "web.opening": "Проект ещё открывается…",
       "web.compacted": "Контекст сжат.",
+      "web.trust_ignored":
+        "Рабочая область не доверена: её настройки, влияющие на машину, не применяются — {ignored}. Если проект ваш, /trust применит их (или `orchestra trust` в терминале); /trust revoke забудет доверие.",
+      "web.trusted": "Рабочая область доверена: её настройки применены.",
+      "web.trust_revoked": "Доверие снято: настройки рабочей области, влияющие на машину, больше не применяются.",
       "web.switch_tabs": "Переключайте чаты вкладками в заголовке окна.",
       "web.use_model_pill": "Смените модель кнопкой модели в composer.",
       "web.search_usage": "/search текст — искать текст по чатам этого проекта.",
@@ -1089,6 +1100,7 @@
         "Команды со слешем:",
         "/clear — новый чат",
         "/compact [подсказка] — сжать контекст модели",
+        "/trust [revoke] — доверить рабочей области её настройки (MCP-серверы, hooks, согласия)",
         "/search текст — искать текст по сохранённым чатам",
         "/sessions — открыть список чатов",
         "/model — открыть меню моделей",
