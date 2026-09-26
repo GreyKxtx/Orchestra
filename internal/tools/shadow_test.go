@@ -236,3 +236,46 @@ func TestVerificationRoot(t *testing.T) {
 		t.Fatalf("VerificationRoot for an applying turn = %q %v %v, want the workspace", got, inShadow, err)
 	}
 }
+
+// A task layer's edits are on no disk until it commits, even in a turn that
+// applies as it goes; its commands run in the layer's shadow, where the
+// turn's own run on the real tree (ORC-8).
+func TestShadow_ALayersCommandRunsInTheShadowWhenTheTurnApplies(t *testing.T) {
+	r, root := newShadowRunner(t)
+	base := context.Background()
+	r.TurnAt(base).SetAllowExecDespiteDryRun(true)
+	if r.TurnAt(base).CommandsInShadow() {
+		t.Fatal("the turn's own commands run on the real tree once apply unlocks them")
+	}
+	layer := WithLayer(base, r.ForkLayer(base))
+	hash := r.overlayAt(base).CurrentHash("a.txt")
+	if _, err := r.FSWrite(layer, FSWriteRequest{Path: "a.txt", Content: "from the layer\n", FileHash: hash}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := r.ExecRun(base, helperCommand(t, "cat-file", "a.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(resp.Stdout, "disk\n") {
+		t.Fatalf("the turn's command read %q, want the disk", resp.Stdout)
+	}
+	resp, err = r.ExecRun(layer, helperCommand(t, "cat-file", "a.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(resp.Stdout, "from the layer\n") {
+		t.Fatalf("the layer's command read %q, want its staged edit", resp.Stdout)
+	}
+	if _, err := r.ExecRun(layer, helperCommand(t, "write-file", "b.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := r.overlayAt(layer).EffectiveContent("b.txt"); !ok || got != "from command\n" {
+		t.Fatalf("what the layer's command wrote is staged in the layer: %q %v", got, ok)
+	}
+	if _, err := os.Stat(filepath.Join(root, "b.txt")); !os.IsNotExist(err) {
+		t.Fatalf("the layer's command wrote past the layer: %v", err)
+	}
+	if _, ok := r.overlayAt(base).EffectiveContent("b.txt"); ok {
+		t.Fatal("the layer's write reached the turn before the layer committed")
+	}
+}

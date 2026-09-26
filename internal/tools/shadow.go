@@ -419,6 +419,18 @@ func (r *Runner) closeShadows() {
 	}
 }
 
+// commandsInShadow reports whether the command behind ctx runs in a shadow:
+// a preview the runner would otherwise refuse commands in, or a task layer
+// of any staging turn. A layer's edits are on no disk until it commits, even
+// when the turn applies as it goes, so a command on the real tree would miss
+// them and write past the layer (ORC-8).
+func (r *Runner) commandsInShadow(ctx context.Context, t *Turn) bool {
+	if t.CommandsInShadow() {
+		return true
+	}
+	return r != nil && r.shadowExec && t.DryRun() && InLayer(ctx)
+}
+
 // VerificationRoot is where the runtime verifies the edits of the agent
 // behind ctx — builds, tests, acceptance checks, a typecheck. In a preview
 // with exec.shadow on it is the agent's shadow workspace, brought up to date

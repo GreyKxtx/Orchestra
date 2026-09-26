@@ -19,7 +19,7 @@ func (r *Runner) ExecRun(ctx context.Context, req ExecRunRequest) (*ExecRunRespo
 		return nil, err
 	}
 	req.Env = r.execEnv()
-	if t := r.TurnAt(ctx); t.CommandsInShadow() {
+	if t := r.TurnAt(ctx); r.commandsInShadow(ctx, t) {
 		return r.execInShadow(ctx, t, req)
 	}
 	return exec.Run(ctx, r.workspaceRoot, r.execTimeout, r.execOutputLimit, req)
@@ -111,7 +111,7 @@ func (r *Runner) ExecBashBackground(ctx context.Context, req ExecRunRequest) (*E
 		return nil, protocol.NewError(protocol.InvalidLLMOutput, "command is empty", nil)
 	}
 	root := r.workspaceRoot
-	if t := r.TurnAt(ctx); t.CommandsInShadow() {
+	if t := r.TurnAt(ctx); r.commandsInShadow(ctx, t) {
 		// A background command of a preview runs in the shadow too; what it
 		// writes there is staged by the turn's next foreground command.
 		sh, err := r.shadowReady(ctx, t, req.Command)
