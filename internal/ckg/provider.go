@@ -91,7 +91,7 @@ func (p *Provider) ExploreSymbol(ctx context.Context, query string, opts ...Expl
 
 	if IsLikelyFQN(query) {
 		// 1. Exact FQN match.
-		rows, err := p.store.db.QueryContext(ctx, q+`n.fqn = ?`, query)
+		rows, err := p.store.q(ctx).QueryContext(ctx, q+`n.fqn = ?`, query)
 		if err != nil {
 			return "", err
 		}
@@ -119,13 +119,13 @@ func (p *Provider) ExploreSymbol(ctx context.Context, query string, opts ...Expl
 				short = parts[0]
 			}
 			// Try exact short_name match (e.g. "Agent.Run").
-			rows2, err2 := p.store.db.QueryContext(ctx, q+`n.short_name = ?`, short)
+			rows2, err2 := p.store.q(ctx).QueryContext(ctx, q+`n.short_name = ?`, short)
 			if err2 == nil {
 				hits, _ = scanHits(rows2)
 			}
 			// For bare names (no dot) also try suffix search.
 			if len(hits) == 0 && !strings.Contains(short, ".") {
-				rows3, err3 := p.store.db.QueryContext(ctx, q+`n.short_name LIKE ?`, "%."+short)
+				rows3, err3 := p.store.q(ctx).QueryContext(ctx, q+`n.short_name LIKE ?`, "%."+short)
 				if err3 == nil {
 					hits, _ = scanHits(rows3)
 				}
@@ -133,7 +133,7 @@ func (p *Provider) ExploreSymbol(ctx context.Context, query string, opts ...Expl
 		}
 	} else {
 		// 1. Exact short_name match (e.g. "Agent.Run" or "Run").
-		rows, err := p.store.db.QueryContext(ctx, q+`n.short_name = ?`, query)
+		rows, err := p.store.q(ctx).QueryContext(ctx, q+`n.short_name = ?`, query)
 		if err != nil {
 			return "", err
 		}
@@ -144,7 +144,7 @@ func (p *Provider) ExploreSymbol(ctx context.Context, query string, opts ...Expl
 		// 2. Suffix match: find methods by unqualified name ("RecordSuccessfulCall"
 		//    matches short_name "CircuitBreaker.RecordSuccessfulCall").
 		if len(hits) == 0 {
-			rows2, err := p.store.db.QueryContext(ctx, q+`n.short_name LIKE ?`, "%."+query)
+			rows2, err := p.store.q(ctx).QueryContext(ctx, q+`n.short_name LIKE ?`, "%."+query)
 			if err != nil {
 				return "", err
 			}
@@ -169,7 +169,7 @@ func (p *Provider) ExploreSymbol(ctx context.Context, query string, opts ...Expl
 	var sb strings.Builder
 	for _, h := range hits {
 		absPath := filepath.Join(p.root, filepath.FromSlash(h.relPath))
-		content, err := os.ReadFile(absPath)
+		content, err := p.readFile(ctx, h.relPath, absPath)
 		if err != nil {
 			sb.WriteString(fmt.Sprintf("Error reading file %s: %v\n\n", h.relPath, err))
 			continue
@@ -192,7 +192,7 @@ func (p *Provider) ExploreSymbol(ctx context.Context, query string, opts ...Expl
 		// For structs/interfaces: list ALL methods so the model knows what's available.
 		if h.kind == "struct" || h.kind == "interface" {
 			prefix := h.shortName + "."
-			mRows, mErr := p.store.db.QueryContext(ctx,
+			mRows, mErr := p.store.q(ctx).QueryContext(ctx,
 				`SELECT short_name, line_start, line_end FROM nodes
 				 WHERE short_name LIKE ? AND file_id = (SELECT file_id FROM nodes WHERE id = ?)
 				 ORDER BY line_start`,
@@ -238,7 +238,7 @@ func (p *Provider) ExploreSymbol(ctx context.Context, query string, opts ...Expl
 }
 
 func (p *Provider) fuzzyFallback(ctx context.Context, query string) (string, error) {
-	rows, err := p.store.db.QueryContext(ctx, `
+	rows, err := p.store.q(ctx).QueryContext(ctx, `
         SELECT n.fqn, n.kind, f.path FROM nodes n JOIN files f ON n.file_id = f.id
         WHERE n.short_name LIKE ? LIMIT 5`, "%"+query+"%")
 	if err != nil {
@@ -266,7 +266,7 @@ func (p *Provider) fuzzyFallback(ctx context.Context, query string) (string, err
 // Silently skips if no import data is available.
 func (p *Provider) appendImportsSection(ctx context.Context, sb *strings.Builder, pkgPath string) {
 	// Find the full package FQN from a package-kind node in the package files.
-	row := p.store.db.QueryRowContext(ctx, `
+	row := p.store.q(ctx).QueryRowContext(ctx, `
 		SELECT DISTINCT n.fqn FROM nodes n JOIN files f ON n.file_id = f.id
 		WHERE n.kind = 'package'
 		  AND f.path LIKE ?
@@ -281,7 +281,7 @@ func (p *Provider) appendImportsSection(ctx context.Context, sb *strings.Builder
 	}
 
 	// Outgoing imports: what this package imports.
-	outRows, err := p.store.db.QueryContext(ctx, `
+	outRows, err := p.store.q(ctx).QueryContext(ctx, `
 		SELECT DISTINCT e.target_fqn FROM edges e
 		JOIN nodes n ON e.source_id = n.id
 		WHERE n.fqn = ? AND e.relation = 'imports'
@@ -346,7 +346,7 @@ func isPackagePath(query string) bool {
 // Output groups types, exported functions, and methods by receiver.
 func (p *Provider) explorePackage(ctx context.Context, pkgPath string) (string, error) {
 	// Files whose relative path starts with pkgPath + "/" (direct children only, not sub-packages).
-	rows, err := p.store.db.QueryContext(ctx, `
+	rows, err := p.store.q(ctx).QueryContext(ctx, `
 		SELECT f.path, n.fqn, n.short_name, n.kind, n.line_start, n.line_end
 		FROM nodes n JOIN files f ON n.file_id = f.id
 		WHERE f.path LIKE ?
@@ -526,7 +526,7 @@ const callersQuery = `
 func (p *Provider) Callers(ctx context.Context, fqn string) ([]Node, error) {
 	// By id once resolved, by FQN before that: two index lookups on edges,
 	// where the join on the target's fqn scanned them all (DATA-6).
-	rows, err := p.store.db.QueryContext(ctx, callersQuery, fqn, fqn)
+	rows, err := p.store.q(ctx).QueryContext(ctx, callersQuery, fqn, fqn)
 	if err != nil {
 		return nil, err
 	}
@@ -536,7 +536,7 @@ func (p *Provider) Callers(ctx context.Context, fqn string) ([]Node, error) {
 
 // Callees returns all edges originating from the node with the given fqn.
 func (p *Provider) Callees(ctx context.Context, fqn string) ([]Edge, error) {
-	rows, err := p.store.db.QueryContext(ctx, `
+	rows, err := p.store.q(ctx).QueryContext(ctx, `
         SELECT e.target_fqn, e.relation FROM edges e
         JOIN nodes n ON e.source_id = n.id
         WHERE n.fqn = ?`, fqn)
@@ -560,7 +560,7 @@ func (p *Provider) Callees(ctx context.Context, fqn string) ([]Edge, error) {
 
 // Importers returns FQNs of all packages that import the given package FQN.
 func (p *Provider) Importers(ctx context.Context, packageFQN string) ([]string, error) {
-	rows, err := p.store.db.QueryContext(ctx, `
+	rows, err := p.store.q(ctx).QueryContext(ctx, `
         SELECT DISTINCT n.fqn FROM edges e
         JOIN nodes n ON e.source_id = n.id
         WHERE e.target_fqn = ? AND e.relation = 'imports' AND n.kind = 'package'`, packageFQN)
@@ -595,4 +595,13 @@ func scanNodes(rows *sql.Rows) ([]Node, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// readFile is the file as the caller sees it: a turn's staged version when
+// the context carries one (LLM-11), else the disk.
+func (p *Provider) readFile(ctx context.Context, rel, abs string) ([]byte, error) {
+	if b, ok := overlayRead(ctx, rel); ok {
+		return b, nil
+	}
+	return os.ReadFile(abs)
 }

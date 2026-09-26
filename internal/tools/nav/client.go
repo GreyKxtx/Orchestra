@@ -1,6 +1,7 @@
 package nav
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/orchestra/orchestra/internal/ckg"
@@ -21,6 +22,7 @@ type Client struct {
 	EmbedCfg    config.EmbedConfig
 	snapshot    func() (CKGAccess, func())
 	lsp         func() *lsp.Manager
+	staged      func(ctx context.Context) ([]ckg.StagedFile, func(string) ([]byte, bool))
 }
 
 // NewClient wires navigation tools. snapshot must return a read-locked CKG view.
@@ -61,4 +63,28 @@ func (c *Client) lspManager() *lsp.Manager {
 		return nil
 	}
 	return c.lsp()
+}
+
+// WithStaged tells the client where a turn's staged files are: explore and
+// the file outline answer from the graph with those files in place of the
+// disk's (LLM-11).
+func (c *Client) WithStaged(fn func(ctx context.Context) ([]ckg.StagedFile, func(string) ([]byte, bool))) *Client {
+	if c != nil {
+		c.staged = fn
+	}
+	return c
+}
+
+// overlayCtx is ctx with the graph shadowed by the staged files of the
+// agent behind it, and the release that ends that; ctx itself when nothing
+// is staged.
+func (c *Client) overlayCtx(ctx context.Context, orch *ckg.Orchestrator) (context.Context, func(), error) {
+	if c == nil || c.staged == nil {
+		return ctx, func() {}, nil
+	}
+	files, read := c.staged(ctx)
+	if len(files) == 0 {
+		return ctx, func() {}, nil
+	}
+	return orch.OverlayContext(ctx, files, read)
 }

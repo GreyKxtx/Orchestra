@@ -47,7 +47,7 @@
 |-----|-----------|--------|------------|
 | `grep` | `search.text` | ✅ | Regex-поиск; авто-fallback на ripgrep если есть в PATH |
 | `symbols` | `code.symbols` | ✅ | Символы / outline файла; позиции `start_line`/`start_col`/`end_line`/`end_col` с 1, как у `read` (ToolsVersion 15) |
-| `explore` | `explore_codebase` | ✅ | CKG: пакет / тип / символ — авто-выбор уровня по форме запроса |
+| `explore` | `explore_codebase` | ✅ | CKG: пакет / тип / символ — авто-выбор уровня по форме запроса. В ходе отвечает по графу со staged-правками хода (и слоя задачи) вместо дисковых версий тех же файлов: символ, который модель только что написала, уже виден, удалённый — исчез; сниппеты — из staged-содержимого |
 | `semantic_search` | — | ✅ | Cosine-поиск по эмбеддингам CKG-узлов; требует `embed.model` в config + `orchestra ckg embed` для индексации |
 
 ### LSP (feedback после правок)

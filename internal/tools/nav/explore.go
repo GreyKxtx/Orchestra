@@ -28,7 +28,12 @@ func (c *Client) ExploreCodebase(ctx context.Context, req ExploreCodebaseRequest
 		if err := orch.UpdateGraph(ctx); err != nil {
 			return fmt.Errorf("update ckg: %w", err)
 		}
-		content, err := snap.Provider.ExploreSymbol(ctx, req.SymbolName, ckg.ExploreOptions{
+		octx, release, err := c.overlayCtx(ctx, orch)
+		if err != nil {
+			return err
+		}
+		defer release()
+		content, err := snap.Provider.ExploreSymbol(octx, req.SymbolName, ckg.ExploreOptions{
 			Depth:     req.Depth,
 			Direction: req.Direction,
 		})
