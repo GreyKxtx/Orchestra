@@ -97,21 +97,38 @@ type AgentPostRequest struct {
 // AgentPostReceipt is what agent_post returns.
 type AgentPostReceipt struct {
 	To        string `json:"to"`
-	Delivered string `json:"delivered"` // live | inbox
+	Delivered string `json:"delivered"` // live | inbox | answered | unanswered
 	Note      string `json:"note,omitempty"`
+	// Answer is the user's answer to a question the runtime put to them
+	// (Delivered "answered"): a question to the root goes through the
+	// Question Barrier and is on the record in decisions.md.
+	Answer string `json:"answer,omitempty"`
 }
 
-// InboxMessage is one note waiting for an agent.
+// InboxMessage is one note waiting for an agent, with its provenance: who
+// wrote it, from which task at what depth, and whether it is an agent's
+// word at all (Origin).
 type InboxMessage struct {
-	From     string `json:"from"`
-	To       string `json:"to"`
-	Kind     string `json:"kind"`
+	From string `json:"from"`
+	// FromTaskID and Depth place the sender in the delegation tree; empty
+	// and 0 for the root.
+	FromTaskID string `json:"from_task_id,omitempty"`
+	Depth      int    `json:"depth,omitempty"`
+	To         string `json:"to"`
+	Kind       string `json:"kind"`
+	// Origin is who the note comes from besides an agent: InboxOriginRuntime
+	// for what the runtime itself says (a dropped-notes notice, a question
+	// it relayed to the user). Empty for an agent's note.
+	Origin   string `json:"origin,omitempty"`
 	Message  string `json:"message"`
 	Artifact string `json:"artifact,omitempty"`
 	At       string `json:"at"`
 	// Tainted: the sender had read untrusted text (taint.go).
 	Tainted string `json:"tainted,omitempty"`
 }
+
+// InboxOriginRuntime marks a note the runtime wrote, not an agent.
+const InboxOriginRuntime = "runtime"
 
 // TaskBoardEntry is one row of task_board.
 type TaskBoardEntry struct {
@@ -269,7 +286,7 @@ func (a *Agent) agencyAdvertisement() string {
 	}
 	writeCards("Delegate (task / task_spawn subagent_type):\n", info.Delegates)
 	writeCards("Talk to (send_message to; the conversation continues across calls):\n", info.Contacts)
-	b.WriteString("agent_post{to, kind, message} leaves a note for any agent or department without waiting (kind: note|question|contract_change_request|finding|handoff); notes to you arrive as <agent_messages>.\n")
+	b.WriteString("agent_post{to, kind, message} leaves a note for any agent or department without waiting (kind: note|question|contract_change_request|finding|handoff); notes to you arrive as <agent_messages>. A question to lead is answered by the user in the receipt.\n")
 	b.WriteString("</available_agents>")
 	return b.String()
 }
@@ -332,6 +349,14 @@ func FitAgentMessages(msgs []InboxMessage, maxBytes int) (string, []InboxMessage
 			kind = "note"
 		}
 		head := fmt.Sprintf("[%s from %s", escapeAgentText(kind), escapeAgentText(m.From))
+		if m.Origin == InboxOriginRuntime {
+			head = "[runtime"
+			if m.From != "" && m.From != InboxOriginRuntime {
+				head += " · about " + escapeAgentText(m.From)
+			}
+		} else if m.FromTaskID != "" {
+			head += " · " + escapeAgentText(m.FromTaskID)
+		}
 		if m.Artifact != "" {
 			head += " · artifact " + escapeAgentText(m.Artifact)
 		}

@@ -73,8 +73,8 @@ func (sr *scopedRunner) SendMessage(ctx context.Context, req agent.AgentMessageR
 	return sr.r.sendMessage(ctx, sr.s, req)
 }
 
-func (sr *scopedRunner) Post(_ context.Context, req agent.AgentPostRequest) (*agent.AgentPostReceipt, error) {
-	return sr.r.post(sr.s, req)
+func (sr *scopedRunner) Post(ctx context.Context, req agent.AgentPostRequest) (*agent.AgentPostReceipt, error) {
+	return sr.r.post(ctx, sr.s, req)
 }
 
 func (sr *scopedRunner) Board() []agent.TaskBoardEntry { return sr.r.board() }
@@ -101,8 +101,8 @@ func (r *TaskRunner) SendMessage(ctx context.Context, req agent.AgentMessageRequ
 }
 
 // Post implements agent.AgencyRunner for the top-level agent.
-func (r *TaskRunner) Post(_ context.Context, req agent.AgentPostRequest) (*agent.AgentPostReceipt, error) {
-	return r.post(rootScope(), req)
+func (r *TaskRunner) Post(ctx context.Context, req agent.AgentPostRequest) (*agent.AgentPostReceipt, error) {
+	return r.post(ctx, rootScope(), req)
 }
 
 // Board implements agent.AgencyRunner.
@@ -415,81 +415,26 @@ func (r *TaskRunner) sendMessage(ctx context.Context, from agentScope, req agent
 	return reply, nil
 }
 
-var postKinds = map[string]bool{"note": true, "question": true, "contract_change_request": true, "finding": true, "handoff": true}
-
-// postMessageMaxBytes caps one note; longer material belongs in a file the
-// note points at.
-const postMessageMaxBytes = 4000
-
-// post leaves a note: live for a running recipient, in its inbox otherwise.
-// Posting needs no flow — the runtime relays it, the way the Question
-// Barrier relays open_questions (spec §2.2: relay is code, not an LLM turn).
-func (r *TaskRunner) post(from agentScope, req agent.AgentPostRequest) (*agent.AgentPostReceipt, error) {
+// post leaves a note: live for a running recipient, in its inbox otherwise,
+// through the bus (bus.go). Posting needs no flow — the runtime relays it,
+// the way the Question Barrier relays open_questions (spec §2.2: relay is
+// code, not an LLM turn).
+func (r *TaskRunner) post(ctx context.Context, from agentScope, req agent.AgentPostRequest) (*agent.AgentPostReceipt, error) {
 	if !r.child.Agency.Enabled {
 		return nil, fmt.Errorf("agent_post: the agency is off for this turn")
 	}
-	to := strings.ToLower(strings.TrimSpace(req.To))
-	switch to {
-	case "lead", "root", "parent":
-		to = config.AgencyRootName
-	}
-	if to == "" || (!config.ValidAgencyName(to) && !taskIDRe.MatchString(to)) {
-		return nil, fmt.Errorf("agent_post: %q is not an agent address or task_id", req.To)
-	}
-	// Posting to your own address is how a worker reaches its siblings in
-	// the department (delivery skips the sender); only the root and a task
-	// addressing itself by ID are talking to themselves.
-	if (from.depth == 0 && to == config.AgencyRootName) || (from.taskID != "" && to == from.taskID) {
-		return nil, fmt.Errorf("agent_post: you are %s", to)
-	}
-	kind := strings.ToLower(strings.TrimSpace(req.Kind))
-	if kind == "" {
-		kind = "note"
-	}
-	if !postKinds[kind] {
-		return nil, fmt.Errorf("agent_post: kind %q (want note|question|contract_change_request|finding|handoff)", req.Kind)
-	}
-	text := strings.TrimSpace(req.Message)
-	if text == "" {
-		return nil, fmt.Errorf("agent_post: message is empty")
-	}
-	if len(text) > postMessageMaxBytes {
-		return nil, fmt.Errorf("agent_post: message is %d bytes (max %d) — write the detail to a file and point at it", len(text), postMessageMaxBytes)
-	}
-	artifact := strings.TrimSpace(req.Artifact)
-	if kind == "contract_change_request" && artifact == "" {
-		return nil, fmt.Errorf("agent_post: contract_change_request needs artifact (the contract file the delta applies to)")
-	}
-	if err := r.takeMessage(); err != nil {
+	p, err := r.bus.parsePost(from, req)
+	if err != nil {
 		return nil, err
 	}
-	m := agent.InboxMessage{From: from.address, To: to, Kind: kind, Message: text, Artifact: artifact, At: time.Now().UTC().Format(time.RFC3339), Tainted: req.Tainted}
-	receipt := &agent.AgentPostReceipt{To: to, Delivered: "live"}
-	switch {
-	case to == config.AgencyRootName:
-		r.mu.Lock()
-		r.rootInbox = append(r.rootInbox, m)
-		r.mu.Unlock()
-	case r.deliverLive(to, from.taskID, m) > 0:
-	default:
-		if taskIDRe.MatchString(to) {
-			return nil, fmt.Errorf("agent_post: task %s is not running", to)
-		}
-		if err := r.appendInbox(to, m); err != nil {
-			return nil, fmt.Errorf("agent_post: %w", err)
-		}
-		receipt.Delivered = "inbox"
-		receipt.Note = to + " is not running; it reads the note when it is next started"
-	}
-	// The hub has to know the contract is being argued over: a change
-	// request is copied to the Orchestrator whoever it was addressed to.
-	if kind == "contract_change_request" && to != config.AgencyRootName && from.depth > 0 {
-		r.mu.Lock()
-		r.rootInbox = append(r.rootInbox, m)
-		r.mu.Unlock()
-	}
-	r.emitAgentMessage("post", from.address, to, kind, text, "")
-	return receipt, nil
+	return r.bus.publish(ctx, p)
+}
+
+// leaveForRoot puts a note in the top-level agent's inbox.
+func (r *TaskRunner) leaveForRoot(m agent.InboxMessage) {
+	r.mu.Lock()
+	r.rootInbox = append(r.rootInbox, m)
+	r.mu.Unlock()
 }
 
 // deliverLive appends m to the inbox of every unfinished task that answers to

@@ -244,3 +244,25 @@ func TestAgentMessagesCannotCloseTheirBlock(t *testing.T) {
 		t.Fatalf("notes must be framed as information:\n%s", out)
 	}
 }
+
+// A note carries its provenance into the prompt: the sender's task, and
+// whether the runtime wrote it (audit 4.5).
+func TestFitAgentMessages_ShowsProvenance(t *testing.T) {
+	text, rest := FitAgentMessages([]InboxMessage{
+		{From: "backend@api", FromTaskID: "task_3_7", Kind: "finding", Message: "cache <stale>"},
+		{From: "backend@api", Origin: InboxOriginRuntime, Kind: "note", Message: "backend@api asked the user: X — answer: Y"},
+		{From: "runtime", Origin: InboxOriginRuntime, Kind: "note", Message: "2 older notes were dropped"},
+	}, 0)
+	if len(rest) != 0 {
+		t.Fatalf("rest %v", rest)
+	}
+	for _, want := range []string{
+		"[finding from backend@api · task_3_7] cache &lt;stale&gt;",
+		"[runtime · about backend@api] backend@api asked the user",
+		"[runtime] 2 older notes were dropped",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in:\n%s", want, text)
+		}
+	}
+}

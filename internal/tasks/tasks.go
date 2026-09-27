@@ -202,6 +202,8 @@ type TaskRunner struct {
 	// what, the slots, the budget's clock (graph.go). The runner runs the
 	// children; the graph is the state.
 	graph *taskGraph
+	// bus routes the notes agents leave each other (bus.go).
+	bus *artifactBus
 
 	// mu guards the messaging state below: the message budget and the
 	// root's inbox. The tasks themselves are the graph's, under its lock.
@@ -281,13 +283,15 @@ type taskEntry struct {
 
 // New creates a new TaskRunner.
 func New(llmClient llm.Client, validator *schema.Validator, toolRunner *tools.Runner, child ChildAgentConfig) *TaskRunner {
-	return &TaskRunner{
+	r := &TaskRunner{
 		llmClient:  llmClient,
 		validator:  validator,
 		toolRunner: toolRunner,
 		child:      child,
 		graph:      newTaskGraph(child.Budget, child.UsageTracker, child.Agency.MaxParallel),
 	}
+	r.bus = newArtifactBus(r)
+	return r
 }
 
 func childToolsForSubagent(subagentType string, caps tools.Capabilities) []llm.ToolDef {

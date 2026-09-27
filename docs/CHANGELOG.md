@@ -8,6 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — agent notes travel on a typed bus (2026-09)
+
+- **A question to the Lead is a question for the user.** `agent_post{kind: question, to: lead}` used to land in the Orchestrator's inbox like any note, past the Question Barrier and past `decisions.md`, and the worker went on without an answer. The runtime now puts it to the user through the barrier — one round at a time, a question already answered this turn answered from that answer, within `max_clarification_rounds` — records the Q/A in `decisions.md`, answers the sender in the receipt (`delivered: answered`, `answer`) and tells the Orchestrator what was asked. Without an interactive channel the question reaches the Orchestrator as before and the receipt says so; past the budget it is `unanswered` with an assumption on the record.
+- **Every note carries its provenance.** `internal/tasks/bus.go` routes `agent_post` by kind from one spec table (what a kind needs, who hears of it besides its recipient); a note names the sender's task and depth, and a note the runtime writes is marked `origin: runtime`; `<agent_messages>` shows both. The Orchestrator's copy of a contract change request is a subscription of the kind, not a special case in the post.
+
 ### Changed — the task graph is one object (2026-09)
 
 - **`tasks.taskGraph`.** A turn's tasks — every task in start order, the live ones a waiter can collect, the `depends_on` names per spawner, the slots per depth, the id sequence, the budget's wall clock — were fields of the `TaskRunner`, touched from four files under the lock that also guarded the agency's message budget and the root's inbox. They are now one type under its own lock (`internal/tasks/graph.go`): `register` admits a task against the budget and the stall rule (an identical task running, or failed twice), resolves its dependencies and finds the scopes it conflicts with in one step; `board` and `records` are its views; the inbox delivery reads it. The runner runs the children and asks the graph. Behaviour is unchanged; the graph has tests of its own that run no child.
