@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/orchestra/orchestra/internal/decisions"
@@ -98,54 +99,14 @@ func (r *TaskRunner) relayOpenQuestions(ctx context.Context, taskResult string) 
 		}), blocking
 	}
 
-	r.barrierMu.Lock()
-	defer r.barrierMu.Unlock()
-	st, found, err := orchestrastate.Load(root)
-	if err != nil || !found {
-		return taskResult, false
+	answers, askIdx, exhausted, err := r.askUser(ctx, root, qs)
+	if err != nil {
+		// The barrier must not turn an answerable result into a failure:
+		// the questions stay open in the result for the Lead to handle.
+		return taskResult, blocking
 	}
-
-	answers := make([]string, len(qs))
-	var ask []tools.QuestionItem
-	var askIdx []int
-	for i, q := range qs {
-		if ans, ok := r.answered[questionKey(q.Text)]; ok {
-			answers[i] = ans
-			continue
-		}
-		text := q.Text
-		if q.Dept != "" {
-			text = "[" + q.Dept + "] " + text
-		}
-		ask = append(ask, tools.QuestionItem{Question: text, Options: q.Options})
-		askIdx = append(askIdx, i)
-	}
-	if len(ask) > 0 {
-		if st.ClarificationRounds >= r.resolvedMaxClarificationRounds() {
-			return r.exhaustClarificationBudget(root, taskResult, qs), false
-		}
-		got, err := r.child.QuestionAsker.Ask(ctx, ask)
-		if err != nil {
-			// The barrier must not turn an answerable result into a failure:
-			// the questions stay open in the result for the Lead to handle.
-			return taskResult, blocking
-		}
-		// Counted on the state as it is now: the answer took as long as the
-		// user took, and a copy loaded before asking would write back a stale
-		// phase.
-		_, _ = orchestrastate.Update(root, func(st *orchestrastate.State) error {
-			st.ClarificationRounds++
-			return nil
-		})
-		if r.answered == nil {
-			r.answered = map[string]string{}
-		}
-		for j, i := range askIdx {
-			if j < len(got) {
-				answers[i] = got[j]
-				r.answered[questionKey(qs[i].Text)] = got[j]
-			}
-		}
+	if exhausted {
+		return r.exhaustClarificationBudget(root, taskResult, qs), false
 	}
 
 	entries := make([]decisions.Entry, 0, len(qs))
@@ -179,6 +140,67 @@ func holdBatchWorkOrders(taskResult string) string {
 		"batch_workorders_held": true,
 		"revise":                "the WorkOrders were written before the blocking questions had answers, so none was started. Continue this Lead with send_message{to: <its dept>} carrying the answers; it returns a revised batch_workorders[] that the runtime relays.",
 	})
+}
+
+// errBarrierUnavailable is askUser's answer when the session's state is
+// gone from under the barrier.
+var errBarrierUnavailable = errors.New("question barrier: the session state is unavailable")
+
+// askUser is the barrier's one round: the questions of qs not yet answered
+// this turn are put to the user, at most one round at a time, within the
+// clarification budget. It returns every question's answer — from this
+// round, or from an earlier one that asked the same thing — the indexes it
+// asked now, and exhausted when the budget refused the round (nothing was
+// asked, answers are empty). An asker that fails is an error: the
+// questions stay open.
+func (r *TaskRunner) askUser(ctx context.Context, root string, qs []OpenQuestion) (answers []string, askIdx []int, exhausted bool, err error) {
+	r.barrierMu.Lock()
+	defer r.barrierMu.Unlock()
+	st, found, err := orchestrastate.Load(root)
+	if err != nil || !found {
+		return nil, nil, false, errBarrierUnavailable
+	}
+	answers = make([]string, len(qs))
+	var ask []tools.QuestionItem
+	for i, q := range qs {
+		if ans, ok := r.answered[questionKey(q.Text)]; ok {
+			answers[i] = ans
+			continue
+		}
+		text := q.Text
+		if q.Dept != "" {
+			text = "[" + q.Dept + "] " + text
+		}
+		ask = append(ask, tools.QuestionItem{Question: text, Options: q.Options})
+		askIdx = append(askIdx, i)
+	}
+	if len(ask) == 0 {
+		return answers, nil, false, nil
+	}
+	if st.ClarificationRounds >= r.resolvedMaxClarificationRounds() {
+		return nil, nil, true, nil
+	}
+	got, err := r.child.QuestionAsker.Ask(ctx, ask)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	// Counted on the state as it is now: the answer took as long as the
+	// user took, and a copy loaded before asking would write back a stale
+	// phase.
+	_, _ = orchestrastate.Update(root, func(st *orchestrastate.State) error {
+		st.ClarificationRounds++
+		return nil
+	})
+	if r.answered == nil {
+		r.answered = map[string]string{}
+	}
+	for j, i := range askIdx {
+		if j < len(got) {
+			answers[i] = got[j]
+			r.answered[questionKey(qs[i].Text)] = got[j]
+		}
+	}
+	return answers, askIdx, false, nil
 }
 
 func questionKey(text string) string {

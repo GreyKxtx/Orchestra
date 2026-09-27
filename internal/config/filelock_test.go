@@ -147,11 +147,28 @@ func TestUpdateFile_WaitsForTheLock(t *testing.T) {
 		if err != nil {
 			t.Fatalf("UpdateFile after unlock: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("UpdateFile never proceeded after the lock was released")
 	}
 	data, _ := os.ReadFile(path)
 	if string(data) != "a: 2\n" {
 		t.Fatalf("config = %q", data)
+	}
+}
+
+// A read that fails for a moment after another writer's rename — a sharing
+// violation on Windows — is retried; a file that is not there is not.
+func TestReadFileRetry(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cfg.yml")
+	if _, err := readFileRetry(path); !os.IsNotExist(err) {
+		t.Fatalf("a missing file: %v, want not-exist at once", err)
+	}
+	if err := os.WriteFile(path, []byte("a: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readFileRetry(path)
+	if err != nil || string(data) != "a: 1\n" {
+		t.Fatalf("read: %q, %v", data, err)
 	}
 }

@@ -26,23 +26,7 @@ type IntegrationReport struct {
 // together). Nil when fewer than two workers changed files, or when worker
 // verification is switched off.
 func (r *TaskRunner) integrationVerify(ctx context.Context, entries []*taskEntry) json.RawMessage {
-	seen := map[string]bool{}
-	var files []string
-	workers := 0
-	r.mu.Lock()
-	for _, e := range entries {
-		if e == nil || !e.worker || e.status != "done" || len(e.edited) == 0 {
-			continue
-		}
-		workers++
-		for _, p := range e.edited {
-			if !seen[p] {
-				seen[p] = true
-				files = append(files, p)
-			}
-		}
-	}
-	r.mu.Unlock()
+	workers, files := r.graph.verifiedEdits(entries)
 	if workers < 2 || !r.resolvedWorkerVerifyEnabled() {
 		return nil
 	}

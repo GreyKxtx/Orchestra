@@ -450,7 +450,7 @@ func (a *Agent) emitStepUsage(step int, resp *llm.CompleteResponse) {
 	payload, _ := json.Marshal(map[string]any{
 		// cached_prompt_tokens is the prompt-cache hit. On a long run it should
 		// grow with the history; a run that keeps it at 0 is re-billing the whole
-		// transcript every step (see markPrefixCacheBreakpoint in llm/anthropic.go).
+		// transcript every step (see markPrefixCacheBreakpoint in llm/prompt_cache.go).
 		"cached_prompt_tokens": u.CachedPromptTokens,
 		"cache_write_tokens":   u.CacheWriteTokens,
 		"prompt_tokens":        u.PromptTokens,

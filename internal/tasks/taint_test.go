@@ -25,9 +25,9 @@ func TestTaint_ADependencysTaintReachesTheDependent(t *testing.T) {
 		t.Fatalf("a child that read nothing untrusted is not tainted: %+v", page)
 	}
 	// As if the child had fetched the page itself: its result says so.
-	r.mu.Lock()
-	r.findEntryLocked(page.TaskID).result.Tainted = "webfetch"
-	r.mu.Unlock()
+	r.graph.mu.Lock()
+	r.graph.findLocked(page.TaskID).result.Tainted = "webfetch"
+	r.graph.mu.Unlock()
 
 	res := spawnAndWait(t, r, agent.SubtaskSpawnRequest{Goal: "SUMMARY-GOAL", SubagentType: "general", DependsOn: []string{"page"}})
 	goal := conversation(m.requests("SUMMARY-GOAL")[0])

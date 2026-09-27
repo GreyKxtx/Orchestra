@@ -2,13 +2,20 @@ package llm
 
 import "strings"
 
-// Prompt caching through an OpenAI-compatible gateway.
+// Prompt caching: where the breakpoints go, in one place for both paths.
 //
-// The native Anthropic client marks its own breakpoints (see anthropic.go).
-// The same models reached through a gateway go out on the OpenAI-compatible
-// path instead, where the only way to ask for caching is an Anthropic-shaped
-// cache_control block inside array-form content — OpenRouter forwards it to
-// the underlying API verbatim.
+// The rule is the same whoever encodes it (docs/architecture/prompt-cache.md):
+// the system block, the tool schemas, and the conversation up to but not
+// including its last message — the agent appends the volatile part (working
+// state, todos, reminders) last, so everything before it is a stable prefix
+// each step reads from the cache and writes only what it appended. The
+// native Anthropic client marks its converted blocks (markToolsCacheBreakpoint,
+// markPrefixCacheBreakpoint: the breakpoint must land after tool results
+// were merged and off the thinking blocks); the same models reached through
+// an OpenAI-compatible gateway get an Anthropic-shaped cache_control block
+// inside array-form content (markGatewayPromptCache) — OpenRouter forwards
+// it to the underlying API verbatim — and a gateway that rejects the field
+// turns the markers off for the client's life.
 //
 // Without this an agent step re-sends and re-pays for the entire transcript:
 // one field turn spent 983k prompt tokens across 15 calls.
@@ -102,5 +109,47 @@ func (c *OpenAIClient) disablePromptCacheMarkers(reason string) {
 	c.supportsMu.Unlock()
 	if c.logger != nil {
 		c.logger.LogError(400, "prompt cache_control rejected — retrying without breakpoints: "+reason, 0)
+	}
+}
+
+// ── Anthropic (native) ───────────────────────────────────────────────────────
+
+// markToolsCacheBreakpoint caches the tool schemas, which are identical on
+// every step of an agent run and are several KB of prompt.
+func markToolsCacheBreakpoint(tools []anthropicTool) {
+	if len(tools) == 0 {
+		return
+	}
+	tools[len(tools)-1].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
+}
+
+// markPrefixCacheBreakpoint caches the conversation up to (but not including)
+// the last message.
+//
+// The agent rebuilds volatile context — working state, todos, reminders — on
+// every step and appends it last, so the last message is the one part of the
+// prompt that reliably differs between steps. Everything before it is a stable,
+// append-only prefix: putting the breakpoint there makes each step read the
+// previous step's history from cache and write only what was appended, instead
+// of re-paying for the whole transcript.
+func markPrefixCacheBreakpoint(msgs []anthropicMessage) {
+	if len(msgs) < 2 {
+		return
+	}
+	m := &msgs[len(msgs)-2]
+	blocks := userContentBlocks(m.Content)
+	if len(blocks) == 0 {
+		if arr, ok := m.Content.([]anthropicBlock); ok {
+			blocks = arr
+		}
+	}
+	// Thinking blocks cannot carry cache_control: mark the last other one.
+	for i := len(blocks) - 1; i >= 0; i-- {
+		if t := blocks[i].Type; t == "thinking" || t == "redacted_thinking" {
+			continue
+		}
+		blocks[i].CacheControl = &anthropicCacheControl{Type: "ephemeral"}
+		m.Content = blocks
+		return
 	}
 }

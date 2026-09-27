@@ -8,6 +8,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Fixed — the config file lock on a loaded Windows machine (2026-09)
+
+- **A read the antivirus holds is retried.** `UpdateFile` read `.orchestra.yml` under its lock right after another writer's atomic rename, and on Windows the new file can be held for a moment by a scan (a sharing violation): the read is retried with a short backoff, the way the rename itself is; a lock stolen past the acquire timeout no longer spins while something else still holds the lock file.
+
+### Changed — agent notes travel on a typed bus (2026-09)
+
+- **A question to the Lead is a question for the user.** `agent_post{kind: question, to: lead}` used to land in the Orchestrator's inbox like any note, past the Question Barrier and past `decisions.md`, and the worker went on without an answer. The runtime now puts it to the user through the barrier — one round at a time, a question already answered this turn answered from that answer, within `max_clarification_rounds` — records the Q/A in `decisions.md`, answers the sender in the receipt (`delivered: answered`, `answer`) and tells the Orchestrator what was asked. Without an interactive channel the question reaches the Orchestrator as before and the receipt says so; past the budget it is `unanswered` with an assumption on the record.
+- **Every note carries its provenance.** `internal/tasks/bus.go` routes `agent_post` by kind from one spec table (what a kind needs, who hears of it besides its recipient); a note names the sender's task and depth, and a note the runtime writes is marked `origin: runtime`; `<agent_messages>` shows both. The Orchestrator's copy of a contract change request is a subscription of the kind, not a special case in the post.
+
+### Changed — the task graph is one object (2026-09)
+
+- **`tasks.taskGraph`.** A turn's tasks — every task in start order, the live ones a waiter can collect, the `depends_on` names per spawner, the slots per depth, the id sequence, the budget's wall clock — were fields of the `TaskRunner`, touched from four files under the lock that also guarded the agency's message budget and the root's inbox. They are now one type under its own lock (`internal/tasks/graph.go`): `register` admits a task against the budget and the stall rule (an identical task running, or failed twice), resolves its dependencies and finds the scopes it conflicts with in one step; `board` and `records` are its views; the inbox delivery reads it. The runner runs the children and asks the graph. Behaviour is unchanged; the graph has tests of its own that run no child.
+
 ### Added — each turn leaves as an OpenTelemetry trace (2026-09)
 
 - **`telemetry.otlp_endpoint` / `OTEL_EXPORTER_OTLP_ENDPOINT`.** The core sends every turn as one trace over OTLP/HTTP JSON, named by the GenAI semantic conventions: `invoke_agent <mode>` for the turn, `invoke_agent <role>` for each subagent under the task that started it, `chat <model>` for each model call with its tokens, cache hits, finish reason and endpoint, `execute_tool <name>` for each tool call with its duration and error. The turn's stop reason, a failed call, a failed task and a failed turn are error statuses on their spans. The exporter reads the model calls and tool calls from the lines the logger already writes (`llm.Logger.Observe`) and the subagents from the turn's notifications, so nothing else in the run changed; `llm_log.jsonl` gains the model, the token counts and the stop reason on `llm_response`. No SDK: one JSON document per turn, sent when the turn ends; a collector that fails is reported once. `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` and `OTEL_SDK_DISABLED` are honoured; a workspace's own `telemetry:` block is trust-gated like its other endpoints.

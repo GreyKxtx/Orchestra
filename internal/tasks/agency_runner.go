@@ -73,8 +73,8 @@ func (sr *scopedRunner) SendMessage(ctx context.Context, req agent.AgentMessageR
 	return sr.r.sendMessage(ctx, sr.s, req)
 }
 
-func (sr *scopedRunner) Post(_ context.Context, req agent.AgentPostRequest) (*agent.AgentPostReceipt, error) {
-	return sr.r.post(sr.s, req)
+func (sr *scopedRunner) Post(ctx context.Context, req agent.AgentPostRequest) (*agent.AgentPostReceipt, error) {
+	return sr.r.post(ctx, sr.s, req)
 }
 
 func (sr *scopedRunner) Board() []agent.TaskBoardEntry { return sr.r.board() }
@@ -101,8 +101,8 @@ func (r *TaskRunner) SendMessage(ctx context.Context, req agent.AgentMessageRequ
 }
 
 // Post implements agent.AgencyRunner for the top-level agent.
-func (r *TaskRunner) Post(_ context.Context, req agent.AgentPostRequest) (*agent.AgentPostReceipt, error) {
-	return r.post(rootScope(), req)
+func (r *TaskRunner) Post(ctx context.Context, req agent.AgentPostRequest) (*agent.AgentPostReceipt, error) {
+	return r.post(ctx, rootScope(), req)
 }
 
 // Board implements agent.AgencyRunner.
@@ -124,62 +124,24 @@ func (r *TaskRunner) DrainInbox() []agent.InboxMessage {
 
 // ── registry helpers ─────────────────────────────────────────────────────────
 
-func (r *TaskRunner) findEntryLocked(taskID string) *taskEntry {
-	for _, e := range r.all {
-		if e.id == taskID {
-			return e
-		}
-	}
-	return nil
-}
-
 // checkOwner refuses a child waiting for or cancelling another agent's task.
 func (r *TaskRunner) checkOwner(s agentScope, taskID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	e := r.findEntryLocked(taskID)
-	if e == nil {
-		return fmt.Errorf("task %q not found", taskID)
-	}
-	if e.parentTaskID != s.taskID {
-		return fmt.Errorf("task %s was started by %s, not by you; wait only for tasks you started", taskID, e.parent)
-	}
-	return nil
+	return r.graph.checkOwner(s.taskID, taskID)
 }
 
 func (r *TaskRunner) setStatus(e *taskEntry, status string) {
-	r.mu.Lock()
-	e.status = status
-	r.mu.Unlock()
+	r.graph.setStatus(e, status)
 }
 
-// markFinished stamps the final board status. A worker whose task ended
-// "done" but whose result is not a success (verification_failed, blocked)
-// shows as failed: the board is where a Lead decides what to redo.
+// markFinished stamps the final board status (taskGraph.markFinished) and
+// tells the checkpoint the graph moved.
 func (r *TaskRunner) markFinished(e *taskEntry) {
-	defer r.graphChanged()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	e.finished = time.Now()
-	if e.result == nil {
-		e.status = "error"
-		return
-	}
-	e.status = e.result.Status
-	if e.status == "done" && e.worker && !workerOutcomeSucceeded(e.result.Result) {
-		e.status = "failed"
-	}
+	r.graph.markFinished(e)
+	r.graphChanged()
 }
 
 func (r *TaskRunner) recordEdited(taskID string, paths []string) {
-	if len(paths) == 0 {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if e := r.findEntryLocked(taskID); e != nil {
-		e.edited = append([]string(nil), paths...)
-	}
+	r.graph.recordEdited(taskID, paths)
 }
 
 // keyOf is where a depends_on key lives: in the namespace of the task that
@@ -187,93 +149,6 @@ func (r *TaskRunner) recordEdited(taskID string, paths []string) {
 // the first one's over, so each got the other's upstream_results (ORC-7).
 func keyOf(spawner, key string) string {
 	return spawner + "\x00" + key
-}
-
-// resolveDepsLocked maps depends_on names to registered tasks for a task that
-// spawner is starting. A key names a task the same spawner started; a task
-// ID names any task of the turn. A dependency must exist before its dependent
-// is spawned, which keeps the dependency graph acyclic, and must be one this
-// task can wait for without waiting for itself (dependencyRefusalLocked).
-// Caller holds r.mu.
-func (r *TaskRunner) resolveDepsLocked(spawner string, names []string) ([]*taskEntry, error) {
-	var out []*taskEntry
-	seen := map[*taskEntry]bool{}
-	for _, raw := range names {
-		n := strings.TrimSpace(raw)
-		if n == "" {
-			continue
-		}
-		e := r.byKey[keyOf(spawner, n)]
-		if e == nil {
-			e = r.findEntryLocked(n)
-		}
-		if e == nil {
-			return nil, fmt.Errorf("depends_on: unknown task %q — spawn it first, then the tasks that depend on it; a key names a task you started, a task_id any task of the turn (yours: %s)", n, r.knownNamesLocked(spawner))
-		}
-		if err := r.dependencyRefusalLocked(spawner, n, e); err != nil {
-			return nil, err
-		}
-		if !seen[e] {
-			seen[e] = true
-			out = append(out, e)
-		}
-	}
-	return out, nil
-}
-
-// dependencyRefusalLocked refuses a dependency the new task could wait for
-// forever:
-//   - one of its ancestors. They wait for this task to finish — a Lead for
-//     its worker, a relaying Lead for its batch — so neither ever would.
-//   - a task of another branch that has not started. It waits for a slot at
-//     its depth, which one of this task's ancestors may hold while waiting
-//     for this task, or for dependencies of its own that do (ORC-7). A task
-//     already running holds its slot and waits only for its own children; a
-//     finished one waits for nothing. A sibling cannot close such a cycle:
-//     the tasks it waits for are older than this one.
-//
-// Caller holds r.mu.
-func (r *TaskRunner) dependencyRefusalLocked(spawner, name string, dep *taskEntry) error {
-	for id := spawner; id != ""; {
-		if dep.id == id {
-			return fmt.Errorf("depends_on: %q is an ancestor of this task — it waits for this task to finish, so this task would wait forever; use its result from your own context instead", name)
-		}
-		up := r.findEntryLocked(id)
-		if up == nil {
-			break
-		}
-		id = up.spawner
-	}
-	if dep.spawner == spawner {
-		return nil
-	}
-	switch dep.status {
-	case "queued", "waiting_deps":
-		return fmt.Errorf("depends_on: %q (%s) belongs to another agent and has not started — waiting on it can deadlock the turn; depend on your own tasks, or on it once task_board shows it running or done", name, dep.address)
-	}
-	return nil
-}
-
-func (r *TaskRunner) knownNamesLocked(spawner string) string {
-	var names []string
-	for _, e := range r.all {
-		if e.spawner != spawner {
-			continue
-		}
-		n := e.key
-		if n == "" {
-			n = e.id
-		}
-		names = append(names, n)
-		if len(names) == 12 {
-			names = append(names, "…")
-			break
-		}
-	}
-	if len(names) == 0 {
-		return "none yet"
-	}
-	return strings.Join(names, ", ")
 }
 
 // depSucceeded reports whether a finished dependency lets its dependents run.
@@ -303,14 +178,7 @@ func (r *TaskRunner) awaitDeps(ctx context.Context, e *taskEntry) (upstream, tai
 		case <-ctx.Done():
 			return "", "", &agent.SubtaskResult{TaskID: e.id, Status: "timeout", Error: "cancelled while waiting for depends_on"}
 		}
-		r.mu.Lock()
-		res := d.result
-		name := d.key
-		if name == "" {
-			name = d.id
-		}
-		addr := d.address
-		r.mu.Unlock()
+		res, name, addr := r.graph.depView(d)
 		if !depSucceeded(d, res) {
 			status := "without a result"
 			if res != nil {
@@ -355,17 +223,11 @@ func (r *TaskRunner) awaitDeps(ctx context.Context, e *taskEntry) (upstream, tai
 // one shared pool: a Lead waiting on its workers holds its own slot, and with
 // one pool four Leads could hold all four while their workers queue forever.
 func (r *TaskRunner) acquireSlot(ctx context.Context, e *taskEntry, parentToolCallID string) (func(), error) {
-	n := r.child.Agency.MaxParallel
-	if n <= 0 {
+	ch := r.graph.slot(e.depth)
+	if ch == nil {
 		return func() {}, nil
 	}
-	r.mu.Lock()
-	ch := r.slots[e.depth]
-	if ch == nil {
-		ch = make(chan struct{}, n)
-		r.slots[e.depth] = ch
-	}
-	r.mu.Unlock()
+	n := r.child.Agency.MaxParallel
 	release := func() { <-ch }
 	select {
 	case ch <- struct{}{}:
@@ -391,37 +253,7 @@ func (r *TaskRunner) acquireSlot(ctx context.Context, e *taskEntry, parentToolCa
 // ── board & wait-many ────────────────────────────────────────────────────────
 
 func (r *TaskRunner) board() []agent.TaskBoardEntry {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	now := time.Now()
-	out := make([]agent.TaskBoardEntry, 0, len(r.all))
-	for _, e := range r.all {
-		end := now
-		if !e.finished.IsZero() {
-			end = e.finished
-		}
-		row := agent.TaskBoardEntry{
-			TaskID:   e.id,
-			Key:      e.key,
-			Agent:    e.address,
-			Role:     e.role,
-			Parent:   e.parent,
-			Depth:    e.depth,
-			Status:   e.status,
-			Goal:     e.goal,
-			ElapsedS: int(end.Sub(e.started).Seconds()),
-			Finished: !e.finished.IsZero(),
-		}
-		for _, d := range e.deps {
-			n := d.key
-			if n == "" {
-				n = d.id
-			}
-			row.DependsOn = append(row.DependsOn, n)
-		}
-		out = append(out, row)
-	}
-	return out
+	return r.graph.board(time.Now())
 }
 
 // waitMany waits for every task in ids under one deadline, then verifies the
@@ -433,15 +265,12 @@ func (r *TaskRunner) waitMany(ctx context.Context, ids []string, timeoutMS int) 
 		return nil, fmt.Errorf("task_ids is empty")
 	}
 	entries := make([]*taskEntry, len(ids))
-	r.mu.Lock()
 	for i, id := range ids {
-		entries[i] = r.findEntryLocked(strings.TrimSpace(id))
+		entries[i] = r.graph.lookup(strings.TrimSpace(id))
 		if entries[i] == nil {
-			r.mu.Unlock()
 			return nil, fmt.Errorf("task %q not found", id)
 		}
 	}
-	r.mu.Unlock()
 	// One deadline for the whole set. A task still running when it passes is
 	// reported still_running and keeps running, like a single task_wait: the
 	// deadline used to cancel every task it caught (audit ORC-11).
@@ -462,10 +291,7 @@ func (r *TaskRunner) waitMany(ctx context.Context, ids []string, timeoutMS int) 
 		if err != nil {
 			// Collected by a concurrent wait between the lookup above and
 			// this one: the stored result is still the answer.
-			r.mu.Lock()
-			stored := e.result
-			r.mu.Unlock()
-			if stored != nil {
+			if stored := r.graph.resultOf(e); stored != nil {
 				res = stored
 			} else {
 				res = &agent.SubtaskResult{TaskID: e.id, Status: "error", Error: err.Error()}
@@ -589,116 +415,36 @@ func (r *TaskRunner) sendMessage(ctx context.Context, from agentScope, req agent
 	return reply, nil
 }
 
-var postKinds = map[string]bool{"note": true, "question": true, "contract_change_request": true, "finding": true, "handoff": true}
-
-// postMessageMaxBytes caps one note; longer material belongs in a file the
-// note points at.
-const postMessageMaxBytes = 4000
-
-// post leaves a note: live for a running recipient, in its inbox otherwise.
-// Posting needs no flow — the runtime relays it, the way the Question
-// Barrier relays open_questions (spec §2.2: relay is code, not an LLM turn).
-func (r *TaskRunner) post(from agentScope, req agent.AgentPostRequest) (*agent.AgentPostReceipt, error) {
+// post leaves a note: live for a running recipient, in its inbox otherwise,
+// through the bus (bus.go). Posting needs no flow — the runtime relays it,
+// the way the Question Barrier relays open_questions (spec §2.2: relay is
+// code, not an LLM turn).
+func (r *TaskRunner) post(ctx context.Context, from agentScope, req agent.AgentPostRequest) (*agent.AgentPostReceipt, error) {
 	if !r.child.Agency.Enabled {
 		return nil, fmt.Errorf("agent_post: the agency is off for this turn")
 	}
-	to := strings.ToLower(strings.TrimSpace(req.To))
-	switch to {
-	case "lead", "root", "parent":
-		to = config.AgencyRootName
-	}
-	if to == "" || (!config.ValidAgencyName(to) && !taskIDRe.MatchString(to)) {
-		return nil, fmt.Errorf("agent_post: %q is not an agent address or task_id", req.To)
-	}
-	// Posting to your own address is how a worker reaches its siblings in
-	// the department (delivery skips the sender); only the root and a task
-	// addressing itself by ID are talking to themselves.
-	if (from.depth == 0 && to == config.AgencyRootName) || (from.taskID != "" && to == from.taskID) {
-		return nil, fmt.Errorf("agent_post: you are %s", to)
-	}
-	kind := strings.ToLower(strings.TrimSpace(req.Kind))
-	if kind == "" {
-		kind = "note"
-	}
-	if !postKinds[kind] {
-		return nil, fmt.Errorf("agent_post: kind %q (want note|question|contract_change_request|finding|handoff)", req.Kind)
-	}
-	text := strings.TrimSpace(req.Message)
-	if text == "" {
-		return nil, fmt.Errorf("agent_post: message is empty")
-	}
-	if len(text) > postMessageMaxBytes {
-		return nil, fmt.Errorf("agent_post: message is %d bytes (max %d) — write the detail to a file and point at it", len(text), postMessageMaxBytes)
-	}
-	artifact := strings.TrimSpace(req.Artifact)
-	if kind == "contract_change_request" && artifact == "" {
-		return nil, fmt.Errorf("agent_post: contract_change_request needs artifact (the contract file the delta applies to)")
-	}
-	if err := r.takeMessage(); err != nil {
+	p, err := r.bus.parsePost(from, req)
+	if err != nil {
 		return nil, err
 	}
-	m := agent.InboxMessage{From: from.address, To: to, Kind: kind, Message: text, Artifact: artifact, At: time.Now().UTC().Format(time.RFC3339), Tainted: req.Tainted}
-	receipt := &agent.AgentPostReceipt{To: to, Delivered: "live"}
-	switch {
-	case to == config.AgencyRootName:
-		r.mu.Lock()
-		r.rootInbox = append(r.rootInbox, m)
-		r.mu.Unlock()
-	case r.deliverLive(to, from.taskID, m) > 0:
-	default:
-		if taskIDRe.MatchString(to) {
-			return nil, fmt.Errorf("agent_post: task %s is not running", to)
-		}
-		if err := r.appendInbox(to, m); err != nil {
-			return nil, fmt.Errorf("agent_post: %w", err)
-		}
-		receipt.Delivered = "inbox"
-		receipt.Note = to + " is not running; it reads the note when it is next started"
-	}
-	// The hub has to know the contract is being argued over: a change
-	// request is copied to the Orchestrator whoever it was addressed to.
-	if kind == "contract_change_request" && to != config.AgencyRootName && from.depth > 0 {
-		r.mu.Lock()
-		r.rootInbox = append(r.rootInbox, m)
-		r.mu.Unlock()
-	}
-	r.emitAgentMessage("post", from.address, to, kind, text, "")
-	return receipt, nil
+	return r.bus.publish(ctx, p)
+}
+
+// leaveForRoot puts a note in the top-level agent's inbox.
+func (r *TaskRunner) leaveForRoot(m agent.InboxMessage) {
+	r.mu.Lock()
+	r.rootInbox = append(r.rootInbox, m)
+	r.mu.Unlock()
 }
 
 // deliverLive appends m to the inbox of every unfinished task that answers to
 // address (its task ID, its address, or its department type). Returns how many.
 func (r *TaskRunner) deliverLive(address, exceptTaskID string, m agent.InboxMessage) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	n := 0
-	for _, e := range r.all {
-		if e.id == exceptTaskID || !e.finished.IsZero() {
-			continue
-		}
-		select {
-		case <-e.done:
-			continue
-		default:
-		}
-		if e.id == address || e.address == address || config.AgencyType(e.address) == address {
-			e.inbox = append(e.inbox, m)
-			n++
-		}
-	}
-	return n
+	return r.graph.deliverLive(address, exceptTaskID, m, config.AgencyType)
 }
 
 func (r *TaskRunner) drainTaskInbox(taskID string) []agent.InboxMessage {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	e := r.findEntryLocked(taskID)
-	if e == nil || len(e.inbox) == 0 {
-		return nil
-	}
-	out := e.inbox
-	e.inbox = nil
-	return out
+	return r.graph.drainInbox(taskID)
 }
 
 // flushLiveInbox moves notes a child never read into the address's inbox.
