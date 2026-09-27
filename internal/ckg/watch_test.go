@@ -91,8 +91,20 @@ func TestWatcher_ChangedFileIsTheOnlyOneLookedAt(t *testing.T) {
 	if countCallEdges(t, store, "Beta", "Gamma") != 1 {
 		t.Fatal("the call to Gamma was not relinked to the new node")
 	}
-	if got := w.pendingPaths(); len(got) != 0 {
-		t.Fatalf("the pass landed, yet the watcher still names %v", got)
+	// The kernel may report one write as several notifications, and one
+	// of them may land after the pass took its snapshot: that one is kept
+	// for the next pass (TestWatcher_ChangeDuringAPassIsKeptForTheNext) and
+	// names c.go alone — never anything the pass did not look at.
+	for _, p := range w.pendingPaths() {
+		if p != "c.go" {
+			t.Fatalf("the pass landed, yet the watcher still names %v", w.pendingPaths())
+		}
+	}
+	if err := orch.UpdateGraph(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if st := store.LastRefresh(); st.Walked || st.Parsed != 0 {
+		t.Fatalf("the pass after a late notification: %+v, want no walk and nothing parsed", st)
 	}
 }
 
