@@ -29,6 +29,8 @@ require (
 	modernc.org/sqlite v1.50.0
 )
 
+require github.com/fsnotify/fsnotify v1.10.1 // indirect
+
 require (
 	github.com/alecthomas/chroma/v2 v2.20.0 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect

@@ -6,8 +6,11 @@ package wire
 type IndexStatusParams struct{}
 
 type CKGView struct {
-	Available         bool           `json:"available"`
-	DBPath            string         `json:"db_path,omitempty"`
+	Available bool   `json:"available"`
+	DBPath    string `json:"db_path,omitempty"`
+	// Watching says the core follows the tree with file notifications, so a
+	// refresh looks only at what changed instead of walking.
+	Watching          bool           `json:"watching"`
 	Files             int            `json:"files"`
 	Nodes             int            `json:"nodes"`
 	Edges             int            `json:"edges"`

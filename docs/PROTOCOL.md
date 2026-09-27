@@ -543,7 +543,7 @@ CRUD for custom `agents[]` in `.orchestra.yml`. Built-in mode names are reserved
 
 ### `index.status`
 
-Returns CKG graph counters (`files`, `nodes`, `edges`, `embeddings`, `missing_embeddings`), `exclude_dirs`, `context_limit_kb`, `limits`, and `embed` config. `graph_ui_port` defaults to `6061` for `orchestra ckg-ui`.
+Returns CKG graph counters (`files`, `nodes`, `edges`, `embeddings`, `missing_embeddings`), `exclude_dirs`, `context_limit_kb`, `limits`, and `embed` config. `graph_ui_port` defaults to `6061` for `orchestra ckg-ui`. `graph.watching` (bool) says the core follows the tree with file notifications, so a refresh looks only at what changed; false when it walks the tree (`ORCHESTRA_CKG_WATCH=0`, or a tree the OS cannot follow).
 
 ### `index.configure`
 
