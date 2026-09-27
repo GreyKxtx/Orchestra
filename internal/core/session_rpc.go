@@ -624,6 +624,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	if err == nil {
 		outHistory, res, err = maybeContinueBuildAfterPlan(turnCtx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
 	}
+	launch.noteOutcome(res, err)
 	ck.finish(err)
 	finalizeAgentUsage(launch.Usage, c.workspaceRoot)
 	profileName := launch.Profile

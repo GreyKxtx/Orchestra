@@ -303,6 +303,23 @@ type WebSearchConfig struct {
 	MaxResults int    `yaml:"max_results,omitempty"`
 }
 
+// TelemetryConfig sends what a turn did — the agent, its subagents, their
+// model calls and tool calls — as OpenTelemetry spans (gen_ai.*) over
+// OTLP/HTTP JSON to a collector. Off until an endpoint is set here or in
+// OTEL_EXPORTER_OTLP_ENDPOINT; a workspace's own telemetry block applies
+// once the workspace is trusted, like its other endpoints.
+type TelemetryConfig struct {
+	// OTLPEndpoint is the collector's base URL (http://localhost:4318) or
+	// its traces URL (…/v1/traces).
+	OTLPEndpoint string `yaml:"otlp_endpoint,omitempty"`
+	// Headers go on every export, as given (an auth token for a hosted
+	// collector goes in OTEL_EXPORTER_OTLP_HEADERS instead of a committed
+	// file).
+	Headers map[string]string `yaml:"headers,omitempty"`
+	// ServiceName is the resource's service.name; "orchestra" when empty.
+	ServiceName string `yaml:"service_name,omitempty"`
+}
+
 // EmbedConfig configures the embeddings provider used to index CKG nodes
 // for semantic_search. OpenAI-compatible HTTP shape — works with OpenAI,
 // Ollama (/v1/embeddings), LM Studio, Voyage. When Model is empty the
@@ -565,6 +582,8 @@ type ProjectConfig struct {
 	// Pricing maps provider → model → per-1M-token USD rates for cost telemetry.
 	// Optional; when missing, .orchestra/usage.jsonl records only token counts.
 	Pricing PricingConfig `yaml:"pricing,omitempty"`
+	// Telemetry exports each turn as OpenTelemetry traces (gen_ai.* spans).
+	Telemetry TelemetryConfig `yaml:"telemetry,omitempty"`
 	// Routing is the parsed orchestra_routing.yaml (tier → provider/model
 	// bindings). Loaded from the config directory by Load; never marshalled
 	// back into .orchestra.yml.
@@ -1236,6 +1255,12 @@ func (c *ProjectConfig) Validate() error {
 
 	if c.ContextLimit <= 0 {
 		return fmt.Errorf("context_limit_kb must be greater than 0")
+	}
+	if ep := strings.TrimSpace(c.Telemetry.OTLPEndpoint); ep != "" {
+		u, err := neturl.Parse(ep)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("telemetry.otlp_endpoint must be an http(s) URL, got %q", ep)
+		}
 	}
 
 	if c.Limits.ContextKB <= 0 {

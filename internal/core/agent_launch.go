@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/orchestra/orchestra/internal/skillrun"
 	"github.com/orchestra/orchestra/internal/skills"
 	"github.com/orchestra/orchestra/internal/tasks"
+	"github.com/orchestra/orchestra/internal/telemetry"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/internal/trajectory"
 	"github.com/orchestra/orchestra/internal/usage"
@@ -94,6 +96,11 @@ type agentLaunch struct {
 	// tools is the runner whose per-run memos the launch clears when it
 	// closes.
 	tools *tools.Runner
+	// telemetry hears the turn end from Close, with the outcome the run's
+	// caller noted (noteOutcome); nil when the core exports nothing.
+	telemetry  *telemetry.Exporter
+	outcome    string
+	outcomeErr string
 
 	// turnStartedAt is when the boundary was recorded, so Close can say how
 	// long the turn took rather than leaving a reader to subtract timestamps
@@ -135,6 +142,7 @@ func (l *agentLaunch) Close() {
 	if l.tools != nil {
 		l.tools.ForgetInstructionsOf(l.EventEnvelope.TurnID)
 	}
+	l.telemetry.TurnEnded(l.EventEnvelope.TurnID, l.outcome, l.outcomeErr)
 	if l.Trajectory == nil {
 		return
 	}
@@ -150,6 +158,25 @@ func (l *agentLaunch) Close() {
 		"duration_ms": dur,
 	})
 	_ = l.Trajectory.Close()
+}
+
+// noteOutcome records how the run ended, for the trace Close sends: the
+// agent's stop reason, or the error.
+func (l *agentLaunch) noteOutcome(res *agent.Result, err error) {
+	if l == nil {
+		return
+	}
+	if err != nil {
+		l.outcome = "error"
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			l.outcome = "cancelled"
+		}
+		l.outcomeErr = err.Error()
+		return
+	}
+	if res != nil && res.StopReason != "" {
+		l.outcome = res.StopReason
+	}
 }
 
 // resolveApplyOutput normalises apply_output and forces dry-run for patch mode.
@@ -236,6 +263,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	// The mode router below calls the model on the turn's behalf.
 	ctx = llm.WithTrace(ctx, llm.Trace{RunID: p.env.TurnID})
 	c.recordTurn(p)
+	c.traceTurn(p)
 	// The launch owns the writer once it exists, and its three callers defer
 	// Close. Between here and that construction sit error returns, and a
 	// writer abandoned there would leak its handle: on Windows an open handle
@@ -259,6 +287,13 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 	if err != nil {
 		return nil, protocol.NewError(protocol.InvalidParams, err.Error(), nil)
 	}
+	c.telemetry.TurnStarted(telemetry.TurnInfo{
+		TurnID:    p.env.TurnID,
+		SessionID: spec.SessionID,
+		Mode:      p.effectiveMode,
+		Provider:  opts.ProviderLabel,
+		Model:     opts.ModelLabel,
+	})
 	return &agentLaunch{
 		Opts:            opts,
 		Custom:          p.custom,
@@ -272,6 +307,7 @@ func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (la
 		EventEnvelope:   p.env,
 		Trajectory:      p.trajectory,
 		tools:           c.tools,
+		telemetry:       c.telemetry,
 		turnStartedAt:   time.Now(),
 		sessionID:       spec.SessionID,
 	}, nil
@@ -311,7 +347,7 @@ func (c *Core) newTurnPrep(spec agentLaunchSpec, profile string) *turnPrep {
 	// one, a fresh handle on the same file otherwise.
 	p.agentLogger = llm.LoggerOf(c.llmClient)
 	if p.agentLogger == nil {
-		p.agentLogger = llm.NewLogger(c.workspaceRoot)
+		p.agentLogger = c.newLLMLogger()
 	}
 	if hr := hooks.New(c.cfg.Hooks, c.workspaceRoot).WithSession(spec.SessionID); hr != nil {
 		p.hooks = hr
@@ -348,6 +384,17 @@ func (c *Core) recordTurn(p *turnPrep) {
 		"turn_id":    p.env.TurnID,
 		"session_id": p.spec.SessionID,
 	})
+}
+
+// traceTurn tees the turn's notifications into the telemetry exporter, so
+// it hears the subagents start and finish. Like recordTurn it wraps
+// spec.OnEvent for every consumer at once; a turn with no client (the CLI
+// in process) gets one whose only listener is the exporter.
+func (c *Core) traceTurn(p *turnPrep) {
+	if c.telemetry == nil {
+		return
+	}
+	p.spec.OnEvent = teeToTelemetry(p.spec.OnEvent, c.telemetry)
 }
 
 // turnEventSink is where the top-level agent's events go: the client's

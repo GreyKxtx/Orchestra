@@ -83,6 +83,6 @@ func (c *Core) applyDiscoveredModelLimits() {
 	if !changed {
 		return
 	}
-	c.llmClient = llm.BuildClient(fresh, c.cfg.LLMRegistry(), llm.NewLogger(c.workspaceRoot))
+	c.llmClient = llm.BuildClient(fresh, c.cfg.LLMRegistry(), c.newLLMLogger())
 	c.publishSamplingTarget()
 }

@@ -310,7 +310,7 @@ func (c *AnthropicClient) streamOnce(ctx context.Context, req CompleteRequest, j
 		switch ev.Kind {
 		case StreamEventDone:
 			preview := streamResponsePreview(ev.Response)
-			logger.LogResponse(len(preview), time.Since(startTime).Milliseconds(), preview)
+			logger.LogResponse(c.model, ev.Response, len(preview), time.Since(startTime).Milliseconds(), preview)
 		case StreamEventError:
 			if ev.Err != nil {
 				logger.LogError(0, ev.Err.Error(), time.Since(startTime).Milliseconds())
