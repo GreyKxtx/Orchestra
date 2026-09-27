@@ -102,7 +102,7 @@ func TestIntegrationVerify_SaysWhenItSkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tr.Close() })
-	r := &TaskRunner{toolRunner: tr}
+	r := &TaskRunner{toolRunner: tr, graph: newTaskGraph(TurnBudget{}, nil, 0)}
 	entries := []*taskEntry{
 		{worker: true, status: "done", edited: []string{"a.go"}},
 		{worker: true, status: "done", edited: []string{"b.go"}},

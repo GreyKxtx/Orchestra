@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — the task graph is one object (2026-09)
+
+- **`tasks.taskGraph`.** A turn's tasks — every task in start order, the live ones a waiter can collect, the `depends_on` names per spawner, the slots per depth, the id sequence, the budget's wall clock — were fields of the `TaskRunner`, touched from four files under the lock that also guarded the agency's message budget and the root's inbox. They are now one type under its own lock (`internal/tasks/graph.go`): `register` admits a task against the budget and the stall rule (an identical task running, or failed twice), resolves its dependencies and finds the scopes it conflicts with in one step; `board` and `records` are its views; the inbox delivery reads it. The runner runs the children and asks the graph. Behaviour is unchanged; the graph has tests of its own that run no child.
+
 ### Added — each turn leaves as an OpenTelemetry trace (2026-09)
 
 - **`telemetry.otlp_endpoint` / `OTEL_EXPORTER_OTLP_ENDPOINT`.** The core sends every turn as one trace over OTLP/HTTP JSON, named by the GenAI semantic conventions: `invoke_agent <mode>` for the turn, `invoke_agent <role>` for each subagent under the task that started it, `chat <model>` for each model call with its tokens, cache hits, finish reason and endpoint, `execute_tool <name>` for each tool call with its duration and error. The turn's stop reason, a failed call, a failed task and a failed turn are error statuses on their spans. The exporter reads the model calls and tool calls from the lines the logger already writes (`llm.Logger.Observe`) and the subagents from the turn's notifications, so nothing else in the run changed; `llm_log.jsonl` gains the model, the token counts and the stop reason on `llm_response`. No SDK: one JSON document per turn, sent when the turn ends; a collector that fails is reported once. `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` and `OTEL_SDK_DISABLED` are honoured; a workspace's own `telemetry:` block is trust-gated like its other endpoints.

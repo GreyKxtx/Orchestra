@@ -86,29 +86,7 @@ func (r *TaskRunner) Records() []TaskRecord {
 	if r == nil {
 		return nil
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	out := make([]TaskRecord, 0, len(r.all))
-	for _, e := range r.all {
-		rec := TaskRecord{
-			ID: e.id, Key: e.key, Spawner: e.spawner, Status: e.status,
-			Address: e.address, Role: e.role, Parent: e.parent, ParentTaskID: e.parentTaskID,
-			Depth: e.depth, Worker: e.worker, Goal: e.goal, Fingerprint: e.fingerprint,
-			Edited: append([]string(nil), e.edited...), Started: e.started, Finished: e.finished,
-			Request: e.spawned.req, From: scopeRecordOf(e.spawned.from),
-			History: e.spawned.extra.history, Verb: e.spawned.extra.verb,
-		}
-		if e.result != nil {
-			res := *e.result
-			rec.Result = &res
-		}
-		if o := e.spawned.extra.owner; o != nil {
-			sr := scopeRecordOf(*o)
-			rec.Owner = &sr
-		}
-		out = append(out, rec)
-	}
-	return out
+	return r.graph.records()
 }
 
 // RestoreReport says what Restore did with each task.
@@ -135,7 +113,6 @@ func (r *TaskRunner) Restore(ctx context.Context, records []TaskRecord, known fu
 		return rep
 	}
 	finished := map[string]bool{}
-	r.mu.Lock()
 	for _, rec := range records {
 		if !rec.finished() {
 			continue
@@ -151,16 +128,10 @@ func (r *TaskRunner) Restore(ctx context.Context, records []TaskRecord, known fu
 			cancel: func(error) {},
 		}
 		close(e.done)
-		r.all = append(r.all, e)
-		if e.key != "" {
-			r.byKey[keyOf(e.spawner, e.key)] = e
-		}
+		r.graph.addFinished(e)
 		rep.Kept = append(rep.Kept, rec.ID)
 	}
-	if r.seq < len(records) {
-		r.seq = len(records)
-	}
-	r.mu.Unlock()
+	r.graph.bumpSeq(len(records))
 
 	for _, rec := range records {
 		if rec.finished() {
@@ -205,9 +176,7 @@ func (r *TaskRunner) recordUnrestartable(rec TaskRecord, why error) {
 			Error: fmt.Sprintf("interrupted by a crash of the core, and could not start again: %v", why)},
 	}
 	close(e.done)
-	r.mu.Lock()
-	r.all = append(r.all, e)
-	r.mu.Unlock()
+	r.graph.addFinished(e)
 }
 
 // graphChanged tells the checkpoint the task graph moved.

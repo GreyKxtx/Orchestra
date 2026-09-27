@@ -62,9 +62,10 @@ func waitStatus(t *testing.T, r *TaskRunner, id, want string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		r.mu.Lock()
-		got := r.findEntryLocked(id).status
-		r.mu.Unlock()
+		e := r.graph.lookup(id)
+		r.graph.mu.Lock()
+		got := e.status
+		r.graph.mu.Unlock()
 		if got == want {
 			return
 		}

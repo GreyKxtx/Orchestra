@@ -198,18 +198,14 @@ type TaskRunner struct {
 	toolRunner *tools.Runner
 	child      ChildAgentConfig
 
-	mu    sync.Mutex
-	tasks map[string]*taskEntry
-	seq   int
+	// graph is the turn's tasks: what exists, what is live, what waits for
+	// what, the slots, the budget's clock (graph.go). The runner runs the
+	// children; the graph is the state.
+	graph *taskGraph
 
-	// all keeps every task of the turn, collected ones included, for
-	// task_board and for depends_on on a task that was already waited for.
-	all []*taskEntry
-	// byKey names tasks for depends_on, per spawner (keyOf): two Leads that
-	// both call their first WorkOrder wo-1 each depend on their own.
-	byKey map[string]*taskEntry
-	// slots are the per-depth concurrency semaphores (Agency.MaxParallel).
-	slots map[int]chan struct{}
+	// mu guards the messaging state below: the message budget and the
+	// root's inbox. The tasks themselves are the graph's, under its lock.
+	mu sync.Mutex
 	// messages counts send_message + agent_post against Agency.MaxMessages.
 	messages int
 	// rootInbox holds notes for the top-level agent, drained on its next step.
@@ -219,15 +215,6 @@ type TaskRunner struct {
 	// children both return is asked once (question_barrier.go).
 	barrierMu sync.Mutex
 	answered  map[string]string
-	// closed is set by Close. A spawn after it is refused: a relay or a
-	// task_spawn racing the end of the turn used to register into the fresh
-	// map Close left behind, was never cancelled, and edited the workspace
-	// during the next turn.
-	closed bool
-	// firstSpawn starts the tree's wall clock (TurnBudget.MaxWall); wallTimer
-	// cancels what is still running when it runs out.
-	firstSpawn time.Time
-	wallTimer  *time.Timer
 	// storeMu serialises the inbox and thread files under .orchestra/agency.
 	storeMu sync.Mutex
 }
@@ -299,9 +286,7 @@ func New(llmClient llm.Client, validator *schema.Validator, toolRunner *tools.Ru
 		validator:  validator,
 		toolRunner: toolRunner,
 		child:      child,
-		tasks:      make(map[string]*taskEntry),
-		byKey:      make(map[string]*taskEntry),
-		slots:      make(map[int]chan struct{}),
+		graph:      newTaskGraph(child.Budget, child.UsageTracker, child.Agency.MaxParallel),
 	}
 }
 
@@ -424,16 +409,7 @@ func (r *TaskRunner) spawnFrom(ctx context.Context, from agentScope, req agent.S
 // newTaskID is the next task id — or id itself, when a task a crash
 // interrupted restarts under the id its spawner knows.
 func (r *TaskRunner) newTaskID(id string) (string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
-		return "", ErrRunnerClosed
-	}
-	r.seq++
-	if id != "" {
-		return id, nil
-	}
-	return fmt.Sprintf("task_%d_%d", r.seq, time.Now().UnixNano()%100000), nil
+	return r.graph.nextID(id)
 }
 
 // admit is what every spawn passes before a task exists: the route, the
@@ -619,36 +595,13 @@ func (r *TaskRunner) attachTask(parent, taskCtx context.Context, entry *taskEntr
 	return tools.WithLayer(taskCtx, entry.layer)
 }
 
-// register adds the task to the runner and returns the unfinished tasks
-// whose edit scope overlaps its own (spec §5.6). Registration and conflict
-// collection happen under one lock, so two overlapping spawns cannot both
-// see a clear field. Each task waits only for tasks registered before it —
-// the wait graph is acyclic by construction, and so is the depends_on
-// graph: a dependency must already be registered.
+// register adds the task to the graph and returns the unfinished tasks
+// whose edit scope overlaps its own (spec §5.6); the graph admits it
+// against the budget, resolves its dependencies and starts the wall clock
+// in the same step (taskGraph.register).
 func (r *TaskRunner) register(from agentScope, entry *taskEntry, plan spawnPlan) ([]*taskEntry, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
-		return nil, ErrRunnerClosed
-	}
-	if err := r.admitLocked(entry.fingerprint); err != nil {
-		return nil, err
-	}
-	deps, err := r.resolveDepsLocked(from.taskID, plan.dependsOn)
-	if err != nil {
-		return nil, err
-	}
-	entry.deps = deps
-	r.startWallClockLocked()
-	conflicts := r.conflictingTasksLocked(plan.editPaths)
-	r.tasks[entry.id] = entry
-	r.all = append(r.all, entry)
-	if plan.key != "" {
-		// A re-spawned WorkOrder takes its key over: later dependents mean
-		// the attempt that is still to come, not the one that failed.
-		r.byKey[keyOf(from.taskID, plan.key)] = entry
-	}
-	return conflicts, nil
+	_, conflicts, err := r.graph.register(from.taskID, entry, plan.key, plan.dependsOn, plan.editPaths, r.wallClockExpired)
+	return conflicts, err
 }
 
 // runTask is the task's goroutine: it waits its turn — dependencies, the
@@ -666,10 +619,7 @@ func (r *TaskRunner) runTask(parent, taskCtx context.Context, entry *taskEntry, 
 	// never announced its end stayed "running" in the UI forever and left
 	// a hole in the tree the log is read back into.
 	defer func() {
-		r.mu.Lock()
-		res := entry.result
-		r.mu.Unlock()
-		r.notifyChildDone(entry, req.ParentToolCallID, plan.target.name, res)
+		r.notifyChildDone(entry, req.ParentToolCallID, plan.target.name, r.graph.resultOf(entry))
 	}()
 	// Resilience audit P1: a panic escaping runChild (agent loop, prompt
 	// assembly, verification pipeline) in this goroutine would kill the
@@ -678,15 +628,11 @@ func (r *TaskRunner) runTask(parent, taskCtx context.Context, entry *taskEntry, 
 	defer func() {
 		if rec := recover(); rec != nil {
 			fmt.Fprintf(os.Stderr, "tasks: child %s panicked: %v\n%s\n", entry.id, rec, debug.Stack())
-			r.mu.Lock()
-			if entry.result == nil {
-				entry.result = &agent.SubtaskResult{
-					TaskID: entry.id,
-					Status: "error",
-					Error:  fmt.Sprintf("child agent panicked: %v", rec),
-				}
-			}
-			r.mu.Unlock()
+			r.graph.setResultIfNone(entry, &agent.SubtaskResult{
+				TaskID: entry.id,
+				Status: "error",
+				Error:  fmt.Sprintf("child agent panicked: %v", rec),
+			})
 		}
 	}()
 
@@ -741,9 +687,7 @@ func (r *TaskRunner) waitForConflicts(ctx context.Context, entry *taskEntry, par
 }
 
 func (r *TaskRunner) setResult(entry *taskEntry, res *agent.SubtaskResult) {
-	r.mu.Lock()
-	entry.result = res
-	r.mu.Unlock()
+	r.graph.setResult(entry, res)
 }
 
 // proseWorkOrder is the WorkOrder a worker with a goal in prose stands for
@@ -754,32 +698,6 @@ func proseWorkOrder(dept string) *WorkOrder {
 		wo.Context = map[string]any{"scratchpad": agent.DeptScratchpadDir + "/" + dept + ".md"}
 	}
 	return wo
-}
-
-// conflictingTasksLocked returns unfinished tasks whose edit scope overlaps
-// paths. Caller must hold r.mu.
-func (r *TaskRunner) conflictingTasksLocked(paths map[string]struct{}) []*taskEntry {
-	if len(paths) == 0 {
-		return nil
-	}
-	var out []*taskEntry
-	for _, e := range r.tasks {
-		if len(e.editPaths) == 0 {
-			continue
-		}
-		select {
-		case <-e.done:
-			continue
-		default:
-		}
-		for p := range paths {
-			if _, hit := e.editPaths[p]; hit {
-				out = append(out, e)
-				break
-			}
-		}
-	}
-	return out
 }
 
 func (r *TaskRunner) notifyQueued(taskID, parentToolCallID string, conflicts []*taskEntry) {
@@ -1095,13 +1013,7 @@ func (r *TaskRunner) childGoal(ctx context.Context, c *childRun, upstream string
 			childGoal = text + "\n\n" + childGoal
 			// What did not fit goes to the child's live inbox: it reads
 			// them on its first steps instead of never.
-			if len(rest) > 0 {
-				r.mu.Lock()
-				if e := r.findEntryLocked(c.taskID); e != nil {
-					e.inbox = append(append([]agent.InboxMessage(nil), rest...), e.inbox...)
-				}
-				r.mu.Unlock()
-			}
+			r.graph.pushInbox(c.taskID, rest)
 		}
 		if sp := loadDeptScratchpadForLead(r.toolRunner.WorkspaceRoot(), c.scope.dept); sp != "" {
 			childGoal = sp + "\n\n" + childGoal
@@ -1331,9 +1243,7 @@ func classifyChildRunErr(ctx context.Context, runErr error) (status, errMsg stri
 }
 
 func (r *TaskRunner) removeTask(taskID string) {
-	r.mu.Lock()
-	delete(r.tasks, taskID)
-	r.mu.Unlock()
+	r.graph.forget(taskID)
 }
 
 // Wait blocks until the task completes. When its timeout or ctx runs out
@@ -1363,23 +1273,19 @@ func stillRunning(taskID string, waited time.Duration) *agent.SubtaskResult {
 }
 
 func (r *TaskRunner) wait(ctx context.Context, taskID string, timeoutMS int, giveUp bool) (*agent.SubtaskResult, error) {
-	r.mu.Lock()
-	entry, ok := r.tasks[taskID]
+	entry, ok := r.graph.liveEntry(taskID)
 	if !ok {
 		// Collected by an earlier wait: task_board still lists it, so
 		// answering "not found" contradicted the board. Its result stands.
-		if e := r.findEntryLocked(taskID); e != nil && !e.finished.IsZero() {
-			res := e.result
-			r.mu.Unlock()
+		if e := r.graph.lookup(taskID); e != nil && r.graph.isFinished(e) {
+			res := r.graph.resultOf(e)
 			if res == nil {
 				res = &agent.SubtaskResult{TaskID: taskID, Status: "error", Error: "task produced no result"}
 			}
 			return res, nil
 		}
-		r.mu.Unlock()
 		return nil, fmt.Errorf("task %q not found", taskID)
 	}
-	r.mu.Unlock()
 
 	var timeout <-chan time.Time
 	if timeoutMS > 0 {
@@ -1403,9 +1309,7 @@ func (r *TaskRunner) wait(ctx context.Context, taskID string, timeoutMS int, giv
 
 // collect returns a finished task's result and unregisters it.
 func (r *TaskRunner) collect(entry *taskEntry) *agent.SubtaskResult {
-	r.mu.Lock()
-	result := entry.result
-	r.mu.Unlock()
+	result := r.graph.resultOf(entry)
 	r.removeTask(entry.id)
 	if result == nil {
 		return &agent.SubtaskResult{TaskID: entry.id, Status: "error", Error: "task produced no result"}
@@ -1435,9 +1339,7 @@ func (r *TaskRunner) abandon(entry *taskEntry, why error) *agent.SubtaskResult {
 			Error:  fmt.Sprintf("child did not exit %s after cancellation (stuck tool call?); it was left to terminate in the background", childReapTimeout),
 		}
 	}
-	r.mu.Lock()
-	result := entry.result
-	r.mu.Unlock()
+	result := r.graph.resultOf(entry)
 	r.removeTask(taskID)
 	if result != nil {
 		return result
@@ -1465,9 +1367,8 @@ func (r *TaskRunner) InvalidateStaleContractTasks(_ context.Context) []string {
 		layer  *fs.Overlay
 		cancel context.CancelCauseFunc
 	}
-	r.mu.Lock()
 	var cands []candidate
-	for id, e := range r.tasks {
+	for _, e := range r.graph.liveTasks() {
 		if len(e.contractRefs) == 0 {
 			continue
 		}
@@ -1476,9 +1377,8 @@ func (r *TaskRunner) InvalidateStaleContractTasks(_ context.Context) []string {
 			continue
 		default:
 		}
-		cands = append(cands, candidate{id: id, refs: e.contractRefs, layer: e.layer, cancel: e.cancel})
+		cands = append(cands, candidate{id: e.id, refs: e.contractRefs, layer: e.layer, cancel: e.cancel})
 	}
-	r.mu.Unlock()
 
 	var cancelled []string
 	for _, c := range cands {
@@ -1493,9 +1393,7 @@ func (r *TaskRunner) InvalidateStaleContractTasks(_ context.Context) []string {
 
 // Cancel aborts a running task.
 func (r *TaskRunner) Cancel(_ context.Context, taskID string) error {
-	r.mu.Lock()
-	entry, ok := r.tasks[taskID]
-	r.mu.Unlock()
+	entry, ok := r.graph.liveEntry(taskID)
 	if !ok {
 		return fmt.Errorf("task %q not found", taskID)
 	}
@@ -1511,17 +1409,7 @@ func (r *TaskRunner) Close() {
 	if r == nil {
 		return
 	}
-	r.mu.Lock()
-	r.closed = true
-	if r.wallTimer != nil {
-		r.wallTimer.Stop()
-	}
-	entries := make([]*taskEntry, 0, len(r.tasks))
-	for _, e := range r.tasks {
-		entries = append(entries, e)
-	}
-	r.tasks = make(map[string]*taskEntry)
-	r.mu.Unlock()
+	entries := r.graph.close()
 	for _, e := range entries {
 		e.cancel(ErrCauseShutdown)
 	}
