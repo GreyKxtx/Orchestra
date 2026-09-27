@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Fixed — the config file lock on a loaded Windows machine (2026-09)
+
+- **A read the antivirus holds is retried.** `UpdateFile` read `.orchestra.yml` under its lock right after another writer's atomic rename, and on Windows the new file can be held for a moment by a scan (a sharing violation): the read is retried with a short backoff, the way the rename itself is; a lock stolen past the acquire timeout no longer spins while something else still holds the lock file.
+
 ### Changed — agent notes travel on a typed bus (2026-09)
 
 - **A question to the Lead is a question for the user.** `agent_post{kind: question, to: lead}` used to land in the Orchestrator's inbox like any note, past the Question Barrier and past `decisions.md`, and the worker went on without an answer. The runtime now puts it to the user through the barrier — one round at a time, a question already answered this turn answered from that answer, within `max_clarification_rounds` — records the Q/A in `decisions.md`, answers the sender in the receipt (`delivered: answered`, `answer`) and tells the Orchestrator what was asked. Without an interactive channel the question reaches the Orchestrator as before and the receipt says so; past the budget it is `unanswered` with an assumption on the record.

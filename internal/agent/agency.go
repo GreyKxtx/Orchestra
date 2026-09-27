@@ -286,7 +286,7 @@ func (a *Agent) agencyAdvertisement() string {
 	}
 	writeCards("Delegate (task / task_spawn subagent_type):\n", info.Delegates)
 	writeCards("Talk to (send_message to; the conversation continues across calls):\n", info.Contacts)
-	b.WriteString("agent_post{to, kind, message} leaves a note for any agent or department without waiting (kind: note|question|contract_change_request|finding|handoff); notes to you arrive as <agent_messages>. A question to lead is answered by the user in the receipt.\n")
+	b.WriteString("agent_post{to, kind, message} leaves a note for any agent or department without waiting (kind: note|question|contract_change_request|finding|handoff); notes to you arrive as <agent_messages>.\n")
 	b.WriteString("</available_agents>")
 	return b.String()
 }

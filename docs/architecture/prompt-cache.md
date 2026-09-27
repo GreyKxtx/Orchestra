@@ -45,7 +45,7 @@ another reason to compact late rather than at a fixed 60% (see
 
 ## Cache breakpoints (Anthropic)
 
-The Anthropic API caches only up to explicitly marked blocks. `llm/anthropic.go`
+The Anthropic API caches only up to explicitly marked blocks. `llm/prompt_cache.go` (the one place both paths take the rule from)
 sets three breakpoints, well inside the limit of four:
 
 | Where | Function | Why |
@@ -60,7 +60,7 @@ volatile user message into the preceding user message as an extra text block.
 Most OpenAI-compatible providers need no markers — they match the prefix
 automatically, so the ordering rule above is what matters there.
 
-## Cache breakpoints through a gateway (`llm/prompt_cache_gateway.go`)
+## Cache breakpoints through a gateway (`llm/prompt_cache.go`)
 
 Anthropic models reached through OpenRouter do **not** take the native path:
 they go out as OpenAI-compatible requests, where the only way to ask for
