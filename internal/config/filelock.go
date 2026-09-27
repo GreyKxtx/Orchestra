@@ -48,9 +48,10 @@ func acquireFileLock(path string) func() {
 		}
 		if time.Now().After(deadline) {
 			// Never block a save forever: steal and proceed. Losing this
-			// race is strictly better than failing to persist settings.
+			// race is strictly better than failing to persist settings. The
+			// removal can fail while something else — an antivirus scan on
+			// Windows — still holds the file: wait the interval, do not spin.
 			_ = os.Remove(lockPath)
-			continue
 		}
 		time.Sleep(lockRetryInterval)
 	}
@@ -65,7 +66,7 @@ func acquireFileLock(path string) func() {
 func UpdateFile(path string, fn func(current []byte) ([]byte, error)) error {
 	unlock := acquireFileLock(path)
 	defer unlock()
-	current, err := os.ReadFile(path)
+	current, err := readFileRetry(path)
 	if err != nil {
 		return err
 	}
@@ -81,3 +82,27 @@ func UpdateFile(path string, fn func(current []byte) ([]byte, error)) error {
 	}
 	return nil
 }
+
+// readFileRetry reads path, retrying a read that fails right after another
+// writer's atomic rename: on Windows the new file can be held for a moment
+// by an antivirus scan (a sharing violation), the way fsutil retries the
+// rename itself. A file that is missing is not retried.
+func readFileRetry(path string) ([]byte, error) {
+	var data []byte
+	var err error
+	for attempt := 0; attempt < readAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * readBackoff)
+		}
+		data, err = os.ReadFile(path)
+		if err == nil || os.IsNotExist(err) {
+			return data, err
+		}
+	}
+	return data, err
+}
+
+const (
+	readAttempts = 5
+	readBackoff  = 20 * time.Millisecond
+)
