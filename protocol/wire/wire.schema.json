@@ -270,10 +270,15 @@
         },
         "types": {
           "type": "integer"
+        },
+        "watching": {
+          "description": "Watching says the core follows the tree with file notifications, so a\nrefresh looks only at what changed instead of walking.",
+          "type": "boolean"
         }
       },
       "required": [
         "available",
+        "watching",
         "files",
         "nodes",
         "edges",

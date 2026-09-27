@@ -201,6 +201,9 @@ func readSnippet(root, path string, start, end, maxLines int) string {
 type CKGIndexView struct {
 	Available bool   `json:"available"`
 	DBPath    string `json:"db_path,omitempty"`
+	// Watching says the tree is followed with file notifications, so a
+	// refresh looks only at what changed.
+	Watching bool `json:"watching"`
 	ckg.IndexStats
 }
 
@@ -216,6 +219,7 @@ func (c *Client) CKGIndexStatus(ctx context.Context) (CKGIndexView, error) {
 	}
 	out.Available = true
 	out.DBPath = filepath.Join(c.Root, ".orchestra", "ckg.db")
+	out.Watching = snap.Store.Watching()
 	model := strings.TrimSpace(c.EmbedCfg.Model)
 	stats, err := snap.Store.IndexStats(ctx, model)
 	if err != nil {

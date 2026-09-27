@@ -499,6 +499,11 @@ export type IndexStatusParams = Record<string, never>;
 export interface CKGView {
   available: boolean;
   db_path?: string;
+  /**
+   * Watching says the core follows the tree with file notifications, so a
+   * refresh looks only at what changed instead of walking.
+   */
+  watching: boolean;
   files: number;
   nodes: number;
   edges: number;

@@ -30,6 +30,7 @@ func ckgViewToRPC(view tools.CKGIndexView) toolsCKGView {
 	return toolsCKGView{
 		Available:         view.Available,
 		DBPath:            view.DBPath,
+		Watching:          view.Watching,
 		Files:             view.Files,
 		Nodes:             view.Nodes,
 		Edges:             view.Edges,

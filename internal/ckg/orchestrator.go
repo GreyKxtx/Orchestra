@@ -16,6 +16,9 @@ type Orchestrator struct {
 	root       string
 	modulePath string // Go module path (from go.mod)
 	crateName  string // Rust crate name (from Cargo.toml)
+	// afterScan, when set, runs between the scan and the writes of a pass:
+	// how a test makes the writes fail after the scan succeeded.
+	afterScan func()
 }
 
 // NewOrchestrator creates a new Orchestrator.
@@ -148,8 +151,12 @@ func (o *Orchestrator) updateGraph(ctx context.Context, locked bool) error {
 	if err != nil {
 		return err
 	}
+	if o.afterScan != nil {
+		o.afterScan()
+	}
 	st.Seen = len(changes.Stamps)
 	st.Hashed = changes.Hashed
+	st.Walked = changes.Walked
 
 	var parsed []parsedFile
 	for _, relPath := range changes.ToParse {
@@ -176,6 +183,7 @@ func (o *Orchestrator) updateGraph(ctx context.Context, locked bool) error {
 	if len(parsed) == 0 && len(changes.ToDelete) == 0 && len(changes.Restamp) == 0 {
 		st.Elapsed = time.Since(start)
 		o.store.setLastRefresh(st)
+		changes.ack()
 		return nil
 	}
 
@@ -217,7 +225,13 @@ func (o *Orchestrator) updateGraph(ctx context.Context, locked bool) error {
 	// edges that name one of the inserted nodes are looked at.
 	candidates, relinked, err := o.store.RelinkEdgesTo(ctx, inserted)
 	st.Candidates, st.Relinked = candidates, relinked
-	return err
+	if err != nil {
+		return err
+	}
+	// The feed hears of the pass only now that the graph holds it: a pass
+	// that failed above leaves its changes for the next one.
+	changes.ack()
+	return nil
 }
 
 // stampFile hashes the file and records the mtime and size it had.

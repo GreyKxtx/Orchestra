@@ -26,6 +26,11 @@ type Store struct {
 	// refreshing is set while RefreshInBackground has a pass in flight, so
 	// concurrent callers do not queue up passes behind it.
 	refreshing atomic.Bool
+	// feed, when set, names the paths that changed since the last pass so
+	// the scanner looks at those alone (a Watcher); nil means every pass
+	// walks the tree.
+	feedMu sync.Mutex
+	feed   ChangeFeed
 
 	statsMu     sync.Mutex
 	lastRefresh RefreshStats
@@ -42,6 +47,31 @@ type Store struct {
 	embedIdx   *embedIndex
 	embedLoads atomic.Int64
 }
+
+// SetChangeFeed gives the scanner a source of changed paths (a Watcher);
+// nil takes it away, and every pass walks again.
+func (s *Store) SetChangeFeed(f ChangeFeed) {
+	if s == nil {
+		return
+	}
+	s.feedMu.Lock()
+	s.feed = f
+	s.feedMu.Unlock()
+}
+
+// ChangeFeed is the change feed the scanner consults, or nil.
+func (s *Store) ChangeFeed() ChangeFeed {
+	if s == nil {
+		return nil
+	}
+	s.feedMu.Lock()
+	defer s.feedMu.Unlock()
+	return s.feed
+}
+
+// Watching says a change feed follows the tree for the store: a refresh on
+// an unchanged tree then costs no walk.
+func (s *Store) Watching() bool { return s.ChangeFeed() != nil }
 
 // OnRefresh registers fn to run after every pass that changed the graph
 // (parsed or deleted a file), once the pass has released its locks.
@@ -81,6 +111,9 @@ type RefreshStats struct {
 	// Elapsed is the whole pass; Locked is how long readers were held out.
 	Elapsed time.Duration
 	Locked  time.Duration
+	// Walked says the pass walked the tree. It is false when the store's
+	// change feed named the changes (Watcher) and nothing else was looked at.
+	Walked bool
 }
 
 // LastRefresh is what the last UpdateGraph pass did.

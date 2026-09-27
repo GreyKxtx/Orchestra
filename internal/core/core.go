@@ -151,7 +151,10 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 	}
 
 	tr, err := tools.NewRunner(cfg.ProjectRoot, tools.RunnerOptions{
-		ExcludeDirs:        cfg.ExcludeDirs,
+		ExcludeDirs: cfg.ExcludeDirs,
+		// The core lives as long as the client: the code graph follows the
+		// tree with file notifications instead of walking it per request.
+		WatchCKG:           true,
 		ExecTimeout:        time.Duration(cfg.Exec.TimeoutS) * time.Second,
 		ExecOutputLimit:    cfg.Exec.OutputLimitKB * 1024,
 		ExecEnvPassthrough: cfg.Exec.EnvPassthrough,

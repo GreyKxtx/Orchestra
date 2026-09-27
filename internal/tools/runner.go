@@ -46,8 +46,11 @@ type Runner struct {
 	// FetchCKGContext / ExploreCodebase readers and Close writers
 	// (child subagent goroutines outlive their parent's t.Cleanup,
 	// so reads can race with the cleanup-time Close).
-	ckgMu       sync.RWMutex
-	ckgStore    *ckg.Store
+	ckgMu    sync.RWMutex
+	ckgStore *ckg.Store
+	// ckgWatcher follows the workspace for the store's refreshes
+	// (RunnerOptions.WatchCKG); nil when the tree is walked instead.
+	ckgWatcher  *ckg.Watcher
 	ckgProvider *ckg.Provider
 
 	// The embedding passes a graph refresh starts (WarmupEmbeddings): one
@@ -117,6 +120,11 @@ type Runner struct {
 
 type RunnerOptions struct {
 	ExcludeDirs []string
+	// WatchCKG follows the workspace through file notifications (ckg.Watch)
+	// so the code graph refreshes from what changed instead of walking the
+	// tree on every explore and every run. The core turns it on; a
+	// short-lived runner walks. ORCHESTRA_CKG_WATCH=0 turns it off.
+	WatchCKG bool
 
 	ExecTimeout     time.Duration
 	ExecOutputLimit int // bytes, combined stdout+stderr
@@ -206,6 +214,16 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		return nil, fmt.Errorf("open ckg store: %w", err)
 	}
 	provider := ckg.NewProvider(store, rootAbs)
+	var watcher *ckg.Watcher
+	if opts.WatchCKG && ckgWatchEnabled() {
+		w, err := ckg.Watch(rootAbs, exclude)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "orchestra: code graph refreshes walk the tree (watcher unavailable: %v)\n", err)
+		} else {
+			store.SetChangeFeed(w)
+			watcher = w
+		}
+	}
 
 	webTimeout := opts.WebFetchTimeout
 	if webTimeout <= 0 {
@@ -247,6 +265,7 @@ func NewRunner(workspaceRoot string, opts RunnerOptions) (*Runner, error) {
 		execEnvPassthrough:      opts.ExecEnvPassthrough,
 		ckgStore:                store,
 		ckgProvider:             provider,
+		ckgWatcher:              watcher,
 		webFetchTimeout:         webTimeout,
 		webMaxContentBytes:      webMaxBytes,
 		webSearchCfg:            opts.WebSearch,
@@ -538,13 +557,29 @@ func (r *Runner) Close() error {
 	r.embedWG.Wait()
 	r.ckgMu.Lock()
 	store := r.ckgStore
+	watcher := r.ckgWatcher
 	r.ckgStore = nil
 	r.ckgProvider = nil
+	r.ckgWatcher = nil
 	r.ckgMu.Unlock()
+	// The watcher stops before the store it feeds closes.
+	if watcher != nil {
+		_ = watcher.Close()
+	}
 	if store != nil {
 		return store.Close()
 	}
 	return nil
+}
+
+// ckgWatchEnabled reads ORCHESTRA_CKG_WATCH: unset or anything but
+// 0/false/off keeps the watcher on.
+func ckgWatchEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ORCHESTRA_CKG_WATCH"))) {
+	case "0", "false", "off", "no":
+		return false
+	}
+	return true
 }
 
 // SetMCPCaller registers an MCP manager for routing mcp:* tool calls.

@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — the code graph follows the tree (2026-09)
+
+- **A refresh looks at what changed.** Every `explore` and every agent run refreshed the code graph, and each refresh walked the tree to find out that nothing had changed (45 ms on Orchestra's own tree, more on a large one, under the refresh lock). The core's runner now follows the workspace with the OS's file notifications (`ckg.Watch`, fsnotify): the scanner takes the changed paths from the watcher and stats those alone, an unchanged tree costs no walk, a directory that went takes what the graph had under it, one that appeared is walked once. The watcher owes a walk when it cannot know what changed — at start, after the kernel dropped notifications, when closed, and after a pass that failed before writing — so the graph is right either way. `index.status` reports `graph.watching`; `ORCHESTRA_CKG_WATCH=0` keeps the walk; a tree the OS cannot follow (too many directories for its limit) falls back to it with a note on stderr.
+
 ### Added — a preview runs its commands in a shadow of the workspace (2026-09)
 
 - **`bash` in a preview.** A core turn with apply off refused every command, so the model could not run the tests of the edits it had just staged — and at the terminal a preview's `go test` ran against the code on disk, not the staged one. A preview's commands now run in a shadow of the workspace (`exec.shadow`, default on): a copy without `.git`, `.orchestra` and `exclude_dirs` (those are linked in), brought up to date with the disk and with the turn's staged edits before each command. The command sees the model's edits; the files it writes come back as staged edits, like an edit the model made, and the tool's result says which; a binary or a file over 1 MiB stays in the shadow, and so does a deletion. The workspace is never touched. A workspace over 20 000 files or 512 MiB is refused as before, with the reason. `orchestra apply --allow-exec` at the terminal keeps running commands on the real tree.
