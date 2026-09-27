@@ -13,6 +13,7 @@ import (
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
 	"github.com/orchestra/orchestra/internal/memory"
+	"github.com/orchestra/orchestra/internal/telemetry"
 	"github.com/orchestra/orchestra/internal/tools"
 	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/patch/fsutil"
@@ -53,6 +54,9 @@ type Core struct {
 
 	validator *schema.Validator
 	tools     *tools.Runner
+	// telemetry exports each turn as a trace (telemetry.otlp_endpoint or
+	// OTEL_EXPORTER_OTLP_ENDPOINT); nil when no endpoint is set.
+	telemetry *telemetry.Exporter
 	// warm tracks the background LSP warmups: Close cancels them and waits,
 	// so none is still reading the runner — or os.Stderr — after it.
 	warm      warmups
@@ -183,6 +187,19 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 	}
 
 	injected := opts.LLMClient != nil
+	var tel *telemetry.Exporter
+	if !opts.ToolsOnly {
+		t, err := telemetry.New(telemetry.Config{
+			Endpoint:       cfg.Telemetry.OTLPEndpoint,
+			Headers:        cfg.Telemetry.Headers,
+			ServiceName:    cfg.Telemetry.ServiceName,
+			ServiceVersion: protocol.CoreVersion,
+		}.FromEnv())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "orchestra: telemetry is off: %v\n", err)
+		}
+		tel = t
+	}
 	llmClient := opts.LLMClient
 	if llmClient == nil && !opts.ToolsOnly {
 		// The model's window from the static catalogue, now, with no network:
@@ -195,7 +212,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		if lim, ok := llm.CatalogModelLimits(cfg.LLM); ok {
 			llm.ApplyDiscoveredLimits(&cfg.LLM, lim)
 		}
-		llmClient = llm.BuildClient(cfg.LLM, cfg.LLMRegistry(), llm.NewLogger(rootAbs))
+		llmClient = llm.BuildClient(cfg.LLM, cfg.LLMRegistry(), loggerFor(rootAbs, tel))
 	}
 
 	tr.SetMemoryContext("", memory.ConfigFrom(cfg.Memory))
@@ -210,6 +227,7 @@ func New(workspaceRoot string, opts Options) (*Core, error) {
 		llmClientInjected: injected,
 		validator:         v,
 		tools:             tr,
+		telemetry:         tel,
 		sessions:          coresession.NewManager(),
 		mcpStartErrs:      map[string]string{},
 	}
@@ -573,3 +591,20 @@ func samePath(a, b string) bool {
 type (
 	OpsApplyResult = wire.OpsApplyResult
 )
+
+// loggerFor is the llm_log.jsonl logger for root, reporting to tel when
+// there is one: the exporter reads the model calls and tool calls of every
+// turn from the log lines, so a client built here and the agents' own
+// loggers all go through it.
+func loggerFor(root string, tel *telemetry.Exporter) *llm.Logger {
+	l := llm.NewLogger(root)
+	if tel != nil {
+		l = l.Observe(tel.Observe)
+	}
+	return l
+}
+
+// newLLMLogger is loggerFor on the core's own workspace and exporter.
+func (c *Core) newLLMLogger() *llm.Logger {
+	return loggerFor(c.workspaceRoot, c.telemetry)
+}

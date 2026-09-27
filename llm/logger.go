@@ -53,21 +53,31 @@ func TraceFrom(ctx context.Context) Trace {
 type LLMLogEntry struct {
 	TSUnix int64  `json:"ts_unix"`
 	Event  string `json:"event"`
+	// At is when the entry was written, to the nanosecond; an observer
+	// (Logger.Observe) reads it, the log keeps TSUnix.
+	At time.Time `json:"-"`
 	// Trace attributes the line to a run and a task (see Trace).
 	Trace
-	URL             string   `json:"url,omitempty"`
-	Model           string   `json:"model,omitempty"`
-	TimeoutS        int      `json:"timeout_s,omitempty"`
-	RequestBytes    int      `json:"request_bytes,omitempty"`
-	ToolsCount      int      `json:"tools_count,omitempty"`
-	MessagesCount   int      `json:"messages_count,omitempty"`
-	MessageRoles    []string `json:"message_roles,omitempty"`
-	ResponseBytes   int      `json:"response_bytes,omitempty"`
-	DurationMS      int64    `json:"duration_ms,omitempty"`
-	HTTPCode        int      `json:"http_code,omitempty"`
-	ErrorBody       string   `json:"error_body,omitempty"`
-	RequestPreview  string   `json:"request_preview,omitempty"`
-	ResponsePreview string   `json:"response_preview,omitempty"`
+	URL           string   `json:"url,omitempty"`
+	Model         string   `json:"model,omitempty"`
+	TimeoutS      int      `json:"timeout_s,omitempty"`
+	RequestBytes  int      `json:"request_bytes,omitempty"`
+	ToolsCount    int      `json:"tools_count,omitempty"`
+	MessagesCount int      `json:"messages_count,omitempty"`
+	MessageRoles  []string `json:"message_roles,omitempty"`
+	ResponseBytes int      `json:"response_bytes,omitempty"`
+	DurationMS    int64    `json:"duration_ms,omitempty"`
+	// llm_response: what the provider counted and why the model stopped,
+	// so a step's cost and its end can be read next to its words.
+	PromptTokens       int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens   int    `json:"completion_tokens,omitempty"`
+	CachedPromptTokens int    `json:"cached_prompt_tokens,omitempty"`
+	CacheWriteTokens   int    `json:"cache_write_tokens,omitempty"`
+	StopReason         string `json:"stop_reason,omitempty"`
+	HTTPCode           int    `json:"http_code,omitempty"`
+	ErrorBody          string `json:"error_body,omitempty"`
+	RequestPreview     string `json:"request_preview,omitempty"`
+	ResponsePreview    string `json:"response_preview,omitempty"`
 
 	// tool_call / tool_result fields
 	//
@@ -102,6 +112,22 @@ type Logger struct {
 	errorPath   string
 	// trace is stamped on every line this logger writes; see With and For.
 	trace Trace
+	// observer, when set, sees every entry this logger writes, stamped with
+	// its trace, before it goes to the file (Observe). Copied by With and
+	// For, so a child's logger reports to the same observer.
+	observer func(LLMLogEntry)
+}
+
+// Observe returns a logger that hands every entry it writes to fn as well —
+// the telemetry exporter reads the model calls and tool calls of a turn this
+// way. The file and its lock are shared with l; a nil fn returns l itself.
+func (l *Logger) Observe(fn func(LLMLogEntry)) *Logger {
+	if l == nil || fn == nil {
+		return l
+	}
+	c := *l
+	c.observer = fn
+	return &c
 }
 
 // With returns a logger that stamps t on every line it writes. It shares the
@@ -160,17 +186,29 @@ func (l *Logger) LogRequest(url, model string, timeoutS int, requestBytes int, t
 	l.appendLog(entry)
 }
 
-// LogResponse logs a successful LLM response
-func (l *Logger) LogResponse(responseBytes int, durationMS int64, responsePreview string) {
+// LogResponse logs a successful LLM response: its size, how long it took,
+// a preview, and from resp (nil when the client has none) the model, what
+// the provider counted and why the model stopped.
+func (l *Logger) LogResponse(model string, resp *CompleteResponse, responseBytes int, durationMS int64, responsePreview string) {
 	if l == nil {
 		return
 	}
 	entry := LLMLogEntry{
 		TSUnix:          time.Now().Unix(),
 		Event:           "llm_response",
+		Model:           model,
 		ResponseBytes:   responseBytes,
 		DurationMS:      durationMS,
 		ResponsePreview: truncateAndSanitize(responsePreview, 2048),
+	}
+	if resp != nil {
+		entry.StopReason = resp.StopReason
+		if u := resp.Usage; u != nil {
+			entry.PromptTokens = u.PromptTokens
+			entry.CompletionTokens = u.CompletionTokens
+			entry.CachedPromptTokens = u.CachedPromptTokens
+			entry.CacheWriteTokens = u.CacheWriteTokens
+		}
 	}
 	l.appendLog(entry)
 }
@@ -314,15 +352,22 @@ const maxLogBytes = 5 << 20 // 5 MB
 var appendMu sync.Mutex
 
 func (l *Logger) appendLog(entry LLMLogEntry) {
+	if entry.Trace == (Trace{}) {
+		entry.Trace = l.trace
+	}
+	if entry.At.IsZero() {
+		entry.At = time.Now()
+	}
+	// The observer hears of the entry whether or not the file can take it.
+	if l.observer != nil {
+		l.observer(entry)
+	}
 	// Ensure directory exists
 	dir := filepath.Dir(l.logPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return // Best-effort, don't fail on logging errors
 	}
 
-	if entry.Trace == (Trace{}) {
-		entry.Trace = l.trace
-	}
 	// Marshal before taking the lock; a single write keeps each JSONL line atomic.
 	data, err := json.Marshal(entry)
 	if err != nil {

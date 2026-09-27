@@ -278,6 +278,10 @@ var dangerousLeaves = [][]string{
 	{"web", "confirm"},
 	{"lsp", "servers"},
 	{"llm", "auth"}, {"providers", "*", "auth"},
+	// Where a turn's traces go: model names, tool names, token counts and
+	// the tree of subagents would leave the machine for a host the
+	// repository chose.
+	{"telemetry"},
 }
 
 // endpointBlocks are the model-endpoint settings: their api_base decides

@@ -65,7 +65,7 @@ func (c *Core) WorkspaceTrust(ctx context.Context, p WorkspaceTrustParams) (*Wor
 	warnings := c.ReplaceMCP(ctx, fresh.MCP)
 	c.cfgMu.Unlock()
 	if !c.llmClientInjected && !reflect.DeepEqual(oldLLM, fresh.LLM) {
-		c.llmClient = llm.BuildClient(fresh.LLM, fresh.LLMRegistry(), llm.NewLogger(c.workspaceRoot))
+		c.llmClient = llm.BuildClient(fresh.LLM, fresh.LLMRegistry(), c.newLLMLogger())
 	}
 	c.publishSamplingTarget()
 	c.applyEmbedRuntime()

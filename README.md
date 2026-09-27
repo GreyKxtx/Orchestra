@@ -272,6 +272,17 @@ A server with an `oauth:` block authenticates via OAuth 2.1 instead of `bearer_t
 
 **Servers asking back (sampling / elicitation).** Both are off by default: an MCP server is third-party code, and these two requests are how it reaches your model bill and your attention. `allow_sampling: true` lets the server request a completion on your configured model; `allow_elicitation: true` lets it ask you a structured question. Either way you are asked to confirm each request in the TUI or IDE (the prompt names the server; "always" stops asking for that server until Orchestra restarts), and a sampling prompt never sees Orchestra's tools. In a non-interactive `orchestra apply` there is nobody to ask, so sampling is refused and elicitation declined — the config flag is permission to ask, not permission to proceed.
 
+### Telemetry: each turn as an OpenTelemetry trace
+
+```yaml
+telemetry:
+  otlp_endpoint: http://localhost:4318   # OTLP/HTTP base URL, or …/v1/traces
+  # headers: {Authorization: "Bearer …"} # an auth token belongs in OTEL_EXPORTER_OTLP_HEADERS, not a committed file
+  # service_name: orchestra
+```
+
+With an endpoint set — here, or in `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (`OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` and `OTEL_SDK_DISABLED=true` are honoured too) — the core sends every turn as one trace in OTLP JSON, named by the GenAI semantic conventions: `invoke_agent <mode>` for the turn (`gen_ai.conversation.id` for a session turn), `invoke_agent <role>` for each subagent under the task that started it, `chat <model>` for each model call (`gen_ai.request.model`, `gen_ai.provider.name`, `gen_ai.usage.input_tokens` / `output_tokens` / `cache_read.input_tokens`, `gen_ai.response.finish_reasons`, an error status with the HTTP code), `execute_tool <name>` for each tool call (`gen_ai.tool.name`, its duration and error). Attributes carry names, counts and durations, never prompts, arguments or file contents. The trace is sent when the turn ends; a collector that does not answer is reported once on stderr and never holds a turn. Jaeger, Grafana Tempo and the OpenTelemetry Collector all accept it on `/v1/traces`. A workspace's own `telemetry:` block applies once the workspace is trusted, like its other endpoints.
+
 ### Secrets: `.orchestra.local.yml`
 
 Put API keys and personal overrides in `.orchestra.local.yml` next to `.orchestra.yml` (it's in `.gitignore`; `orchestra init` adds it there automatically). The overlay is deep-merged on top of the main config at load time; when settings are saved (TUI / VS Code), values that came from the overlay are **not** written back into the shared `.orchestra.yml`:

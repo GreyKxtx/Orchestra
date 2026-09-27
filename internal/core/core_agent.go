@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -272,6 +273,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	if err == nil {
 		_, res, err = maybeContinueBuildAfterPlan(ctx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
 	}
+	launch.noteOutcome(res, err)
 	ck.finish(err)
 	if err != nil {
 		return nil, err
@@ -490,6 +492,10 @@ func (c *Core) Close() error {
 			if err := c.tools.Close(); err != nil {
 				c.closeErr = fmt.Errorf("close tools runner: %w", err)
 			}
+		}
+		// The traces of the turns that ended go out before the process does.
+		if err := c.telemetry.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "orchestra: %v\n", err)
 		}
 	})
 	return c.closeErr
