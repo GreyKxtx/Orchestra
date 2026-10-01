@@ -295,8 +295,16 @@
     });
   }
 
+  /** The composer holds something to send: text or an attachment. */
+  function composerHasDraft() {
+    return Boolean(inputEl?.value.trim()) || files.length > 0;
+  }
+
   function send() {
-    if (busy) {
+    // While a turn runs, an empty composer's button is Stop. With something
+    // typed it sends, and the host hands the message to the running turn (or
+    // queues it for the next one) instead of the work being thrown away.
+    if (busy && !composerHasDraft()) {
       host.postMessage({ type: "cancelTurn" });
       return;
     }
@@ -340,6 +348,7 @@
     renderFiles();
     closeMenus();
     host.postMessage(payload);
+    if (busy) updateBusyUi();
   }
 
   function autoGrow() {
@@ -613,6 +622,8 @@
   inputEl?.addEventListener("input", () => {
     autoGrow();
     onInputPalette();
+    // The button is Stop over an empty composer and Send over a draft.
+    if (busy) updateBusyUi();
   });
 
   modeBtn?.addEventListener("click", (e) => {

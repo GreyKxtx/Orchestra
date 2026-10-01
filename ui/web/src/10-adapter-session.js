@@ -227,7 +227,10 @@
       if (!text && !reasoning && toolBlocks.length === 0 && files.length === 0) {
         return;
       }
-      const row = { role, text };
+      // A message sent during a turn is the person's, drawn as theirs; it is
+      // not a turn of its own, so it has nothing to rewind to.
+      const interjection = m.role === "system" && m.system_kind === "interjection";
+      const row = { role: interjection ? "user" : role, text };
       // The index into the core's own list: rewind aims at it, so it counts
       // every row, including any this loop leaves out.
       if (role === "user") row.uiIndex = idx;
@@ -573,6 +576,12 @@
     } else {
       toRenderer({ type: "turnComplete", ok: true });
     }
+    // This project's own queue; one left from a turn that ended in the
+    // background goes out now that it is on screen.
+    postSendQueue(projectId);
+    if (st.inFlightTurnId === null) {
+      drainSendQueue(projectId, false, Promise.resolve());
+    }
     await refreshSessionList(projectId);
     renderProjects();
   }
@@ -669,6 +678,9 @@
 
       case "cancelTurn":
         if (current().inFlightTurnId !== null) {
+          // What the person sent during the turn goes back into the composer
+          // rather than out as a turn they just stopped (62-send-queue.js).
+          current().stopRequested = true;
           wsNotify("$/cancelRequest", { id: current().inFlightTurnId });
         }
         return;
@@ -700,6 +712,7 @@
       case "permissionReply":
       case "questionReply":
         // Answered in 30-adapter-asks.js, which owns the JSON-RPC ids.
+        answerDisplayedAsk(msg);
         return;
 
       case "switchProject":
@@ -739,6 +752,13 @@
       toRenderer({ type: "error", message: "no session — reload the page" });
       return;
     }
+    // A turn is running: the message goes to it, or waits for the next one —
+    // never over it (62-send-queue.js).
+    if (st.inFlightTurnId !== null) {
+      void sendWhileBusy(projectId, msg);
+      return;
+    }
+    st.stopRequested = false;
     // The session this turn belongs to: the person can open another one while
     // it runs, and the answer must be written back to the session that asked.
     const sessionId = st.sessionId;
@@ -840,7 +860,9 @@
       // so an answer this page does not save is gone when the session is
       // reopened. Not gated on the visible project — a turn that finished in
       // the background is exactly as worth keeping.
-      void saveAssistantTurn(projectId, conn, sessionId);
+      const saved = saveAssistantTurn(projectId, conn, sessionId);
+      // Messages sent during the turn that it never took go out next.
+      const queuedNext = drainSendQueue(projectId, st.stopRequested === true, saved);
       if (projectId === currentProjectId) {
         // What the turn actually cost, from the core's own accounting. The
         // renderer runs a live estimate per step and replaces it with this
@@ -857,7 +879,7 @@
           });
         }
         toRenderer({ type: "turnInFlight", inFlight: false });
-        toRenderer({ type: "turnComplete", ok: !failed });
+        toRenderer({ type: "turnComplete", ok: !failed, queuedNext });
         // The log is complete once session.message has returned — the core
         // closes the writer before it answers — so this replaces the live
         // rows with the recorded ones, which carry the core's own timings.

@@ -224,6 +224,7 @@
       "question.next": "Next",
 
       "queue.remove": "Remove from queue",
+      "queue.next_step": "reaches the agent at its next step",
       "typing.aria": "Assistant is working",
       "palette.files": "Files",
       "palette.no_files": "No files found",
@@ -947,6 +948,7 @@
       "question.next": "Далее",
 
       "queue.remove": "Убрать из очереди",
+      "queue.next_step": "дойдёт до агента на следующем шаге",
       "typing.aria": "Ассистент работает",
       "palette.files": "Файлы",
       "palette.no_files": "Файлы не найдены",
@@ -1955,8 +1957,8 @@
   // A fragment of the web bundle: ui/web/scripts/bundle-web.mjs puts it right
   // after the prelude, so every later fragment sees WIRE.
   const WIRE = Object.freeze({
-    PROTOCOL_VERSION: 25,
-    MIN_PROTOCOL_VERSION: 24,
+    PROTOCOL_VERSION: 26,
+    MIN_PROTOCOL_VERSION: 25,
     OPS_VERSION: 1,
     TOOLS_VERSION: 18,
     METHODS: Object.freeze([
@@ -2001,6 +2003,7 @@
       "session.fork",
       "session.get",
       "session.history",
+      "session.interject",
       "session.list",
       "session.message",
       "session.rewind",
@@ -2048,6 +2051,7 @@
       "agent_message",
       "workorders_relayed",
       "integration_verify",
+      "user_message",
     ]),
   });
   /* host is supplied by ui/web/src/00-web-prelude.js */
@@ -3869,6 +3873,7 @@
     if (overlayOptions) overlayOptions.innerHTML = "";
     if (overlayActions) overlayActions.innerHTML = "";
     overlayInput?.classList.add("hidden");
+    questionState.mode = "";
   }
 
   /** @param {any} request */
@@ -3937,11 +3942,19 @@
     overlayOptions.innerHTML = "";
     overlayActions.innerHTML = "";
     if (q.options && q.options.length) {
-      q.options.forEach((opt) => {
+      q.options.forEach((opt, i) => {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "pill";
-        btn.textContent = opt;
+        if (i < 9) {
+          const key = document.createElement("span");
+          key.className = "opt-key";
+          key.textContent = String(i + 1);
+          btn.appendChild(key);
+        }
+        const label = document.createElement("span");
+        label.textContent = opt;
+        btn.appendChild(label);
         btn.addEventListener("click", () => {
           questionState.answers.push(opt);
           questionState.index += 1;
@@ -3965,7 +3978,36 @@
       overlayActions.appendChild(next);
     }
     overlay.classList.remove("hidden");
+    // The panel sits above the composer; take the focus so the keyboard
+    // answers it (a digit picks an option, Enter sends a typed answer).
+    if (q.options && q.options.length) {
+      /** @type {HTMLElement | null} */ (overlayOptions.querySelector("button"))?.focus();
+    } else {
+      overlayInput?.focus();
+    }
   }
+
+  overlayInput?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.isComposing) {
+      ev.preventDefault();
+      /** @type {HTMLElement | null} */ (overlayActions?.querySelector("button.primary"))?.click();
+    }
+  });
+
+  // 1…9 picks the numbered option of the question on screen, unless the key is
+  // meant for a text field (the composer, the answer input).
+  document.addEventListener("keydown", (ev) => {
+    if (!overlay || overlay.classList.contains("hidden") || questionState.mode !== "question") return;
+    if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.isComposing) return;
+    const t = /** @type {HTMLElement | null} */ (ev.target);
+    if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable)) return;
+    if (!/^[1-9]$/.test(ev.key)) return;
+    const btn = overlayOptions?.querySelectorAll("button")[Number(ev.key) - 1];
+    if (btn) {
+      ev.preventDefault();
+      /** @type {HTMLElement} */ (btn).click();
+    }
+  });
 
   function matchJSONObject(s, start) {
     let depth = 0;
@@ -4081,6 +4123,9 @@
     if (!sendQueue.length) {
       messageQueueEl.classList.add("hidden");
       messageQueueEl.replaceChildren();
+      // The status line counts the queue ("· 1 queued"); an emptied queue
+      // must take the count down with it.
+      updateBusyUi();
       return;
     }
     messageQueueEl.classList.remove("hidden");
@@ -4102,17 +4147,27 @@
       const preview = (item.preview || "").trim();
       text.textContent = preview || (item.fileCount ? `${item.fileCount} attachment(s)` : "…");
       text.title = preview;
-      const rm = document.createElement("button");
-      rm.type = "button";
-      rm.className = "queue-cancel";
-      rm.setAttribute("aria-label", i18n("queue.remove"));
-      rm.textContent = "×";
-      rm.addEventListener("click", () => {
-        host.postMessage({ type: "cancelQueuedSend", id: item.id });
-      });
       row.appendChild(pos);
       row.appendChild(text);
-      row.appendChild(rm);
+      // A message the running turn already took cannot be called back; it
+      // leaves the queue when the model receives it.
+      if (item.locked) {
+        row.classList.add("queue-item-locked");
+        const note = document.createElement("span");
+        note.className = "queue-note";
+        note.textContent = i18n("queue.next_step");
+        row.appendChild(note);
+      } else {
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "queue-cancel";
+        rm.setAttribute("aria-label", i18n("queue.remove"));
+        rm.textContent = "×";
+        rm.addEventListener("click", () => {
+          host.postMessage({ type: "cancelQueuedSend", id: item.id });
+        });
+        row.appendChild(rm);
+      }
       messageQueueEl.appendChild(row);
     });
     updateBusyUi();
@@ -4166,10 +4221,13 @@
       composerWrap.classList.toggle("composer-busy", busy);
     }
     if (sendBtn) {
-      sendBtn.classList.toggle("is-busy", busy);
+      // Stop only over an empty composer: with a draft the button sends it
+      // into the running turn.
+      const stops = busy && !composerHasDraft();
+      sendBtn.classList.toggle("is-busy", stops);
       sendBtn.setAttribute("aria-busy", busy ? "true" : "false");
-      sendBtn.title = busy ? "Stop" : "Send";
-      sendBtn.setAttribute("aria-label", busy ? "Stop" : "Send");
+      sendBtn.title = stops ? "Stop" : "Send";
+      sendBtn.setAttribute("aria-label", stops ? "Stop" : "Send");
     }
     setTypingIndicator(busy && !assistantBubble?.textContent?.trim(), label);
   }
@@ -6917,8 +6975,16 @@
     });
   }
 
+  /** The composer holds something to send: text or an attachment. */
+  function composerHasDraft() {
+    return Boolean(inputEl?.value.trim()) || files.length > 0;
+  }
+
   function send() {
-    if (busy) {
+    // While a turn runs, an empty composer's button is Stop. With something
+    // typed it sends, and the host hands the message to the running turn (or
+    // queues it for the next one) instead of the work being thrown away.
+    if (busy && !composerHasDraft()) {
       host.postMessage({ type: "cancelTurn" });
       return;
     }
@@ -6962,6 +7028,7 @@
     renderFiles();
     closeMenus();
     host.postMessage(payload);
+    if (busy) updateBusyUi();
   }
 
   function autoGrow() {
@@ -7235,6 +7302,8 @@
   inputEl?.addEventListener("input", () => {
     autoGrow();
     onInputPalette();
+    // The button is Stop over an empty composer and Send over a draft.
+    if (busy) updateBusyUi();
   });
 
   modeBtn?.addEventListener("click", (e) => {
@@ -7872,6 +7941,32 @@
       case "turnStart":
         beginTurn();
         break;
+      case "userInterjection":
+        // A message the user sent during the turn reached the model. It goes
+        // into the chat where the model got it, and what the agent does next
+        // starts below it rather than streaming into the part above.
+        commitPreToolText();
+        appendMsg("user", msg.text, {
+          files: Array.isArray(msg.files) ? msg.files : undefined,
+        });
+        assistantTurn = null;
+        assistantTurnInner = null;
+        assistantBubble = null;
+        streamRawText = "";
+        toolTraceEl = null;
+        toolTraceSummary = null;
+        reasoningDetails = null;
+        reasoningBody = null;
+        break;
+      case "restoreDraft":
+        // Messages that never reached the turn come back to the composer
+        // rather than being lost (the person stopped the turn).
+        if (inputEl && typeof msg.text === "string" && msg.text) {
+          inputEl.value = inputEl.value.trim() ? `${inputEl.value}\n\n${msg.text}` : msg.text;
+          autoGrow();
+          updateBusyUi();
+        }
+        break;
       case "userEcho":
         appendMsg("user", msg.text, {
           uiIndex: typeof msg.uiIndex === "number" ? msg.uiIndex : undefined,
@@ -8420,7 +8515,10 @@
       if (!text && !reasoning && toolBlocks.length === 0 && files.length === 0) {
         return;
       }
-      const row = { role, text };
+      // A message sent during a turn is the person's, drawn as theirs; it is
+      // not a turn of its own, so it has nothing to rewind to.
+      const interjection = m.role === "system" && m.system_kind === "interjection";
+      const row = { role: interjection ? "user" : role, text };
       // The index into the core's own list: rewind aims at it, so it counts
       // every row, including any this loop leaves out.
       if (role === "user") row.uiIndex = idx;
@@ -8766,6 +8864,12 @@
     } else {
       toRenderer({ type: "turnComplete", ok: true });
     }
+    // This project's own queue; one left from a turn that ended in the
+    // background goes out now that it is on screen.
+    postSendQueue(projectId);
+    if (st.inFlightTurnId === null) {
+      drainSendQueue(projectId, false, Promise.resolve());
+    }
     await refreshSessionList(projectId);
     renderProjects();
   }
@@ -8862,6 +8966,9 @@
 
       case "cancelTurn":
         if (current().inFlightTurnId !== null) {
+          // What the person sent during the turn goes back into the composer
+          // rather than out as a turn they just stopped (62-send-queue.js).
+          current().stopRequested = true;
           wsNotify("$/cancelRequest", { id: current().inFlightTurnId });
         }
         return;
@@ -8893,6 +9000,7 @@
       case "permissionReply":
       case "questionReply":
         // Answered in 30-adapter-asks.js, which owns the JSON-RPC ids.
+        answerDisplayedAsk(msg);
         return;
 
       case "switchProject":
@@ -8932,6 +9040,13 @@
       toRenderer({ type: "error", message: "no session — reload the page" });
       return;
     }
+    // A turn is running: the message goes to it, or waits for the next one —
+    // never over it (62-send-queue.js).
+    if (st.inFlightTurnId !== null) {
+      void sendWhileBusy(projectId, msg);
+      return;
+    }
+    st.stopRequested = false;
     // The session this turn belongs to: the person can open another one while
     // it runs, and the answer must be written back to the session that asked.
     const sessionId = st.sessionId;
@@ -9033,7 +9148,9 @@
       // so an answer this page does not save is gone when the session is
       // reopened. Not gated on the visible project — a turn that finished in
       // the background is exactly as worth keeping.
-      void saveAssistantTurn(projectId, conn, sessionId);
+      const saved = saveAssistantTurn(projectId, conn, sessionId);
+      // Messages sent during the turn that it never took go out next.
+      const queuedNext = drainSendQueue(projectId, st.stopRequested === true, saved);
       if (projectId === currentProjectId) {
         // What the turn actually cost, from the core's own accounting. The
         // renderer runs a live estimate per step and replaces it with this
@@ -9050,7 +9167,7 @@
           });
         }
         toRenderer({ type: "turnInFlight", inFlight: false });
-        toRenderer({ type: "turnComplete", ok: !failed });
+        toRenderer({ type: "turnComplete", ok: !failed, queuedNext });
         // The log is complete once session.message has returned — the core
         // closes the writer before it answers — so this replaces the live
         // rows with the recorded ones, which carry the core's own timings.
@@ -9242,6 +9359,10 @@
 
   /** @type {Map<string, string>} */
   const turnTextByProject = new Map();
+  // Where the text on screen starts in turnTextByProject: after a message the
+  // person sent mid-turn, the agent's words continue in a new bubble below it,
+  // and that bubble must not repeat what was said above it.
+  const turnTextShownFrom = new Map();
   /** @type {Map<string, Map<string, any>>} */
   const liveToolBlocksByProject = new Map();
   // The rest of the turn, kept for the same reason: the core records the
@@ -9289,8 +9410,20 @@
         case "reasoning_delta":
           if (st.status === "idle") st.status = "working";
           break;
+        case "user_message":
+          // Every project's, not only the one on screen: the queue item must
+          // leave whichever project's composer it waits in.
+          if (ev.scope !== "child") {
+            turnTextShownFrom.set(projectId, (turnTextByProject.get(projectId) || "").length);
+            noteInterjectionDelivered(projectId, ev);
+          }
+          break;
         case "done":
         case "error":
+          // A subagent's step ending says nothing about the root turn, and
+          // the root may be waiting on the person right now: clearing its ask
+          // here dropped a question whose reply the core was still waiting for.
+          if (ev.scope === "child") break;
           // A turn can end (or error out) while a permission/question prompt
           // is still outstanding — e.g. the agent errored before the tool
           // that raised it ever got an answer. Left alone, pendingAsk keeps a
@@ -9374,7 +9507,7 @@
         if (ev.content && !isChild) {
           const acc = (turnTextByProject.get(projectId) || "") + ev.content;
           turnTextByProject.set(projectId, acc);
-          toRenderer({ type: "deltaSync", content: acc });
+          toRenderer({ type: "deltaSync", content: acc.slice(turnTextShownFrom.get(projectId) || 0) });
         }
         break;
 
@@ -9697,6 +9830,7 @@
   window.addEventListener("message", (ev) => {
     if (ev.data && ev.data.type === "turnStart") {
       turnTextByProject.set(currentProjectId, "");
+      turnTextShownFrom.set(currentProjectId, 0);
       turnReasoningByProject.set(currentProjectId, "");
       turnToolsByProject.set(currentProjectId, []);
       turnUsageByProject.delete(currentProjectId);
@@ -9787,50 +9921,44 @@
     renderProjects();
   }
 
-  // The overlays answer through the renderer's existing messages. Intercept
-  // them here rather than in dispatchToCore, because they carry an id that
-  // belongs to this fragment.
-  window.addEventListener("message", (ev) => {
-    const msg = ev.data;
-    if (!msg || typeof msg !== "object") {
+  // The overlays answer through the renderer's existing messages, which
+  // dispatchToCore hands here: the reply carries an id that belongs to this
+  // fragment. It used to be a window "message" listener, which only the test
+  // seam ever reached — in the page the renderer calls host.postMessage
+  // directly, so an answered question never went back and the turn waited.
+  /** @param {any} p */
+  function answerDisplayedAsk(p) {
+    // The renderer's reply carries no project id and no request id, so it is
+    // resolved against whichever ask is actually displayed on screen — never
+    // against currentProjectId, which may already name a different project
+    // by the time the click lands.
+    if (!displayedAsk) {
+      return; // stale click; nothing is on screen to answer
+    }
+    const st = projectState(displayedAsk.projectId);
+    if (p.type === "permissionReply") {
+      if (!st.pendingAsk || st.pendingAsk.kind !== "permission" || displayedAsk.kind !== "permission") {
+        return; // stale click; answering some other id would be worse
+      }
+      connFor(displayedAsk.projectId).reply(displayedAsk.id, {
+        approved: Boolean(p.approved),
+        always: Boolean(p.always),
+      });
+    } else if (p.type === "questionReply") {
+      if (!st.pendingAsk || st.pendingAsk.kind !== "question" || displayedAsk.kind !== "question") {
+        return;
+      }
+      connFor(displayedAsk.projectId).reply(displayedAsk.id, {
+        answers: Array.isArray(p.answers) ? p.answers : [],
+      });
+    } else {
       return;
     }
-    if (msg.type === "__host_dispatch__" && msg.payload) {
-      const p = msg.payload;
-      // The renderer's reply carries no project id and no request id, so it is
-      // resolved against whichever ask is actually displayed on screen — never
-      // against currentProjectId, which may already name a different project
-      // by the time the click lands.
-      if (!displayedAsk) {
-        return; // stale click; nothing is on screen to answer
-      }
-      const st = projectState(displayedAsk.projectId);
-      if (p.type === "permissionReply") {
-        if (!st.pendingAsk || st.pendingAsk.kind !== "permission" || displayedAsk.kind !== "permission") {
-          return; // stale click; answering some other id would be worse
-        }
-        connFor(displayedAsk.projectId).reply(displayedAsk.id, {
-          approved: Boolean(p.approved),
-          always: Boolean(p.always),
-        });
-        st.pendingAsk = null;
-        st.status = st.inFlightTurnId !== null ? "working" : "idle";
-        clearDisplayedAsk();
-        renderProjects();
-      } else if (p.type === "questionReply") {
-        if (!st.pendingAsk || st.pendingAsk.kind !== "question" || displayedAsk.kind !== "question") {
-          return;
-        }
-        connFor(displayedAsk.projectId).reply(displayedAsk.id, {
-          answers: Array.isArray(p.answers) ? p.answers : [],
-        });
-        st.pendingAsk = null;
-        st.status = st.inFlightTurnId !== null ? "working" : "idle";
-        clearDisplayedAsk();
-        renderProjects();
-      }
-    }
-  });
+    st.pendingAsk = null;
+    st.status = st.inFlightTurnId !== null ? "working" : "idle";
+    clearDisplayedAsk();
+    renderProjects();
+  }
   // The projects module: the rail, one connection per open project, and the
   // switch between them.
   //
@@ -13016,10 +13144,9 @@
         return true;
 
       case "cancelQueuedSend":
-        // The VS Code panel queues sends while a turn is in flight and this
-        // host does not, so there is never a queued send to cancel. Taking the
-        // message keeps a note about a thing that cannot happen off the
-        // screen.
+        // A message waiting for the next turn (62-send-queue.js); one the
+        // running turn already took cannot be called back.
+        cancelQueuedSend(currentProjectId, String(msg.id || ""));
         return true;
 
       case "attach":
@@ -13850,6 +13977,162 @@
     if (projectId === currentProjectId) {
       renderProjects();
     }
+  }
+  // ---- messages sent while a turn runs -------------------------------------
+  //
+  // Enter during a turn used to stop it: the button was Stop and a typed
+  // message threw the work away. Now a message sent while a turn runs goes to
+  // that turn (session.interject), and the model reads it at its next step; a
+  // turn that cannot take it any more (past its last step, an older core, a
+  // message with attachments) leaves it here, and it goes out as the next turn.
+  // The queue is the renderer's (05c-busy-palette.js, queueUpdate): an item the
+  // turn took is locked — it cannot be called back — and leaves the queue when
+  // the user_message event says the model got it.
+
+  let sendQueueSeq = 0;
+
+  /** @param {string} projectId */
+  function sendQueueOf(projectId) {
+    const st = projectState(projectId);
+    if (!st.sendQueue) {
+      st.sendQueue = [];
+      st.deliveredEarly = new Set();
+    }
+    return st.sendQueue;
+  }
+
+  /** @param {string} projectId */
+  function postSendQueue(projectId) {
+    if (projectId !== currentProjectId) {
+      return;
+    }
+    toRenderer({
+      type: "queueUpdate",
+      items: sendQueueOf(projectId).map((it) => ({
+        id: it.id,
+        preview: it.text,
+        fileCount: it.files.length,
+        locked: Boolean(it.coreId),
+      })),
+    });
+  }
+
+  /**
+   * A send while this project's turn runs.
+   * @param {string} projectId @param {any} msg
+   */
+  async function sendWhileBusy(projectId, msg) {
+    const st = projectState(projectId);
+    const item = {
+      id: "q" + ++sendQueueSeq,
+      text: String(msg.text || ""),
+      files: Array.isArray(msg.files) ? msg.files : [],
+      msg,
+      coreId: "",
+    };
+    const queue = sendQueueOf(projectId);
+    queue.push(item);
+    postSendQueue(projectId);
+    // session.interject carries text: a message with attachments waits for a
+    // turn of its own.
+    if (item.files.length || !item.text.trim() || !st.sessionId) {
+      return;
+    }
+    let res = null;
+    try {
+      res = await connFor(projectId).send("session.interject", { session_id: st.sessionId, content: item.text });
+    } catch (err) {
+      return; // an older core: the message waits for the next turn
+    }
+    if (!res || !res.accepted || !res.id || !queue.includes(item)) {
+      return;
+    }
+    const id = String(res.id);
+    // The model can reach its next step before this answer is read here.
+    if (st.deliveredEarly.has(id)) {
+      st.deliveredEarly.delete(id);
+      queue.splice(queue.indexOf(item), 1);
+    } else {
+      item.coreId = id;
+    }
+    postSendQueue(projectId);
+  }
+
+  /**
+   * The user_message event: a message the turn took reached the model. It goes
+   * into the chat where the model read it.
+   * @param {string} projectId @param {any} ev
+   */
+  function noteInterjectionDelivered(projectId, ev) {
+    const st = projectState(projectId);
+    const queue = sendQueueOf(projectId);
+    const id = ev && ev.data && ev.data.id ? String(ev.data.id) : "";
+    const i = queue.findIndex((it) => it.coreId !== "" && it.coreId === id);
+    if (i >= 0) {
+      queue.splice(i, 1);
+    } else if (id) {
+      st.deliveredEarly.add(id);
+    }
+    if (projectId === currentProjectId) {
+      toRenderer({ type: "userInterjection", text: String((ev && ev.content) || "") });
+      postSendQueue(projectId);
+    }
+  }
+
+  /** @param {string} projectId @param {string} id */
+  function cancelQueuedSend(projectId, id) {
+    const queue = sendQueueOf(projectId);
+    const i = queue.findIndex((it) => it.id === id && it.coreId === "");
+    if (i >= 0) {
+      queue.splice(i, 1);
+      postSendQueue(projectId);
+    }
+  }
+
+  /**
+   * After a turn: what it never took waits no longer. Stopped by the person,
+   * it goes back into the composer; otherwise it goes out as one next turn
+   * once `saved` (the answer written into the session) has settled, so the two
+   * writes to the chat cannot cross. Reports whether a next turn is coming.
+   * @param {string} projectId @param {boolean} stopped @param {Promise<any>} saved
+   */
+  function drainSendQueue(projectId, stopped, saved) {
+    const queue = sendQueueOf(projectId);
+    for (const it of queue) {
+      it.coreId = "";
+    }
+    if (!queue.length) {
+      return false;
+    }
+    if (stopped || projectId !== currentProjectId) {
+      // A background project keeps its queue until it is on screen again.
+      if (stopped) {
+        const text = queue.map((it) => it.text).filter(Boolean).join("\n\n");
+        queue.length = 0;
+        if (text && projectId === currentProjectId) {
+          toRenderer({ type: "restoreDraft", text });
+        }
+      }
+      postSendQueue(projectId);
+      return false;
+    }
+    const items = queue.splice(0);
+    postSendQueue(projectId);
+    const next = Object.assign({}, items[0].msg, {
+      text: items.map((it) => it.text).filter(Boolean).join("\n\n"),
+      files: items.flatMap((it) => it.files),
+    });
+    void Promise.resolve(saved)
+      .catch(() => undefined)
+      .then(() => {
+        if (projectId === currentProjectId && projectState(projectId).inFlightTurnId === null) {
+          void sendTurn(next);
+        } else {
+          queue.push(...items);
+          postSendQueue(projectId);
+        }
+      });
+    return true;
   }
   // ---- the Browser view -----------------------------------------------------
   //

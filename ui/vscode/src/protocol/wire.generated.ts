@@ -5,9 +5,9 @@
 // every params, result and event. Field meanings: protocol/wire/*.go.
 
 /** The newest protocol version this contract describes. */
-export const PROTOCOL_VERSION = 25;
+export const PROTOCOL_VERSION = 26;
 /** The oldest protocol version a core of this version still speaks. */
-export const MIN_PROTOCOL_VERSION = 24;
+export const MIN_PROTOCOL_VERSION = 25;
 /** Internal ops; must match the core's. */
 export const OPS_VERSION = 1;
 /** The tools this contract was written against; informational to the core. */
@@ -56,6 +56,7 @@ export const METHODS = [
   "session.fork",
   "session.get",
   "session.history",
+  "session.interject",
   "session.list",
   "session.message",
   "session.rewind",
@@ -112,6 +113,7 @@ export const EVENT_TYPES = [
   "agent_message",
   "workorders_relayed",
   "integration_verify",
+  "user_message",
 ] as const;
 export type AgentEventType = (typeof EVENT_TYPES)[number];
 
@@ -157,6 +159,11 @@ export interface AttachmentsStoreResult {
 }
 
 // ── protocol/wire/events.go ──
+
+/** UserMessage is the Data of a user_message event. */
+export interface UserMessage {
+  id: string;
+}
 
 /**
  * AgentEvent is the params of an agent/event notification: one thing that
@@ -1080,6 +1087,27 @@ export interface SessionCancelParams {
   session_id: string;
 }
 
+/**
+ * SessionInterjectParams hands a message to the session's running turn: the
+ * model takes it at its next step instead of the turn being cancelled and
+ * started over. (ProtocolVersion 26.)
+ */
+export interface SessionInterjectParams {
+  session_id: string;
+  content: string;
+}
+
+/**
+ * SessionInterjectResult says whether the running turn took the message.
+ * Accepted is false when no turn is running or the running one is past its
+ * last step: the client then sends the message as the next turn. ID comes
+ * back on the user_message event when the model receives the message.
+ */
+export interface SessionInterjectResult {
+  accepted: boolean;
+  id?: string;
+}
+
 export interface SessionCloseParams {
   session_id: string;
 }
@@ -1238,6 +1266,7 @@ export interface MethodSignatures {
   "session.search": { params: SessionSearchParams; result: unknown };
   "session.trajectory": { params: SessionTrajectoryParams; result: unknown };
   "session.cancel": { params: SessionCancelParams; result: unknown };
+  "session.interject": { params: SessionInterjectParams; result: SessionInterjectResult };
   "session.apply_pending": { params: SessionApplyPendingParams; result: unknown };
   "session.discard_pending": { params: SessionDiscardPendingParams; result: unknown };
   "session.close": { params: SessionCloseParams; result: unknown };

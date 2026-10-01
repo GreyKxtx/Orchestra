@@ -83,6 +83,23 @@ type SessionCancelParams struct {
 	SessionID string `json:"session_id"`
 }
 
+// SessionInterjectParams hands a message to the session's running turn: the
+// model takes it at its next step instead of the turn being cancelled and
+// started over. (ProtocolVersion 26.)
+type SessionInterjectParams struct {
+	SessionID string `json:"session_id"`
+	Content   string `json:"content"`
+}
+
+// SessionInterjectResult says whether the running turn took the message.
+// Accepted is false when no turn is running or the running one is past its
+// last step: the client then sends the message as the next turn. ID comes
+// back on the user_message event when the model receives the message.
+type SessionInterjectResult struct {
+	Accepted bool   `json:"accepted"`
+	ID       string `json:"id,omitempty"`
+}
+
 type SessionCloseParams struct {
 	SessionID string `json:"session_id"`
 }

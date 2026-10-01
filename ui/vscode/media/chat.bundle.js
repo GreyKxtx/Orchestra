@@ -224,6 +224,7 @@
       "question.next": "Next",
 
       "queue.remove": "Remove from queue",
+      "queue.next_step": "reaches the agent at its next step",
       "typing.aria": "Assistant is working",
       "palette.files": "Files",
       "palette.no_files": "No files found",
@@ -947,6 +948,7 @@
       "question.next": "Далее",
 
       "queue.remove": "Убрать из очереди",
+      "queue.next_step": "дойдёт до агента на следующем шаге",
       "typing.aria": "Ассистент работает",
       "palette.files": "Файлы",
       "palette.no_files": "Файлы не найдены",
@@ -3558,6 +3560,7 @@
     if (overlayOptions) overlayOptions.innerHTML = "";
     if (overlayActions) overlayActions.innerHTML = "";
     overlayInput?.classList.add("hidden");
+    questionState.mode = "";
   }
 
   /** @param {any} request */
@@ -3626,11 +3629,19 @@
     overlayOptions.innerHTML = "";
     overlayActions.innerHTML = "";
     if (q.options && q.options.length) {
-      q.options.forEach((opt) => {
+      q.options.forEach((opt, i) => {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "pill";
-        btn.textContent = opt;
+        if (i < 9) {
+          const key = document.createElement("span");
+          key.className = "opt-key";
+          key.textContent = String(i + 1);
+          btn.appendChild(key);
+        }
+        const label = document.createElement("span");
+        label.textContent = opt;
+        btn.appendChild(label);
         btn.addEventListener("click", () => {
           questionState.answers.push(opt);
           questionState.index += 1;
@@ -3654,7 +3665,36 @@
       overlayActions.appendChild(next);
     }
     overlay.classList.remove("hidden");
+    // The panel sits above the composer; take the focus so the keyboard
+    // answers it (a digit picks an option, Enter sends a typed answer).
+    if (q.options && q.options.length) {
+      /** @type {HTMLElement | null} */ (overlayOptions.querySelector("button"))?.focus();
+    } else {
+      overlayInput?.focus();
+    }
   }
+
+  overlayInput?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.isComposing) {
+      ev.preventDefault();
+      /** @type {HTMLElement | null} */ (overlayActions?.querySelector("button.primary"))?.click();
+    }
+  });
+
+  // 1…9 picks the numbered option of the question on screen, unless the key is
+  // meant for a text field (the composer, the answer input).
+  document.addEventListener("keydown", (ev) => {
+    if (!overlay || overlay.classList.contains("hidden") || questionState.mode !== "question") return;
+    if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.isComposing) return;
+    const t = /** @type {HTMLElement | null} */ (ev.target);
+    if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable)) return;
+    if (!/^[1-9]$/.test(ev.key)) return;
+    const btn = overlayOptions?.querySelectorAll("button")[Number(ev.key) - 1];
+    if (btn) {
+      ev.preventDefault();
+      /** @type {HTMLElement} */ (btn).click();
+    }
+  });
 
   function matchJSONObject(s, start) {
     let depth = 0;
@@ -3770,6 +3810,9 @@
     if (!sendQueue.length) {
       messageQueueEl.classList.add("hidden");
       messageQueueEl.replaceChildren();
+      // The status line counts the queue ("· 1 queued"); an emptied queue
+      // must take the count down with it.
+      updateBusyUi();
       return;
     }
     messageQueueEl.classList.remove("hidden");
@@ -3791,17 +3834,27 @@
       const preview = (item.preview || "").trim();
       text.textContent = preview || (item.fileCount ? `${item.fileCount} attachment(s)` : "…");
       text.title = preview;
-      const rm = document.createElement("button");
-      rm.type = "button";
-      rm.className = "queue-cancel";
-      rm.setAttribute("aria-label", i18n("queue.remove"));
-      rm.textContent = "×";
-      rm.addEventListener("click", () => {
-        host.postMessage({ type: "cancelQueuedSend", id: item.id });
-      });
       row.appendChild(pos);
       row.appendChild(text);
-      row.appendChild(rm);
+      // A message the running turn already took cannot be called back; it
+      // leaves the queue when the model receives it.
+      if (item.locked) {
+        row.classList.add("queue-item-locked");
+        const note = document.createElement("span");
+        note.className = "queue-note";
+        note.textContent = i18n("queue.next_step");
+        row.appendChild(note);
+      } else {
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "queue-cancel";
+        rm.setAttribute("aria-label", i18n("queue.remove"));
+        rm.textContent = "×";
+        rm.addEventListener("click", () => {
+          host.postMessage({ type: "cancelQueuedSend", id: item.id });
+        });
+        row.appendChild(rm);
+      }
       messageQueueEl.appendChild(row);
     });
     updateBusyUi();
@@ -3855,10 +3908,13 @@
       composerWrap.classList.toggle("composer-busy", busy);
     }
     if (sendBtn) {
-      sendBtn.classList.toggle("is-busy", busy);
+      // Stop only over an empty composer: with a draft the button sends it
+      // into the running turn.
+      const stops = busy && !composerHasDraft();
+      sendBtn.classList.toggle("is-busy", stops);
       sendBtn.setAttribute("aria-busy", busy ? "true" : "false");
-      sendBtn.title = busy ? "Stop" : "Send";
-      sendBtn.setAttribute("aria-label", busy ? "Stop" : "Send");
+      sendBtn.title = stops ? "Stop" : "Send";
+      sendBtn.setAttribute("aria-label", stops ? "Stop" : "Send");
     }
     setTypingIndicator(busy && !assistantBubble?.textContent?.trim(), label);
   }
@@ -6606,8 +6662,16 @@
     });
   }
 
+  /** The composer holds something to send: text or an attachment. */
+  function composerHasDraft() {
+    return Boolean(inputEl?.value.trim()) || files.length > 0;
+  }
+
   function send() {
-    if (busy) {
+    // While a turn runs, an empty composer's button is Stop. With something
+    // typed it sends, and the host hands the message to the running turn (or
+    // queues it for the next one) instead of the work being thrown away.
+    if (busy && !composerHasDraft()) {
       host.postMessage({ type: "cancelTurn" });
       return;
     }
@@ -6651,6 +6715,7 @@
     renderFiles();
     closeMenus();
     host.postMessage(payload);
+    if (busy) updateBusyUi();
   }
 
   function autoGrow() {
@@ -6924,6 +6989,8 @@
   inputEl?.addEventListener("input", () => {
     autoGrow();
     onInputPalette();
+    // The button is Stop over an empty composer and Send over a draft.
+    if (busy) updateBusyUi();
   });
 
   modeBtn?.addEventListener("click", (e) => {
@@ -7560,6 +7627,32 @@
         break;
       case "turnStart":
         beginTurn();
+        break;
+      case "userInterjection":
+        // A message the user sent during the turn reached the model. It goes
+        // into the chat where the model got it, and what the agent does next
+        // starts below it rather than streaming into the part above.
+        commitPreToolText();
+        appendMsg("user", msg.text, {
+          files: Array.isArray(msg.files) ? msg.files : undefined,
+        });
+        assistantTurn = null;
+        assistantTurnInner = null;
+        assistantBubble = null;
+        streamRawText = "";
+        toolTraceEl = null;
+        toolTraceSummary = null;
+        reasoningDetails = null;
+        reasoningBody = null;
+        break;
+      case "restoreDraft":
+        // Messages that never reached the turn come back to the composer
+        // rather than being lost (the person stopped the turn).
+        if (inputEl && typeof msg.text === "string" && msg.text) {
+          inputEl.value = inputEl.value.trim() ? `${inputEl.value}\n\n${msg.text}` : msg.text;
+          autoGrow();
+          updateBusyUi();
+        }
         break;
       case "userEcho":
         appendMsg("user", msg.text, {

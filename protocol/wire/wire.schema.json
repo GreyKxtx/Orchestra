@@ -2098,6 +2098,37 @@
       ],
       "type": "object"
     },
+    "SessionInterjectParams": {
+      "description": "SessionInterjectParams hands a message to the session's running turn: the\nmodel takes it at its next step instead of the turn being cancelled and\nstarted over. (ProtocolVersion 26.)",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "content"
+      ],
+      "type": "object"
+    },
+    "SessionInterjectResult": {
+      "description": "SessionInterjectResult says whether the running turn took the message.\nAccepted is false when no turn is running or the running one is past its\nlast step: the client then sends the message as the next turn. ID comes\nback on the user_message event when the model receives the message.",
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "accepted"
+      ],
+      "type": "object"
+    },
     "SessionListParams": {
       "properties": {},
       "type": "object"
@@ -2490,6 +2521,18 @@
       ],
       "type": "object"
     },
+    "UserMessage": {
+      "description": "UserMessage is the Data of a user_message event.",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
     "VersionRange": {
       "description": "VersionRange is the protocol versions one side speaks, inclusive.",
       "properties": {
@@ -2625,7 +2668,7 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Generated from protocol/wire (go generate ./protocol/wire/...). The client↔core JSON-RPC contract: methods, notifications, requests, and the shape of every params, result and event.",
-  "title": "Orchestra wire contract, protocol v25",
+  "title": "Orchestra wire contract, protocol v26",
   "x-orchestra": {
     "event_types": [
       "message_delta",
@@ -2647,7 +2690,8 @@
       "child_done",
       "agent_message",
       "workorders_relayed",
-      "integration_verify"
+      "integration_verify",
+      "user_message"
     ],
     "methods": [
       "$/cancelRequest",
@@ -2691,6 +2735,7 @@
       "session.fork",
       "session.get",
       "session.history",
+      "session.interject",
       "session.list",
       "session.message",
       "session.rewind",
@@ -2706,7 +2751,7 @@
       "workspace.trust",
       "workspace.trust_status"
     ],
-    "min_protocol_version": 24,
+    "min_protocol_version": 25,
     "notifications": [
       "agent/event",
       "exec/output_chunk",
@@ -2714,7 +2759,7 @@
       "workflow/stage_start"
     ],
     "ops_version": 1,
-    "protocol_version": 25,
+    "protocol_version": 26,
     "requests": [
       "browser/call",
       "permission/request",
@@ -2983,6 +3028,14 @@
       "session.history": {
         "params": {
           "$ref": "#/$defs/SessionHistoryParams"
+        }
+      },
+      "session.interject": {
+        "params": {
+          "$ref": "#/$defs/SessionInterjectParams"
+        },
+        "result": {
+          "$ref": "#/$defs/SessionInterjectResult"
         }
       },
       "session.list": {

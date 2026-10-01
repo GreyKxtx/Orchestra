@@ -81,3 +81,37 @@ func TestMergeServers_AddsDetected(t *testing.T) {
 		t.Fatalf("%+v", merged)
 	}
 }
+
+// Every Orchestra workspace has .orchestra.yml; it says nothing about the
+// project's languages, and counting it asked for a YAML server in all of them.
+func TestDetect_OrchestraConfigIsNotYAMLProject(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{".orchestra.yml", ".orchestra.yaml", "index.html"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x: 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, e := range provision.Detect(root) {
+		if e.Language == "yaml" {
+			t.Fatalf("Orchestra's own config must not detect yaml, got %+v", e)
+		}
+	}
+}
+
+func TestDetect_RealYAMLStillDetected(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{".orchestra.yml", "docker-compose.yml"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x: 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	found := false
+	for _, e := range provision.Detect(root) {
+		if e.Language == "yaml" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("a project YAML file must still detect yaml")
+	}
+}

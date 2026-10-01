@@ -69,10 +69,9 @@
         return true;
 
       case "cancelQueuedSend":
-        // The VS Code panel queues sends while a turn is in flight and this
-        // host does not, so there is never a queued send to cancel. Taking the
-        // message keeps a note about a thing that cannot happen off the
-        // screen.
+        // A message waiting for the next turn (62-send-queue.js); one the
+        // running turn already took cannot be called back.
+        cancelQueuedSend(currentProjectId, String(msg.id || ""));
         return true;
 
       case "attach":

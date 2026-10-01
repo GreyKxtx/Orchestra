@@ -3,6 +3,7 @@
     if (overlayOptions) overlayOptions.innerHTML = "";
     if (overlayActions) overlayActions.innerHTML = "";
     overlayInput?.classList.add("hidden");
+    questionState.mode = "";
   }
 
   /** @param {any} request */
@@ -71,11 +72,19 @@
     overlayOptions.innerHTML = "";
     overlayActions.innerHTML = "";
     if (q.options && q.options.length) {
-      q.options.forEach((opt) => {
+      q.options.forEach((opt, i) => {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "pill";
-        btn.textContent = opt;
+        if (i < 9) {
+          const key = document.createElement("span");
+          key.className = "opt-key";
+          key.textContent = String(i + 1);
+          btn.appendChild(key);
+        }
+        const label = document.createElement("span");
+        label.textContent = opt;
+        btn.appendChild(label);
         btn.addEventListener("click", () => {
           questionState.answers.push(opt);
           questionState.index += 1;
@@ -99,7 +108,36 @@
       overlayActions.appendChild(next);
     }
     overlay.classList.remove("hidden");
+    // The panel sits above the composer; take the focus so the keyboard
+    // answers it (a digit picks an option, Enter sends a typed answer).
+    if (q.options && q.options.length) {
+      /** @type {HTMLElement | null} */ (overlayOptions.querySelector("button"))?.focus();
+    } else {
+      overlayInput?.focus();
+    }
   }
+
+  overlayInput?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.isComposing) {
+      ev.preventDefault();
+      /** @type {HTMLElement | null} */ (overlayActions?.querySelector("button.primary"))?.click();
+    }
+  });
+
+  // 1…9 picks the numbered option of the question on screen, unless the key is
+  // meant for a text field (the composer, the answer input).
+  document.addEventListener("keydown", (ev) => {
+    if (!overlay || overlay.classList.contains("hidden") || questionState.mode !== "question") return;
+    if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.isComposing) return;
+    const t = /** @type {HTMLElement | null} */ (ev.target);
+    if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable)) return;
+    if (!/^[1-9]$/.test(ev.key)) return;
+    const btn = overlayOptions?.querySelectorAll("button")[Number(ev.key) - 1];
+    if (btn) {
+      ev.preventDefault();
+      /** @type {HTMLElement} */ (btn).click();
+    }
+  });
 
   function matchJSONObject(s, start) {
     let depth = 0;

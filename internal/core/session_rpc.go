@@ -501,10 +501,17 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	// Create a cancellable context for this turn and store its cancel in the session.
 	turnCtx, cancel := context.WithCancel(ctx)
 	sess.SetCancel(cancel)
+	// What the user sends while this turn works (session.interject) waits
+	// here for the agent's next step.
+	interjections := sess.BeginInterjections()
 	sess.Unlock()
 
 	// Ensure cancel and session state are cleaned up on exit.
 	defer func() {
+		// A message the turn never took (a cancel, an error, the step limit)
+		// is the client's to send again: it knows what it sent and which of
+		// those the user_message events confirmed.
+		sess.EndInterjections()
 		sess.Lock()
 		sess.ClearCancel()
 		sess.Unlock()
@@ -614,6 +621,11 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		persistMidTurnHistory(c.workspaceRoot, sess, hist, rewritten)
 	}
 
+	env := EventEnvelope{SessionID: params.SessionID, TurnID: turnID}
+	launch.Opts.Interjections = func(final bool) []string {
+		return c.takeInterjections(sess, interjections.Drain(final), params.OnEvent, env)
+	}
+
 	ag, err := agent.New(launch.Custom.llmClient, c.validator, c.tools, launch.Opts)
 	if err != nil {
 		return nil, err
@@ -621,6 +633,9 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 
 	turnCtx = launch.RunContext(tools.WithTurn(turnCtx, turn))
 	outHistory, res, err := ag.Run(turnCtx, inHistory, agentQuery)
+	// The plan→build continuation below is a second agent run the user did
+	// not ask for by name; a message sent during it goes as the next turn.
+	sess.EndInterjections()
 	if err == nil {
 		outHistory, res, err = maybeContinueBuildAfterPlan(turnCtx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
 	}
@@ -1241,6 +1256,49 @@ func (c *Core) SessionCompact(ctx context.Context, params SessionCompactParams) 
 		BeforeMsgs: before,
 		AfterMsgs:  len(compacted),
 	}, nil
+}
+
+// SessionInterject hands a message to the session's running turn. The model
+// takes it at its next step; Accepted is false when no turn is running or the
+// running one is past its last look, and the client sends it as a turn.
+func (c *Core) SessionInterject(params wire.SessionInterjectParams) (*wire.SessionInterjectResult, error) {
+	if c == nil {
+		return nil, protocol.NewError(protocol.ExecFailed, "core is nil", nil)
+	}
+	sess, err := c.sessions.Get(params.SessionID)
+	if err != nil {
+		return nil, protocol.NewError(protocol.ExecFailed, err.Error(), map[string]any{"session_id": params.SessionID})
+	}
+	id, ok := sess.Interject(params.Content)
+	return &wire.SessionInterjectResult{Accepted: ok, ID: id}, nil
+}
+
+// takeInterjections records the messages the agent is taking in the chat, in
+// the place they were said, and tells the client each one reached the model.
+// In the chat they are system rows (SystemKind "interjection"), not user
+// ones: fork and rewind find a turn by counting user rows, and a message sent
+// inside a turn does not start one.
+func (c *Core) takeInterjections(sess *coresession.Session, items []coresession.Interjection, notify func(string, any), env EventEnvelope) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	sess.Lock()
+	for _, it := range items {
+		sess.AppendUIMessage(sessionfile.UIMessage{Role: "system", SystemKind: "interjection", Text: it.Content})
+	}
+	sess.Unlock()
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		out = append(out, it.Content)
+		if notify != nil {
+			notify(wire.NotifyAgentEvent, env.stamp(wire.AgentEvent{
+				Type:    wire.EventUserMessage,
+				Content: it.Content,
+				Data:    wire.UserMessage{ID: it.ID},
+			}, nil))
+		}
+	}
+	return out
 }
 
 // SessionCancel cancels the currently running turn in a session (no-op if idle).

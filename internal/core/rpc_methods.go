@@ -121,6 +121,9 @@ var rpcMethods = map[string]rpcMethod{
 	wire.MethodSessionCancel: serve(func(_ context.Context, h *RPCHandler, p SessionCancelParams) (any, error) {
 		return nil, h.core.SessionCancel(p)
 	}),
+	wire.MethodSessionInterject: serve(func(_ context.Context, h *RPCHandler, p wire.SessionInterjectParams) (any, error) {
+		return h.core.SessionInterject(p)
+	}),
 	wire.MethodSessionApplyPending: serve(func(ctx context.Context, h *RPCHandler, p SessionApplyPendingParams) (any, error) {
 		return h.core.SessionApplyPending(ctx, p)
 	}),

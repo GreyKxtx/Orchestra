@@ -80,6 +80,10 @@
 
   /** @type {Map<string, string>} */
   const turnTextByProject = new Map();
+  // Where the text on screen starts in turnTextByProject: after a message the
+  // person sent mid-turn, the agent's words continue in a new bubble below it,
+  // and that bubble must not repeat what was said above it.
+  const turnTextShownFrom = new Map();
   /** @type {Map<string, Map<string, any>>} */
   const liveToolBlocksByProject = new Map();
   // The rest of the turn, kept for the same reason: the core records the
@@ -127,8 +131,20 @@
         case "reasoning_delta":
           if (st.status === "idle") st.status = "working";
           break;
+        case "user_message":
+          // Every project's, not only the one on screen: the queue item must
+          // leave whichever project's composer it waits in.
+          if (ev.scope !== "child") {
+            turnTextShownFrom.set(projectId, (turnTextByProject.get(projectId) || "").length);
+            noteInterjectionDelivered(projectId, ev);
+          }
+          break;
         case "done":
         case "error":
+          // A subagent's step ending says nothing about the root turn, and
+          // the root may be waiting on the person right now: clearing its ask
+          // here dropped a question whose reply the core was still waiting for.
+          if (ev.scope === "child") break;
           // A turn can end (or error out) while a permission/question prompt
           // is still outstanding — e.g. the agent errored before the tool
           // that raised it ever got an answer. Left alone, pendingAsk keeps a
@@ -212,7 +228,7 @@
         if (ev.content && !isChild) {
           const acc = (turnTextByProject.get(projectId) || "") + ev.content;
           turnTextByProject.set(projectId, acc);
-          toRenderer({ type: "deltaSync", content: acc });
+          toRenderer({ type: "deltaSync", content: acc.slice(turnTextShownFrom.get(projectId) || 0) });
         }
         break;
 
@@ -535,6 +551,7 @@
   window.addEventListener("message", (ev) => {
     if (ev.data && ev.data.type === "turnStart") {
       turnTextByProject.set(currentProjectId, "");
+      turnTextShownFrom.set(currentProjectId, 0);
       turnReasoningByProject.set(currentProjectId, "");
       turnToolsByProject.set(currentProjectId, []);
       turnUsageByProject.delete(currentProjectId);

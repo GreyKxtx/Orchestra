@@ -35,7 +35,16 @@ const (
 	EventWorkordersRelayed = "workorders_relayed"
 	// EventIntegrationVerify is the check run over a fan-out's combined edits.
 	EventIntegrationVerify = "integration_verify"
+	// EventUserMessage says a message the user sent during the turn
+	// (session.interject) reached the model: Content is the text, Data the
+	// UserMessage with the id session.interject answered. (ProtocolVersion 26.)
+	EventUserMessage = "user_message"
 )
+
+// UserMessage is the Data of a user_message event.
+type UserMessage struct {
+	ID string `json:"id"`
+}
 
 // EventTypes lists every AgentEvent.Type the core sends.
 func EventTypes() []string {
@@ -44,6 +53,7 @@ func EventTypes() []string {
 		EventStepDone, EventPendingOps, EventRecoverableError, EventDone, EventError, EventTodosUpdated,
 		EventStepUsage, EventContextEstimate, EventModeRoute,
 		EventChildStarted, EventChildQueued, EventChildDone, EventAgentMessage, EventWorkordersRelayed, EventIntegrationVerify,
+		EventUserMessage,
 	}
 }
 

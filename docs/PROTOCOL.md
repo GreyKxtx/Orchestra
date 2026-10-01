@@ -4,7 +4,7 @@
 
 ## Версии
 
-- **`protocol.ProtocolVersion`**: `24` — core говорит на диапазоне `MinProtocolVersion..ProtocolVersion` = `23..24`
+- **`protocol.ProtocolVersion`**: `26` — core говорит на диапазоне `MinProtocolVersion..ProtocolVersion` = `25..26`
 - **`protocol.OpsVersion`**: `1`
 - **`protocol.ToolsVersion`**: `18`
 
@@ -780,6 +780,22 @@ Response `result`:
 
 Response `result`: `null`
 
+### `session.interject`
+
+Передаёт сообщение идущему ходу сессии (v26). Ход не прерывается: модель получает сообщение на следующем шаге — перед очередным вызовом модели, никогда посреди ответов на её tool calls. Финальный ответ, пришедший, пока сообщение ждёт, ход не завершает: модель получает сообщение и отвечает снова.
+
+`params`:
+
+- `session_id` (string)
+- `content` (string)
+
+Response `result`:
+
+- `accepted` (bool) — ход взял сообщение. `false`, если хода нет или он уже за последним шагом: тогда клиент отправляет сообщение следующим ходом (`session.message`).
+- `id` (string, при `accepted`) — вернётся в событии `user_message`, когда сообщение дойдёт до модели.
+
+Принятое сообщение, до которого ход так и не дошёл (отмена, ошибка, лимит шагов), core не хранит: клиент знает, что отправлял, и по `user_message` видит, что дошло. В `ui_messages` дошедшее сообщение записывается строкой `{role: "system", system_kind: "interjection", text}` там, где его получила модель: `role: "user"` сдвинул бы подсчёт ходов, по которому работают `session.fork` и `session.rewind`.
+
 ### `session.apply_pending`
 
 Применяет ops, сохранённые после последнего dry-run хода. Pending сбрасывается после применения или если следующий ход вернул новые ops.
@@ -1202,6 +1218,7 @@ The params are `wire.AgentEvent` (protocol/wire/events.go; `AgentEvent` in the g
 | `todos_updated` | The model rewrote its checklist (`todowrite`) | `content` = JSON `[]wire.TodoItem` |
 | `mode_route` | A `mode: "agent"` turn was routed to its effective mode | `data` = `{from, to, reason, confidence}` |
 | `child_started`, `child_queued`, `child_done`, `agent_message`, `workorders_relayed`, `integration_verify` | The task runtime: see `agent.run` above | child scope fields |
+| `user_message` | A message the user sent during the turn (`session.interject`) reached the model (v26) | `content` (the text), `data` = `{id}` — the id `session.interject` answered |
 
 ### `exec/output_chunk`
 

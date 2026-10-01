@@ -295,6 +295,12 @@ type Options struct {
 	// invalidate them here too.
 	OnStepHistory func(step int, history []llm.Message, historyRewritten bool)
 
+	// Interjections, when set, hands the loop what the user sent while the
+	// turn ran (session.interject). It is asked before every step and at the
+	// final step (final true); there, with nothing pending, the source stops
+	// accepting, so a message cannot arrive after the last look and be lost.
+	Interjections func(final bool) []string
+
 	// AgentLogger, if non-nil, writes tool_call / tool_result events to llm_log.jsonl.
 	AgentLogger *llm.Logger
 

@@ -55,6 +55,9 @@ func Detect(workspaceRoot string) []registry.Entry {
 			}
 			return nil
 		}
+		if orchestraOwnFile(d.Name()) {
+			return nil
+		}
 		ext := strings.ToLower(filepath.Ext(path))
 		if ext == "" || extHit[ext] {
 			return nil
@@ -67,6 +70,17 @@ func Detect(workspaceRoot string) []registry.Entry {
 	})
 
 	return out
+}
+
+// orchestraOwnFile reports Orchestra's own workspace files. Every workspace
+// has .orchestra.yml, so counting it as project YAML asked for a YAML language
+// server in every project.
+func orchestraOwnFile(name string) bool {
+	switch strings.ToLower(name) {
+	case ".orchestra.yml", ".orchestra.yaml", ".orchestra.env":
+		return true
+	}
+	return false
 }
 
 func markersHit(root string, markers []string) bool {

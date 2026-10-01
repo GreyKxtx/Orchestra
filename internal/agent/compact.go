@@ -141,9 +141,9 @@ const (
 )
 
 // usersWords collects what the user wrote in hist: the <user_query> of each
-// turn, and whatever an earlier checkpoint already carried. The agent's own
-// user-role notes (validation errors, hints, working state) are not the user's
-// words and are left out.
+// turn, the <user_message> they sent while one ran, and whatever an earlier
+// checkpoint already carried. The agent's own user-role notes (validation
+// errors, hints, working state) are not the user's words and are left out.
 func usersWords(hist []llm.Message) []string {
 	var out []string
 	for _, m := range hist {
@@ -154,11 +154,13 @@ func usersWords(hist []llm.Message) []string {
 			out = append(out, carriedUsersWords(m.Content)...)
 			continue
 		}
-		_, rest, ok := strings.Cut(m.Content, "<user_query>")
+		q, ok := taggedText(m.Content, "user_query")
+		if !ok {
+			q, ok = taggedText(m.Content, interjectionTag)
+		}
 		if !ok {
 			continue
 		}
-		q, _, _ := strings.Cut(rest, "</user_query>")
 		if q = strings.TrimSpace(q); q != "" {
 			out = append(out, clipChars(q, userWordsMaxChars))
 		}
@@ -169,6 +171,16 @@ func usersWords(hist []llm.Message) []string {
 		out = append(out[:1:1], out[len(out)-maxCarriedUserWords+1:]...)
 	}
 	return out
+}
+
+// taggedText returns what content holds between <tag> and </tag>.
+func taggedText(content, tag string) (string, bool) {
+	_, rest, ok := strings.Cut(content, "<"+tag+">")
+	if !ok {
+		return "", false
+	}
+	q, _, _ := strings.Cut(rest, "</"+tag+">")
+	return q, true
 }
 
 func renderUsersWords(words []string) string {

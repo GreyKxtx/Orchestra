@@ -82,47 +82,41 @@
     renderProjects();
   }
 
-  // The overlays answer through the renderer's existing messages. Intercept
-  // them here rather than in dispatchToCore, because they carry an id that
-  // belongs to this fragment.
-  window.addEventListener("message", (ev) => {
-    const msg = ev.data;
-    if (!msg || typeof msg !== "object") {
+  // The overlays answer through the renderer's existing messages, which
+  // dispatchToCore hands here: the reply carries an id that belongs to this
+  // fragment. It used to be a window "message" listener, which only the test
+  // seam ever reached — in the page the renderer calls host.postMessage
+  // directly, so an answered question never went back and the turn waited.
+  /** @param {any} p */
+  function answerDisplayedAsk(p) {
+    // The renderer's reply carries no project id and no request id, so it is
+    // resolved against whichever ask is actually displayed on screen — never
+    // against currentProjectId, which may already name a different project
+    // by the time the click lands.
+    if (!displayedAsk) {
+      return; // stale click; nothing is on screen to answer
+    }
+    const st = projectState(displayedAsk.projectId);
+    if (p.type === "permissionReply") {
+      if (!st.pendingAsk || st.pendingAsk.kind !== "permission" || displayedAsk.kind !== "permission") {
+        return; // stale click; answering some other id would be worse
+      }
+      connFor(displayedAsk.projectId).reply(displayedAsk.id, {
+        approved: Boolean(p.approved),
+        always: Boolean(p.always),
+      });
+    } else if (p.type === "questionReply") {
+      if (!st.pendingAsk || st.pendingAsk.kind !== "question" || displayedAsk.kind !== "question") {
+        return;
+      }
+      connFor(displayedAsk.projectId).reply(displayedAsk.id, {
+        answers: Array.isArray(p.answers) ? p.answers : [],
+      });
+    } else {
       return;
     }
-    if (msg.type === "__host_dispatch__" && msg.payload) {
-      const p = msg.payload;
-      // The renderer's reply carries no project id and no request id, so it is
-      // resolved against whichever ask is actually displayed on screen — never
-      // against currentProjectId, which may already name a different project
-      // by the time the click lands.
-      if (!displayedAsk) {
-        return; // stale click; nothing is on screen to answer
-      }
-      const st = projectState(displayedAsk.projectId);
-      if (p.type === "permissionReply") {
-        if (!st.pendingAsk || st.pendingAsk.kind !== "permission" || displayedAsk.kind !== "permission") {
-          return; // stale click; answering some other id would be worse
-        }
-        connFor(displayedAsk.projectId).reply(displayedAsk.id, {
-          approved: Boolean(p.approved),
-          always: Boolean(p.always),
-        });
-        st.pendingAsk = null;
-        st.status = st.inFlightTurnId !== null ? "working" : "idle";
-        clearDisplayedAsk();
-        renderProjects();
-      } else if (p.type === "questionReply") {
-        if (!st.pendingAsk || st.pendingAsk.kind !== "question" || displayedAsk.kind !== "question") {
-          return;
-        }
-        connFor(displayedAsk.projectId).reply(displayedAsk.id, {
-          answers: Array.isArray(p.answers) ? p.answers : [],
-        });
-        st.pendingAsk = null;
-        st.status = st.inFlightTurnId !== null ? "working" : "idle";
-        clearDisplayedAsk();
-        renderProjects();
-      }
-    }
-  });
+    st.pendingAsk = null;
+    st.status = st.inFlightTurnId !== null ? "working" : "idle";
+    clearDisplayedAsk();
+    renderProjects();
+  }

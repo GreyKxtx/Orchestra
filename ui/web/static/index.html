@@ -184,15 +184,6 @@
         </div>
       </div>
     </div>
-    <div id="overlay" class="overlay hidden" role="dialog" aria-modal="true">
-      <div class="overlay-card">
-        <h2 id="overlay-title"></h2>
-        <p id="overlay-body" class="overlay-body"></p>
-        <div id="overlay-options" class="overlay-options"></div>
-        <input id="overlay-input" type="text" class="overlay-input hidden" />
-        <div id="overlay-actions" class="overlay-actions"></div>
-      </div>
-    </div>
     <div id="composer-wrap">
       <div id="todos-bar" class="todos-bar hidden">
         <button type="button" id="todos-chip" class="todos-chip" aria-expanded="false" data-i18n-aria-label="todos.aria" aria-label="Task checklist">
@@ -213,6 +204,18 @@
         </div>
       </div>
       <div id="palette-menu" class="menu palette-menu hidden" role="listbox"></div>
+      <!-- What the agent is waiting on (a question, a permission) sits just
+           above the input, not over the chat: the conversation stays readable
+           while it is answered. -->
+      <div id="overlay" class="overlay hidden" role="region" aria-live="polite">
+        <div class="overlay-card">
+          <h2 id="overlay-title"></h2>
+          <p id="overlay-body" class="overlay-body"></p>
+          <div id="overlay-options" class="overlay-options"></div>
+          <input id="overlay-input" type="text" class="overlay-input hidden" />
+          <div id="overlay-actions" class="overlay-actions"></div>
+        </div>
+      </div>
       <div id="composer">
         <div id="chip-files" class="chip-files"></div>
         <div id="message-queue" class="message-queue hidden" data-i18n-aria-label="queue.aria" aria-label="Queued messages"></div>

@@ -47,6 +47,7 @@ const order = [
   [webDir, "43-start-screen.js"],
   [webDir, "50-settings.js"],
   [webDir, "60-composer.js"],
+  [webDir, "62-send-queue.js"],
   [webDir, "65-browser-panel.js"],
   [webDir, "70-graph.js"],
   [webDir, "75-turn-rail.js"],

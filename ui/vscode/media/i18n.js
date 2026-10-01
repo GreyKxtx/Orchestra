@@ -220,6 +220,7 @@
       "question.next": "Next",
 
       "queue.remove": "Remove from queue",
+      "queue.next_step": "reaches the agent at its next step",
       "typing.aria": "Assistant is working",
       "palette.files": "Files",
       "palette.no_files": "No files found",
@@ -943,6 +944,7 @@
       "question.next": "Далее",
 
       "queue.remove": "Убрать из очереди",
+      "queue.next_step": "дойдёт до агента на следующем шаге",
       "typing.aria": "Ассистент работает",
       "palette.files": "Файлы",
       "palette.no_files": "Файлы не найдены",

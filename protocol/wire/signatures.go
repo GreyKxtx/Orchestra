@@ -30,6 +30,7 @@ var signatures = []Signature{
 	{MethodSessionSearch, "SessionSearchParams", ""},
 	{MethodSessionTrajectory, "SessionTrajectoryParams", ""},
 	{MethodSessionCancel, "SessionCancelParams", ""},
+	{MethodSessionInterject, "SessionInterjectParams", "SessionInterjectResult"},
 	{MethodSessionApplyPending, "SessionApplyPendingParams", ""},
 	{MethodSessionDiscardPending, "SessionDiscardPendingParams", ""},
 	{MethodSessionClose, "SessionCloseParams", ""},

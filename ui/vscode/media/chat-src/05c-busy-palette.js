@@ -18,6 +18,9 @@
     if (!sendQueue.length) {
       messageQueueEl.classList.add("hidden");
       messageQueueEl.replaceChildren();
+      // The status line counts the queue ("· 1 queued"); an emptied queue
+      // must take the count down with it.
+      updateBusyUi();
       return;
     }
     messageQueueEl.classList.remove("hidden");
@@ -39,17 +42,27 @@
       const preview = (item.preview || "").trim();
       text.textContent = preview || (item.fileCount ? `${item.fileCount} attachment(s)` : "…");
       text.title = preview;
-      const rm = document.createElement("button");
-      rm.type = "button";
-      rm.className = "queue-cancel";
-      rm.setAttribute("aria-label", i18n("queue.remove"));
-      rm.textContent = "×";
-      rm.addEventListener("click", () => {
-        host.postMessage({ type: "cancelQueuedSend", id: item.id });
-      });
       row.appendChild(pos);
       row.appendChild(text);
-      row.appendChild(rm);
+      // A message the running turn already took cannot be called back; it
+      // leaves the queue when the model receives it.
+      if (item.locked) {
+        row.classList.add("queue-item-locked");
+        const note = document.createElement("span");
+        note.className = "queue-note";
+        note.textContent = i18n("queue.next_step");
+        row.appendChild(note);
+      } else {
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "queue-cancel";
+        rm.setAttribute("aria-label", i18n("queue.remove"));
+        rm.textContent = "×";
+        rm.addEventListener("click", () => {
+          host.postMessage({ type: "cancelQueuedSend", id: item.id });
+        });
+        row.appendChild(rm);
+      }
       messageQueueEl.appendChild(row);
     });
     updateBusyUi();
@@ -103,10 +116,13 @@
       composerWrap.classList.toggle("composer-busy", busy);
     }
     if (sendBtn) {
-      sendBtn.classList.toggle("is-busy", busy);
+      // Stop only over an empty composer: with a draft the button sends it
+      // into the running turn.
+      const stops = busy && !composerHasDraft();
+      sendBtn.classList.toggle("is-busy", stops);
       sendBtn.setAttribute("aria-busy", busy ? "true" : "false");
-      sendBtn.title = busy ? "Stop" : "Send";
-      sendBtn.setAttribute("aria-label", busy ? "Stop" : "Send");
+      sendBtn.title = stops ? "Stop" : "Send";
+      sendBtn.setAttribute("aria-label", stops ? "Stop" : "Send");
     }
     setTypingIndicator(busy && !assistantBubble?.textContent?.trim(), label);
   }

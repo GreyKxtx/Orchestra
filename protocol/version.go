@@ -68,13 +68,18 @@ const (
 	//      methods, notifications and requests it serves); tools_version is
 	//      informational; core.health carries min_protocol_version. The
 	//      contract itself — every params, result and event — is protocol/wire.
-	ProtocolVersion = 25
+	// v25: session.message takes resume and continues a turn its core did not
+	//      finish from the turn's checkpoint; the result carries turn_id.
+	// v26: session.interject hands a message to the session's running turn,
+	//      which takes it at its next step; agent/event user_message says it
+	//      reached the model.
+	ProtocolVersion = 26
 
 	// MinProtocolVersion is the oldest protocol version this core still
 	// speaks. initialize picks the newest version both sides speak, so a
 	// client and a core one release apart still connect. The window is one
 	// version: when ProtocolVersion moves, this moves with it.
-	MinProtocolVersion = 24
+	MinProtocolVersion = 25
 
 	// OpsVersion is the version of Internal Ops.
 	OpsVersion = 1

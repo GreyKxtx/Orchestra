@@ -736,9 +736,10 @@ test("access mode Ask holds the turn's edits instead of writing them", async () 
 // worst exactly where it mattered: "Plan" is the mode a person picks to stop
 // edits from happening, and picking it changed only an icon.
 test("the composer's mode pill reaches session.message", async () => {
-  const b = await handshake(loadBundle());
-
   for (const mode of ["plan", "explore", "ask", "architecture"]) {
+    // A page per mode: a send while a turn runs goes to that turn, not out as
+    // a turn of its own.
+    const b = await handshake(loadBundle());
     b.sent.length = 0;
     dispatch(b, {
       type: "send",
@@ -797,6 +798,82 @@ async function ready(b) {
   b.sent.length = 0;
   return b;
 }
+
+const sendMsg = (text) => ({ type: "send", text, mode: "build", profile: "", allowExec: false, files: [] });
+const lastQueue = (b) => b.inbound.filter((m) => m.type === "queueUpdate").pop();
+
+// Enter during a turn used to stop it. A message sent while the agent works
+// goes to that turn now: no second turn over it, no cancel, and the chat gets
+// the message when the model does.
+test("a send while a turn runs goes into the turn, not over it", async () => {
+  const b = await ready(loadBundle());
+  dispatch(b, sendMsg("build the parser"));
+  assert.ok(b.sent.find((m) => m.method === "session.message"), "the first turn never went out");
+  b.sent.length = 0;
+
+  dispatch(b, sendMsg("and keep it streaming"));
+  assert.equal(b.sent.filter((m) => m.method === "session.message").length, 0, "a second turn went out over the running one");
+  assert.equal(b.sent.filter((m) => m.method === "$/cancelRequest").length, 0, "sending must not stop the work");
+  const ij = b.sent.find((m) => m.method === "session.interject");
+  assert.ok(ij, "the message never went to the running turn");
+  assert.equal(ij.params.content, "and keep it streaming");
+
+  b.deliver({ jsonrpc: "2.0", id: ij.id, result: { accepted: true, id: "ij-1" } });
+  await tick();
+  const queued = lastQueue(b);
+  assert.ok(queued && queued.items.length === 1 && queued.items[0].locked, "the taken message must wait, locked, until the model reads it");
+
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "user_message", content: "and keep it streaming", data: { id: "ij-1" } },
+  });
+  const shown = b.inbound.find((m) => m.type === "userInterjection");
+  assert.ok(shown && shown.text === "and keep it streaming", "the chat never showed the message");
+  assert.equal(lastQueue(b).items.length, 0, "a delivered message must leave the queue");
+});
+
+// A turn past its last step refuses; the message is not lost, it goes out as
+// the next turn once this one has ended.
+test("a message the turn could not take goes out as the next turn", async () => {
+  const b = await ready(loadBundle());
+  dispatch(b, sendMsg("build the parser"));
+  const turn = b.sent.find((m) => m.method === "session.message");
+  dispatch(b, sendMsg("then write the docs"));
+  const ij = b.sent.find((m) => m.method === "session.interject");
+  b.deliver({ jsonrpc: "2.0", id: ij.id, result: { accepted: false } });
+  await tick();
+  b.sent.length = 0;
+  b.inbound.length = 0;
+
+  b.deliver({ jsonrpc: "2.0", id: turn.id, result: { steps: 1 } });
+  for (let i = 0; i < 5; i++) await tick();
+  const next = b.sent.find((m) => m.method === "session.message");
+  assert.ok(next, "the waiting message never went out");
+  assert.equal(next.params.content, "then write the docs");
+  const done = b.inbound.find((m) => m.type === "turnComplete");
+  assert.ok(done && done.queuedNext, "the composer must stay busy for the next turn");
+});
+
+// Stopping the turn stops what was queued for it too, but the words come back
+// to the composer instead of vanishing.
+test("stopping a turn returns what waited for it to the composer", async () => {
+  const b = await ready(loadBundle());
+  dispatch(b, sendMsg("build the parser"));
+  const turn = b.sent.find((m) => m.method === "session.message");
+  dispatch(b, sendMsg("with a lexer first"));
+  const ij = b.sent.find((m) => m.method === "session.interject");
+  b.deliver({ jsonrpc: "2.0", id: ij.id, result: { accepted: true, id: "ij-1" } });
+  await tick();
+
+  dispatch(b, { type: "cancelTurn" });
+  b.sent.length = 0;
+  b.deliver({ jsonrpc: "2.0", id: turn.id, error: { code: -32800, message: "cancelled" } });
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(b.sent.filter((m) => m.method === "session.message").length, 0, "a stopped turn's queue must not start a turn");
+  const back = b.inbound.find((m) => m.type === "restoreDraft");
+  assert.ok(back && back.text === "with a lexer first", "the undelivered message was lost");
+});
 
 test("message_delta accumulates and reaches the renderer as text", async () => {
   const b = await ready(loadBundle());
@@ -1212,6 +1289,30 @@ test("question/ask round trips answers", async () => {
   const reply = b.sent.find((m) => m.id === "srv-2");
   assert.ok(reply, "no reply was sent for srv-2 — the question tool would hang");
   assert.deepEqual(reply.result.answers, ["A"]);
+});
+
+// A subagent's step ends with its own "done" while the root turn may be
+// waiting on the person. Clearing the root's ask on that event dropped the
+// reply: the question stayed on screen and answering it sent nothing.
+test("a child's done does not drop the root's open question", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({
+    jsonrpc: "2.0",
+    id: "srv-7",
+    method: "question/ask",
+    params: { questions: [{ question: "Which approach?", options: ["A", "B"] }] },
+  });
+  b.deliver({
+    jsonrpc: "2.0",
+    method: "agent/event",
+    params: { type: "done", scope: "child", task_id: "t1", step: 3 },
+  });
+
+  dispatch(b, { type: "questionReply", answers: ["B"] });
+
+  const reply = b.sent.find((m) => m.id === "srv-7");
+  assert.ok(reply, "the child's done dropped the root's question");
+  assert.deepEqual(reply.result.answers, ["B"]);
 });
 
 // The browser panel is the one server request nobody is asked about: the

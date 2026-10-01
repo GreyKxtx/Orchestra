@@ -64,9 +64,11 @@ func initProject(ctx context.Context, root string, opts InitOptions) error {
 	}
 
 	lspEnabled := true
+	// Language servers install on their own, as the languages are found: a
+	// prompt for each came back on every turn.
 	cfg.LSP = config.LSPConfig{
 		Enabled:              &lspEnabled,
-		AutoInstall:          "ask",
+		AutoInstall:          "true",
 		DiagnosticsTimeoutMS: 1500,
 		Servers:              lspServersFromInit(root),
 	}

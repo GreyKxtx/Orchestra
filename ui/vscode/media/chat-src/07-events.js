@@ -300,6 +300,32 @@
       case "turnStart":
         beginTurn();
         break;
+      case "userInterjection":
+        // A message the user sent during the turn reached the model. It goes
+        // into the chat where the model got it, and what the agent does next
+        // starts below it rather than streaming into the part above.
+        commitPreToolText();
+        appendMsg("user", msg.text, {
+          files: Array.isArray(msg.files) ? msg.files : undefined,
+        });
+        assistantTurn = null;
+        assistantTurnInner = null;
+        assistantBubble = null;
+        streamRawText = "";
+        toolTraceEl = null;
+        toolTraceSummary = null;
+        reasoningDetails = null;
+        reasoningBody = null;
+        break;
+      case "restoreDraft":
+        // Messages that never reached the turn come back to the composer
+        // rather than being lost (the person stopped the turn).
+        if (inputEl && typeof msg.text === "string" && msg.text) {
+          inputEl.value = inputEl.value.trim() ? `${inputEl.value}\n\n${msg.text}` : msg.text;
+          autoGrow();
+          updateBusyUi();
+        }
+        break;
       case "userEcho":
         appendMsg("user", msg.text, {
           uiIndex: typeof msg.uiIndex === "number" ? msg.uiIndex : undefined,

@@ -8,6 +8,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — a message sent while the agent works goes into its turn (2026-10)
+
+- **Enter during a turn no longer stops it.** The composer's button is Stop only over an empty input; with something typed it sends. The web and desktop host hands the message to the running turn through the new `session.interject` (ProtocolVersion 26): the agent takes it before its next step — never in the middle of answering its tool calls — as `<user_message>`, and a final that arrives with a message pending does not end the turn. `agent/event user_message` tells the client when the model received it; the chat shows it there, and `ui_messages` keeps it as `{role: system, system_kind: interjection}` so fork and rewind still count turns right. A turn past its last step refuses, and the message goes out as the next turn; stopping the turn puts what waited for it back into the composer. Compaction keeps these messages with the user's other words. The VS Code panel queues such a message for the next turn; the TUI already did.
+
+### Changed — questions and permissions sit above the composer (2026-10)
+
+- **The agent's question and a permission request are no longer a modal over the chat.** They dock directly above the input, the conversation stays readable, long options wrap instead of spilling over each other, and an option is picked with its number key; a typed answer goes with Enter.
+
+### Fixed — an answered question reaches the agent (2026-10)
+
+- **The web and desktop host dropped the answer.** The renderer's reply reached a handler only the test seam ever called, so `question/ask` and `permission/request` were never answered and the turn waited until it was cancelled. A subagent's `done` no longer clears the root turn's open question either.
+
+### Changed — language servers install as languages are found (2026-10)
+
+- **No prompt on every turn.** `orchestra init` writes `lsp.auto_install: true`: the servers for the languages found at the first scan install in the background, and a language that appears later is picked up on the next turn. `.orchestra.yml` itself no longer counts as a YAML project. With `ask`, "Always" now holds for the rest of the session and "Skip" is not asked again.
+
 ### Fixed — the config file lock on a loaded Windows machine (2026-09)
 
 - **A read the antivirus holds is retried.** `UpdateFile` read `.orchestra.yml` under its lock right after another writer's atomic rename, and on Windows the new file can be held for a moment by a scan (a sharing violation): the read is retried with a short backoff, the way the rename itself is; a lock stolen past the acquire timeout no longer spins while something else still holds the lock file.

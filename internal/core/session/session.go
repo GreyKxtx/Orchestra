@@ -50,6 +50,10 @@ type Session struct {
 	// core's one overlay (ARCH-5).
 	turn *tools.Turn
 
+	// interjections is the running turn's buffer of messages the user sent
+	// while it worked (session.interject); nil between turns.
+	interjections *Interjections
+
 	// lastSnapshotAt is the UpdatedAt of the snapshot this in-memory state
 	// was last synced with (own Snapshot() write or LoadFromDisk). Used by
 	// RefreshFromDiskIfNewer to detect writes from *other* core processes

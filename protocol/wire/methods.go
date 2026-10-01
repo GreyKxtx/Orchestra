@@ -23,6 +23,7 @@ const (
 	MethodSessionSearch         = "session.search"
 	MethodSessionTrajectory     = "session.trajectory"
 	MethodSessionCancel         = "session.cancel"
+	MethodSessionInterject      = "session.interject"
 	MethodSessionApplyPending   = "session.apply_pending"
 	MethodSessionDiscardPending = "session.discard_pending"
 	MethodSessionClose          = "session.close"
@@ -99,7 +100,7 @@ var methods = []string{
 	MethodCoreHealth, MethodInitialize, MethodAgentRun, MethodToolCall, MethodOpsApply,
 	MethodSessionStart, MethodSessionGet, MethodSessionList, MethodSessionUISync, MethodSessionMessage,
 	MethodSessionHistory, MethodSessionCompact, MethodSessionRewind, MethodSessionFork, MethodSessionSearch,
-	MethodSessionTrajectory, MethodSessionCancel, MethodSessionApplyPending, MethodSessionDiscardPending, MethodSessionClose,
+	MethodSessionTrajectory, MethodSessionCancel, MethodSessionInterject, MethodSessionApplyPending, MethodSessionDiscardPending, MethodSessionClose,
 	MethodRuntimeSetModel, MethodRuntimeListModels, MethodRuntimeListProviders, MethodRuntimeGetLLM, MethodRuntimeCredits,
 	MethodRuntimeConfigureLLM, MethodRuntimeGetOrchestra, MethodRuntimeConfigureOrchestra, MethodRuntimeGetSystemPrompt, MethodRuntimeSetSystemPrompt,
 	MethodWorkspaceTrustStatus, MethodWorkspaceTrust,

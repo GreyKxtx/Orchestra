@@ -281,6 +281,9 @@ func (l *turnLoop) prepareHistory(history []llm.Message) ([]llm.Message, error) 
 	// finished tool exchange for the note to split.
 	history = a.drainAgencyInbox(history)
 
+	// What the user sent while the turn ran, at the same safe boundary.
+	history = l.takeInterjections(history, false)
+
 	// Inject a step-limit warning once at 2/3 of MaxSteps. As a user
 	// message: an assistant one here could end the request, which recent
 	// Claude models reject, and read to the model as its own words.
@@ -488,6 +491,12 @@ func (l *turnLoop) toolStep(history []llm.Message, ans *modelAnswer) ([]llm.Mess
 // done is true when the turn ends here.
 func (l *turnLoop) finalStep(history []llm.Message, ans *modelAnswer) ([]llm.Message, *Result, bool, error) {
 	a := l.a
+	// The user wrote while the model was finishing: the final answers a
+	// request that has changed, so the turn goes on with the message.
+	if more := l.takeInterjections(history, true); len(more) > len(history) {
+		l.emitStepDone("final_retry")
+		return more, nil, false, nil
+	}
 	if msg, wait := a.finalWithRunningTasks(l.ctx); wait {
 		history = append(history, msg)
 		l.emitStepDone("invalid")
