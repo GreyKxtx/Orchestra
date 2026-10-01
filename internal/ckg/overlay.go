@@ -129,7 +129,7 @@ func (o *Orchestrator) OverlayContext(ctx context.Context, files []StagedFile, r
 	}
 	var indexable []StagedFile
 	for _, f := range files {
-		if SitterLanguageFor(strings.ToLower(filepath.Ext(f.Path))) != nil {
+		if Indexable(filepath.Ext(f.Path)) {
 			indexable = append(indexable, f)
 		}
 	}

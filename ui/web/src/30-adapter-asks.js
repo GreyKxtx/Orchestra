@@ -33,6 +33,28 @@
   }
 
   /**
+   * The turn that asked has ended: nobody waits on its prompt any more. Left
+   * alone, pendingAsk keeps a JSON-RPC id nobody is waiting on, the rail
+   * shows a permanent "asking" badge, and the overlay takes an answer that
+   * goes nowhere. The displayed-ask state and the overlay come down together.
+   * @param {string} projectId
+   */
+  function dropTurnAsk(projectId) {
+    const st = projectState(projectId);
+    if (!st.pendingAsk) {
+      return;
+    }
+    st.pendingAsk = null;
+    if (isDisplayedAskFor(projectId)) {
+      clearDisplayedAsk();
+      const overlay = document.getElementById("overlay");
+      if (overlay) {
+        overlay.classList.add("hidden");
+      }
+    }
+  }
+
+  /**
    * @param {string} projectId @param {any} msg
    */
   function handleServerRequest(projectId, msg) {

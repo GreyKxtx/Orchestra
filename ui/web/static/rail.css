@@ -47,6 +47,18 @@ body {
   flex-direction: row;
 }
 
+/* The page is an app shell: every scroll happens inside a pane (the
+   transcript, the rail, the graph). The document itself must never move —
+   when something briefly reached past the bottom edge, the whole window
+   scrolled with it and stayed there, the header cut off and an empty band
+   below. overflow: hidden stops the wheel; 00-web-prelude.js puts the root
+   back when a focus() or scrollIntoView() moves it anyway. */
+html,
+body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 #app {
   flex: 1 1 auto;
   min-width: 0;

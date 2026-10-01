@@ -62,6 +62,10 @@ func LanguageFromExt(ext string) string {
 		return "elixir"
 	case ".swift":
 		return "swift"
+	case ".html", ".htm":
+		return "html"
+	case ".css":
+		return "css"
 	default:
 		return "unknown"
 	}
@@ -162,6 +166,12 @@ func ParseFile(ctx context.Context, modulePath, rootDir, filePath string) ([]Nod
 // picks the language, its directory the package.
 func ParseSource(ctx context.Context, modulePath, rootDir, filePath string, src []byte) ([]Node, []Edge, string, error) {
 	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".html", ".htm":
+		return parseHTMLSource(ctx, rootDir, filePath, src)
+	case ".css":
+		return parseCSSSource(ctx, rootDir, filePath, src)
+	}
 	lang := sitterLanguageFor(ext)
 	if lang == nil {
 		return nil, nil, "", nil

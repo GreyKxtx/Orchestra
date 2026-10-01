@@ -234,7 +234,7 @@ func (s *Scanner) stamp(path string, info os.FileInfo, known map[string]FileStam
 	// hand-maintained allowlist omitted React sources (.jsx/.tsx) and most
 	// languages already supported by tree-sitter.
 	ext := strings.ToLower(filepath.Ext(info.Name()))
-	if SitterLanguageFor(ext) == nil {
+	if !Indexable(ext) {
 		return
 	}
 	rel, relErr := filepath.Rel(s.root, path)

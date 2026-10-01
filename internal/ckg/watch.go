@@ -185,7 +185,7 @@ func (w *Watcher) addTree(dir string, markFiles bool) error {
 			}
 			return nil
 		}
-		if markFiles && SitterLanguageFor(strings.ToLower(filepath.Ext(path))) != nil {
+		if markFiles && Indexable(filepath.Ext(path)) {
 			if rel, ok := w.relOf(path); ok {
 				w.mark(rel)
 			}

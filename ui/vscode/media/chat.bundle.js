@@ -137,6 +137,8 @@
       "model.menu_title": "Models",
       "model.search": "Search models…",
       "model.refresh": "Refresh list",
+      "model.changed": "Model: {model}",
+      "model.changed_saved": "Model: {model} · saved",
       "model.title": "Model",
       "queue.aria": "Queued messages",
       "composer.placeholder": "Message, @ for files, / for commands…",
@@ -440,6 +442,10 @@
       "graph.section.folder": "Folder",
       "graph.section.wired_to": "Wired to",
       "graph.section.inside": "Inside this file",
+      "graph.link.styled_by": "styled by",
+      "graph.link.styles": "styles",
+      "graph.link.uses": "uses",
+      "graph.link.used_by": "used by",
       "graph.ro.files": "files",
       "graph.ro.folders": "folders",
       "graph.ro.symbols": "symbols",
@@ -861,6 +867,8 @@
       "model.menu_title": "Модели",
       "model.search": "Поиск моделей…",
       "model.refresh": "Обновить список",
+      "model.changed": "Модель: {model}",
+      "model.changed_saved": "Модель: {model} · сохранена",
       "model.title": "Модель",
       "queue.aria": "Сообщения в очереди",
       "composer.placeholder": "Сообщение, @ — файлы, / — команды…",
@@ -1161,6 +1169,10 @@
       "graph.section.folder": "Папка",
       "graph.section.wired_to": "С чем связан",
       "graph.section.inside": "Что внутри файла",
+      "graph.link.styled_by": "стиль",
+      "graph.link.styles": "стилизует",
+      "graph.link.uses": "трогает",
+      "graph.link.used_by": "используется в",
       "graph.ro.files": "файлы",
       "graph.ro.folders": "папки",
       "graph.ro.symbols": "символы",
@@ -3668,9 +3680,9 @@
     // The panel sits above the composer; take the focus so the keyboard
     // answers it (a digit picks an option, Enter sends a typed answer).
     if (q.options && q.options.length) {
-      /** @type {HTMLElement | null} */ (overlayOptions.querySelector("button"))?.focus();
+      /** @type {HTMLElement | null} */ (overlayOptions.querySelector("button"))?.focus({ preventScroll: true });
     } else {
-      overlayInput?.focus();
+      overlayInput?.focus({ preventScroll: true });
     }
   }
 

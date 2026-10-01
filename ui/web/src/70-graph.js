@@ -1218,7 +1218,40 @@
     test: "test",
     const: "const",
     var: "var",
+    // A page's components and the rules that style them (internal/ckg/web.go).
+    element: "el",
+    style: "css",
   };
+
+  /** What a symbol's web relation reads as, from the symbol's side. */
+  const GRAPH_LINK_LABELS = {
+    "styled_by:out": "graph.link.styled_by",
+    "styled_by:in": "graph.link.styles",
+    "uses:out": "graph.link.uses",
+    "uses:in": "graph.link.used_by",
+  };
+
+  /** @param {any} parent @param {any} link */
+  function graphSymbolLinkRow(parent, link) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "graph-link-row";
+    const name = document.createElement("span");
+    name.className = "graph-link-name";
+    name.textContent = link.name || "";
+    const what = document.createElement("span");
+    what.className = "graph-link-weight";
+    const key = GRAPH_LINK_LABELS[link.relation + ":" + link.dir];
+    what.textContent = key ? i18n(key) : String(link.relation || "");
+    const path = document.createElement("span");
+    path.className = "graph-link-path";
+    path.textContent = (link.path || "") + (link.line ? ":" + link.line : "");
+    row.append(name, what, path);
+    row.title = path.textContent;
+    // The other end's file: the graph's own nodes are files.
+    if (link.path) row.addEventListener("click", () => selectGraphNode(link.path));
+    parent.appendChild(row);
+  }
 
   /** @param {any} parent */
   function renderGraphSelection(parent) {
@@ -1300,6 +1333,7 @@
       where.className = "graph-sym-lines";
       where.textContent = sym.line_start ? sym.line_start + "–" + sym.line_end : "";
       row.append(kind, name, where);
+      const links = Array.isArray(sym.links) ? sym.links : [];
       row.title = (sym.fqn || sym.name || "") + " · " + (sym.calls_out || 0) + " out · " + (sym.calls_in || 0) + " in";
       row.addEventListener("click", () => {
         graphOpenSymbol = graphOpenSymbol === i ? -1 : i;
@@ -1307,6 +1341,9 @@
       });
       fns.appendChild(row);
       if (graphOpenSymbol === i) {
+        // Which rules style this element, which elements this rule styles,
+        // what this function reaches — before the source.
+        for (const l of links) graphSymbolLinkRow(fns, l);
         const pre = document.createElement("pre");
         pre.className = "graph-code";
         // textContent: this is source off the disk, never markup.

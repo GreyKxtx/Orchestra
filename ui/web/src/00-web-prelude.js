@@ -199,6 +199,23 @@
     if (active) active.notify(method, params);
   }
 
+  // The document never scrolls (rail.css): a focus() or scrollIntoView() can
+  // still move an overflow:hidden root, and the page then stayed shifted with
+  // no way to scroll back. Put it back the moment it moves. Capture, because a
+  // scroll event does not bubble and body can be the one that moved.
+  document.addEventListener(
+    "scroll",
+    (ev) => {
+      const t = ev.target;
+      if (t === document || t === document.documentElement || t === document.body) {
+        if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+        if (document.documentElement.scrollTop) document.documentElement.scrollTop = 0;
+        if (document.body && document.body.scrollTop) document.body.scrollTop = 0;
+      }
+    },
+    true
+  );
+
   // Test seam: adapter-test.mjs drives the outbound path by posting a window
   // message, because `host` lives inside this IIFE and nothing outside can
   // reach it. Harmless in a real page — no renderer fragment posts this type.

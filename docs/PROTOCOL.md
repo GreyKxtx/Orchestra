@@ -995,7 +995,8 @@ Response `result`:
 - `available` (bool) — файл есть в графе.
 - `path`, `language` (string)
 - `lines`, `bytes` (int) — размер файла; `0`, если файл не прочитан (нет на диске, каталог, больше 2 МБ).
-- `symbols` (array of `{name, fqn, kind, line_start, line_end, calls_out, calls_in, preview?, truncated?}`) — по возрастанию `line_start`. `preview` — не больше 40 строк символа, суммарно не больше 2000 строк на ответ; `truncated` — превью обрывается раньше `line_end`.
+- `symbols` (array of `{name, fqn, kind, line_start, line_end, calls_out, calls_in, links?, preview?, truncated?}`) — по возрастанию `line_start`. `preview` — не больше 40 строк символа, суммарно не больше 2000 строк на ответ; `truncated` — превью обрывается раньше `line_end`.
+- `links` (array of `{relation, dir, name, path, line}`, optional) — связи символа страницы и стилей (`kind`: `element`, `style`, функции скрипта страницы): `relation` — `styled_by` (элемент → правило CSS) или `uses` (функция → элемент); `dir` — `out`, если символ источник, `in` — если цель; `name`, `path`, `line` — другой конец. Не больше 30 на символ.
 
 Пример:
 

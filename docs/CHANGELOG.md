@@ -8,6 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — pages and stylesheets in the code graph (2026-10)
+
+- **A web page is no longer invisible to the graph.** `.html`/`.htm` and `.css` are indexed (`internal/ckg/web.go`): a page's inline `<script>` is parsed as JavaScript on the page's own lines, so its functions and calls are symbols of the page; each CSS rule — from `<style>` or a `.css` file — is a `style` symbol; elements a rule or a script can name (`#id`, `.class`, and the `<tag>`s a rule styles) are `element` symbols. Relations: element `styled_by` the rules whose selector ends on it (inline or in a linked stylesheet), a function `uses` the elements it looks up — directly or through a variable that holds the lookup — and the page `imports` its `<script src>` and stylesheets, which draws the file links. A stylesheet that changes re-parses the pages that link it. The Graph view's detail pane lists a symbol's relations (`index.outline` symbols carry `links`). Templates and JSON `<script>`s are skipped; selectors match by id, class and tag, not by DOM structure.
+
+### Fixed — the desktop window no longer stays scrolled (2026-10)
+
+- **The whole page could shift up and stay there**, the header cut off and an empty band below: a `focus()` or `scrollIntoView()` moves even an `overflow: hidden` root. The web shell's `html`/`body` never scroll now, and the page puts the root back the moment something moves it.
+
 ### Added — a message sent while the agent works goes into its turn (2026-10)
 
 - **Enter during a turn no longer stops it.** The composer's button is Stop only over an empty input; with something typed it sends. The web and desktop host hands the message to the running turn through the new `session.interject` (ProtocolVersion 26): the agent takes it before its next step — never in the middle of answering its tool calls — as `<user_message>`, and a final that arrives with a message pending does not end the turn. `agent/event user_message` tells the client when the model received it; the chat shows it there, and `ui_messages` keeps it as `{role: system, system_kind: interjection}` so fork and rewind still count turns right. A turn past its last step refuses, and the message goes out as the next turn; stopping the turn puts what waited for it back into the composer. Compaction keeps these messages with the user's other words. The VS Code panel queues such a message for the next turn; the TUI already did.
@@ -19,6 +27,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed — an answered question reaches the agent (2026-10)
 
 - **The web and desktop host dropped the answer.** The renderer's reply reached a handler only the test seam ever called, so `question/ask` and `permission/request` were never answered and the turn waited until it was cancelled. A subagent's `done` no longer clears the root turn's open question either.
+- **A turn stopped while it waited on a question took the question down with it** only when a step `done` happened to follow; a Stop never sends one, so the question stayed docked above the composer and an answer to it went to a request nobody was waiting on. The prompt now comes down whenever the turn ends. A diff no longer puts a `"highlightCode" needs an editor` note into the chat per block: the web host answers the request with plain lines.
 
 ### Changed — language servers install as languages are found (2026-10)
 

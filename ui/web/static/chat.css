@@ -3646,14 +3646,31 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   font-size: 10px;
 }
 
+/* A note from the host (the model changed, a file was skipped): a quiet
+   divider across the transcript, not a boxed message competing with the
+   conversation. The text sits between two hairlines and wraps between them. */
 .msg.system {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11.5px;
+  line-height: 1.45;
   white-space: pre-wrap;
   text-align: center;
-  border: 1px dashed color-mix(in srgb, var(--muted) 40%, transparent);
+  border: 0;
+  border-radius: 0;
   background: transparent;
-  padding: 8px 12px;
+  padding: 2px 0;
+}
+
+.msg.system::before,
+.msg.system::after {
+  content: "";
+  flex: 1 1 24px;
+  min-width: 16px;
+  height: 1px;
+  background: var(--border-soft);
 }
 
 .user-wrap {

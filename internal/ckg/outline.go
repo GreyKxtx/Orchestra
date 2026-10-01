@@ -16,7 +16,28 @@ type OutlineSymbol struct {
 	LineEnd   int    `json:"line_end"`
 	CallsOut  int    `json:"calls_out"`
 	CallsIn   int    `json:"calls_in"`
+	// Links are the symbol's web relations (web.go): the rules that style an
+	// element, the elements a rule styles, the elements a function reaches.
+	Links []OutlineLink `json:"links,omitempty"`
 }
+
+// OutlineLink is one relation of a symbol, named the way the detail pane
+// shows it: the other end's name, file and line. Dir is "out" when the
+// symbol is the source.
+type OutlineLink struct {
+	Relation string `json:"relation"`
+	Dir      string `json:"dir"`
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Line     int    `json:"line"`
+}
+
+// outlineLinkRelations are the relations an outline lists per symbol, and
+// maxOutlineLinks how many of them one symbol carries.
+const (
+	outlineLinkRelations = "'styled_by', 'uses'"
+	maxOutlineLinks      = 30
+)
 
 // FileOutline is a file's indexed symbols. Available is false when the file
 // is not in the graph store at all (never scanned, excluded, or deleted).
@@ -113,6 +134,9 @@ func BuildFileOutline(ctx context.Context, store *Store, filePath string) (*File
 	if err := countEdges("target_id", func(i, n int) { out.Symbols[i].CallsIn = n }); err != nil {
 		return nil, err
 	}
+	if err := outlineLinks(ctx, store, fileID, byID, out.Symbols); err != nil {
+		return nil, err
+	}
 
 	sort.SliceStable(out.Symbols, func(i, j int) bool {
 		if out.Symbols[i].LineStart != out.Symbols[j].LineStart {
@@ -121,4 +145,51 @@ func BuildFileOutline(ctx context.Context, store *Store, filePath string) (*File
 		return out.Symbols[i].Name < out.Symbols[j].Name
 	})
 	return out, nil
+}
+
+// outlineLinks fills each symbol's web relations, both ways. A target is
+// matched by id or, when the edge is still dangling, by its FQN.
+func outlineLinks(ctx context.Context, store *Store, fileID int64, byID map[int64]int, syms []OutlineSymbol) error {
+	add := func(i int, l OutlineLink) {
+		if len(syms[i].Links) < maxOutlineLinks {
+			syms[i].Links = append(syms[i].Links, l)
+		}
+	}
+	scan := func(q, dir string) error {
+		r, err := store.q(ctx).QueryContext(ctx, q, fileID)
+		if err != nil {
+			return err
+		}
+		defer r.Close()
+		for r.Next() {
+			var id int64
+			var l OutlineLink
+			if err := r.Scan(&id, &l.Relation, &l.Name, &l.Path, &l.Line); err != nil {
+				continue
+			}
+			if i, ok := byID[id]; ok {
+				l.Dir = dir
+				add(i, l)
+			}
+		}
+		return r.Err()
+	}
+	if err := scan(`
+		SELECT e.source_id, e.relation, COALESCE(t.short_name, e.target_fqn), COALESCE(f.path, ''), COALESCE(t.line_start, 0)
+		FROM edges e
+		JOIN nodes s ON s.id = e.source_id
+		LEFT JOIN nodes t ON t.id = COALESCE(e.target_id, (SELECT id FROM nodes WHERE fqn = e.target_fqn))
+		LEFT JOIN files f ON f.id = t.file_id
+		WHERE s.file_id = ? AND e.relation IN (`+outlineLinkRelations+`)
+		ORDER BY f.path, t.line_start`, "out"); err != nil {
+		return err
+	}
+	return scan(`
+		SELECT t.id, e.relation, s.short_name, f.path, s.line_start
+		FROM edges e
+		JOIN nodes t ON t.id = COALESCE(e.target_id, (SELECT id FROM nodes WHERE fqn = e.target_fqn))
+		JOIN nodes s ON s.id = e.source_id
+		JOIN files f ON f.id = s.file_id
+		WHERE t.file_id = ? AND e.relation IN (`+outlineLinkRelations+`)
+		ORDER BY f.path, s.line_start`, "in")
 }

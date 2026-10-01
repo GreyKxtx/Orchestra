@@ -315,6 +315,8 @@ func BuildGraphData(ctx context.Context, store *Store) (*GraphData, error) {
 				group = "interface"
 			case "type":
 				group = "struct" // render generic types as struct
+			case "element", "style":
+				group = kind // a page's components and its rules (web.go)
 			}
 
 			// Simple heuristic: if short_name starts with Test, it's a test

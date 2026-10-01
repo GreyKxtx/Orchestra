@@ -151,6 +151,16 @@ func (o *Orchestrator) updateGraph(ctx context.Context, locked bool) error {
 	if err != nil {
 		return err
 	}
+	// A page's links to a stylesheet's rules are worked out when the page is
+	// parsed (web.go): a stylesheet that changed alone would leave them
+	// pointing at rules that are gone, so its pages are parsed again.
+	if !locked {
+		o.store.indexMu.RLock()
+	}
+	changes.ToParse = append(changes.ToParse, o.pagesLinking(ctx, changes)...)
+	if !locked {
+		o.store.indexMu.RUnlock()
+	}
 	if o.afterScan != nil {
 		o.afterScan()
 	}
@@ -245,4 +255,46 @@ func stampFile(absPath string) (FileStamp, error) {
 		return FileStamp{}, err
 	}
 	return FileStamp{Hash: hash, MTimeNS: info.ModTime().UnixNano(), Size: info.Size()}, nil
+}
+
+// pagesLinking returns the indexed pages that link a stylesheet this pass
+// parses or deletes, and that the pass would not parse anyway.
+func (o *Orchestrator) pagesLinking(ctx context.Context, changes *ScanResult) []string {
+	if o.store.db == nil {
+		return nil
+	}
+	busy := map[string]bool{}
+	var sheets []string
+	for _, p := range changes.ToParse {
+		busy[p] = true
+		if strings.EqualFold(filepath.Ext(p), ".css") {
+			sheets = append(sheets, p)
+		}
+	}
+	for _, p := range changes.ToDelete {
+		busy[p] = true
+		if strings.EqualFold(filepath.Ext(p), ".css") {
+			sheets = append(sheets, p)
+		}
+	}
+	var out []string
+	for _, sheet := range sheets {
+		rows, err := o.store.db.QueryContext(ctx, `
+			SELECT DISTINCT f.path FROM edges e
+			JOIN nodes n ON n.id = e.source_id
+			JOIN files f ON f.id = n.file_id
+			WHERE e.relation = 'imports' AND e.target_fqn = ?`, sheet)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var page string
+			if rows.Scan(&page) == nil && !busy[page] {
+				busy[page] = true
+				out = append(out, page)
+			}
+		}
+		rows.Close()
+	}
+	return out
 }

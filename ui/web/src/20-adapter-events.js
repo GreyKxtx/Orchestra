@@ -147,24 +147,9 @@
           if (ev.scope === "child") break;
           // A turn can end (or error out) while a permission/question prompt
           // is still outstanding — e.g. the agent errored before the tool
-          // that raised it ever got an answer. Left alone, pendingAsk keeps a
-          // JSON-RPC id nobody is waiting on, the rail shows a permanent
-          // "asking" badge, and switching in re-raises a prompt whose reply
-          // goes nowhere. Clear it here, and if that ask is the one currently
-          // on screen, take the overlay down with it — the displayed-ask
-          // state and the overlay must always come down together (see
-          // setDisplayedAsk / clearDisplayedAsk in 30-adapter-asks.js).
+          // that raised it ever got an answer (30-adapter-asks.js).
           st.status = "idle";
-          if (st.pendingAsk) {
-            st.pendingAsk = null;
-            if (isDisplayedAskFor(projectId)) {
-              clearDisplayedAsk();
-              const overlay = document.getElementById("overlay");
-              if (overlay) {
-                overlay.classList.add("hidden");
-              }
-            }
-          }
+          dropTurnAsk(projectId);
           break;
         default:
           break;

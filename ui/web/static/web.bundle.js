@@ -137,6 +137,8 @@
       "model.menu_title": "Models",
       "model.search": "Search models…",
       "model.refresh": "Refresh list",
+      "model.changed": "Model: {model}",
+      "model.changed_saved": "Model: {model} · saved",
       "model.title": "Model",
       "queue.aria": "Queued messages",
       "composer.placeholder": "Message, @ for files, / for commands…",
@@ -440,6 +442,10 @@
       "graph.section.folder": "Folder",
       "graph.section.wired_to": "Wired to",
       "graph.section.inside": "Inside this file",
+      "graph.link.styled_by": "styled by",
+      "graph.link.styles": "styles",
+      "graph.link.uses": "uses",
+      "graph.link.used_by": "used by",
       "graph.ro.files": "files",
       "graph.ro.folders": "folders",
       "graph.ro.symbols": "symbols",
@@ -861,6 +867,8 @@
       "model.menu_title": "Модели",
       "model.search": "Поиск моделей…",
       "model.refresh": "Обновить список",
+      "model.changed": "Модель: {model}",
+      "model.changed_saved": "Модель: {model} · сохранена",
       "model.title": "Модель",
       "queue.aria": "Сообщения в очереди",
       "composer.placeholder": "Сообщение, @ — файлы, / — команды…",
@@ -1161,6 +1169,10 @@
       "graph.section.folder": "Папка",
       "graph.section.wired_to": "С чем связан",
       "graph.section.inside": "Что внутри файла",
+      "graph.link.styled_by": "стиль",
+      "graph.link.styles": "стилизует",
+      "graph.link.uses": "трогает",
+      "graph.link.used_by": "используется в",
       "graph.ro.files": "файлы",
       "graph.ro.folders": "папки",
       "graph.ro.symbols": "символы",
@@ -1941,6 +1953,23 @@
   function wsNotify(method, params) {
     if (active) active.notify(method, params);
   }
+
+  // The document never scrolls (rail.css): a focus() or scrollIntoView() can
+  // still move an overflow:hidden root, and the page then stayed shifted with
+  // no way to scroll back. Put it back the moment it moves. Capture, because a
+  // scroll event does not bubble and body can be the one that moved.
+  document.addEventListener(
+    "scroll",
+    (ev) => {
+      const t = ev.target;
+      if (t === document || t === document.documentElement || t === document.body) {
+        if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+        if (document.documentElement.scrollTop) document.documentElement.scrollTop = 0;
+        if (document.body && document.body.scrollTop) document.body.scrollTop = 0;
+      }
+    },
+    true
+  );
 
   // Test seam: adapter-test.mjs drives the outbound path by posting a window
   // message, because `host` lives inside this IIFE and nothing outside can
@@ -3981,9 +4010,9 @@
     // The panel sits above the composer; take the focus so the keyboard
     // answers it (a digit picks an option, Enter sends a typed answer).
     if (q.options && q.options.length) {
-      /** @type {HTMLElement | null} */ (overlayOptions.querySelector("button"))?.focus();
+      /** @type {HTMLElement | null} */ (overlayOptions.querySelector("button"))?.focus({ preventScroll: true });
     } else {
-      overlayInput?.focus();
+      overlayInput?.focus({ preventScroll: true });
     }
   }
 
@@ -9011,6 +9040,22 @@
         void ensureConn(msg.projectId || "");
         return;
 
+      case "highlightCode":
+        // The diff renderer asks its host to tokenise code (04-diff-tools.js).
+        // This host has no tokeniser: the lines go back plain, at once, rather
+        // than as a note in the chat for every diff block.
+        toRenderer({
+          type: "highlightResult",
+          requestId: msg.requestId || "",
+          lines: (Array.isArray(msg.lines) ? msg.lines : []).map((l) =>
+            String(l == null ? "" : l)
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+          ),
+        });
+        return;
+
       default:
         // The composer's own messages — the model pill, the Orchestra
         // breakdown, slash commands, @-mentions, rewind, the pending bar — are
@@ -9019,9 +9064,8 @@
           return;
         }
         // What is left really does belong to a VS Code affordance this host
-        // does not have: opening an editor on a file or a diff, and asking the
-        // editor to tokenise a code block. Say so rather than swallow the
-        // click.
+        // does not have: opening an editor on a file or a diff. Say so rather
+        // than swallow the click.
         toRenderer({
           type: "systemNote",
           text: `"${msg.type}" needs an editor to open things in, so it does nothing here.`,
@@ -9142,6 +9186,9 @@
       // transcript the user is looking at.
       st.inFlightTurnId = null;
       st.status = "idle";
+      // A turn stopped while it waited on the person ends with no step "done"
+      // to take its prompt down, and an answer to it would go nowhere.
+      dropTurnAsk(projectId);
       renderProjects();
       // Write the answer into the session before anything else: the core
       // records the person's message when the turn starts and nothing else,
@@ -9426,24 +9473,9 @@
           if (ev.scope === "child") break;
           // A turn can end (or error out) while a permission/question prompt
           // is still outstanding — e.g. the agent errored before the tool
-          // that raised it ever got an answer. Left alone, pendingAsk keeps a
-          // JSON-RPC id nobody is waiting on, the rail shows a permanent
-          // "asking" badge, and switching in re-raises a prompt whose reply
-          // goes nowhere. Clear it here, and if that ask is the one currently
-          // on screen, take the overlay down with it — the displayed-ask
-          // state and the overlay must always come down together (see
-          // setDisplayedAsk / clearDisplayedAsk in 30-adapter-asks.js).
+          // that raised it ever got an answer (30-adapter-asks.js).
           st.status = "idle";
-          if (st.pendingAsk) {
-            st.pendingAsk = null;
-            if (isDisplayedAskFor(projectId)) {
-              clearDisplayedAsk();
-              const overlay = document.getElementById("overlay");
-              if (overlay) {
-                overlay.classList.add("hidden");
-              }
-            }
-          }
+          dropTurnAsk(projectId);
           break;
         default:
           break;
@@ -9869,6 +9901,28 @@
    */
   function isDisplayedAskFor(projectId) {
     return Boolean(displayedAsk && displayedAsk.projectId === projectId);
+  }
+
+  /**
+   * The turn that asked has ended: nobody waits on its prompt any more. Left
+   * alone, pendingAsk keeps a JSON-RPC id nobody is waiting on, the rail
+   * shows a permanent "asking" badge, and the overlay takes an answer that
+   * goes nowhere. The displayed-ask state and the overlay come down together.
+   * @param {string} projectId
+   */
+  function dropTurnAsk(projectId) {
+    const st = projectState(projectId);
+    if (!st.pendingAsk) {
+      return;
+    }
+    st.pendingAsk = null;
+    if (isDisplayedAskFor(projectId)) {
+      clearDisplayedAsk();
+      const overlay = document.getElementById("overlay");
+      if (overlay) {
+        overlay.classList.add("hidden");
+      }
+    }
   }
 
   /**
@@ -13470,7 +13524,7 @@
     }
     toRenderer({
       type: "systemNote",
-      text: `Model: ${r.model || model}${r.persisted ? " (saved)" : ""}`,
+      text: i18n(r.persisted ? "model.changed_saved" : "model.changed", { model: r.model || model }),
     });
     // The pill reads its label off the header message and the gauge its
     // ceiling off contextInfo. Both come from the core's own answer, which
@@ -17098,7 +17152,40 @@
     test: "test",
     const: "const",
     var: "var",
+    // A page's components and the rules that style them (internal/ckg/web.go).
+    element: "el",
+    style: "css",
   };
+
+  /** What a symbol's web relation reads as, from the symbol's side. */
+  const GRAPH_LINK_LABELS = {
+    "styled_by:out": "graph.link.styled_by",
+    "styled_by:in": "graph.link.styles",
+    "uses:out": "graph.link.uses",
+    "uses:in": "graph.link.used_by",
+  };
+
+  /** @param {any} parent @param {any} link */
+  function graphSymbolLinkRow(parent, link) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "graph-link-row";
+    const name = document.createElement("span");
+    name.className = "graph-link-name";
+    name.textContent = link.name || "";
+    const what = document.createElement("span");
+    what.className = "graph-link-weight";
+    const key = GRAPH_LINK_LABELS[link.relation + ":" + link.dir];
+    what.textContent = key ? i18n(key) : String(link.relation || "");
+    const path = document.createElement("span");
+    path.className = "graph-link-path";
+    path.textContent = (link.path || "") + (link.line ? ":" + link.line : "");
+    row.append(name, what, path);
+    row.title = path.textContent;
+    // The other end's file: the graph's own nodes are files.
+    if (link.path) row.addEventListener("click", () => selectGraphNode(link.path));
+    parent.appendChild(row);
+  }
 
   /** @param {any} parent */
   function renderGraphSelection(parent) {
@@ -17180,6 +17267,7 @@
       where.className = "graph-sym-lines";
       where.textContent = sym.line_start ? sym.line_start + "–" + sym.line_end : "";
       row.append(kind, name, where);
+      const links = Array.isArray(sym.links) ? sym.links : [];
       row.title = (sym.fqn || sym.name || "") + " · " + (sym.calls_out || 0) + " out · " + (sym.calls_in || 0) + " in";
       row.addEventListener("click", () => {
         graphOpenSymbol = graphOpenSymbol === i ? -1 : i;
@@ -17187,6 +17275,9 @@
       });
       fns.appendChild(row);
       if (graphOpenSymbol === i) {
+        // Which rules style this element, which elements this rule styles,
+        // what this function reaches — before the source.
+        for (const l of links) graphSymbolLinkRow(fns, l);
         const pre = document.createElement("pre");
         pre.className = "graph-code";
         // textContent: this is source off the disk, never markup.

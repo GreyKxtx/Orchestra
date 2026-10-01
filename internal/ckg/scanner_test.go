@@ -109,6 +109,7 @@ func TestScannerIncludesReactSourcesAndAllParserLanguages(t *testing.T) {
 		"src/legacy.JS":     "export function legacy() {}\n",
 		"src/styles.css":    "main { display: block; }\n",
 		"public/index.html": "<main></main>\n",
+		"README.md":         "# notes\n",
 	}
 	for rel, content := range files {
 		path := filepath.Join(tempDir, filepath.FromSlash(rel))
@@ -134,15 +135,14 @@ func TestScannerIncludesReactSourcesAndAllParserLanguages(t *testing.T) {
 	for _, path := range toParse {
 		got[path] = true
 	}
-	for _, want := range []string{"src/App.jsx", "src/main.tsx", "src/util.ts", "src/legacy.JS"} {
+	// Pages and stylesheets are parsed by the graph itself (web.go).
+	for _, want := range []string{"src/App.jsx", "src/main.tsx", "src/util.ts", "src/legacy.JS", "src/styles.css", "public/index.html"} {
 		if !got[want] {
 			t.Errorf("supported source %q was not discovered: %v", want, toParse)
 		}
 	}
-	for _, unwanted := range []string{"src/styles.css", "public/index.html"} {
-		if got[unwanted] {
-			t.Errorf("non-AST source %q should not be indexed", unwanted)
-		}
+	if got["README.md"] {
+		t.Errorf("a file no parser handles should not be indexed: %v", toParse)
 	}
 }
 

@@ -875,6 +875,52 @@ test("stopping a turn returns what waited for it to the composer", async () => {
   assert.ok(back && back.text === "with a lexer first", "the undelivered message was lost");
 });
 
+// Stop while the agent waits on a question: the turn ends with an error and no
+// step "done" ever comes. The question stayed in the dock, and an answer to it
+// went to a request nobody was waiting on — "I answered and nothing happened".
+test("a question left open when its turn is stopped comes down with the turn", async () => {
+  const b = await ready(loadBundle());
+  const overlay = b.elementById("overlay");
+  overlay.classList.add("hidden");
+  dispatch(b, sendMsg("plan the simulation"));
+  const turn = b.sent.find((m) => m.method === "session.message");
+  b.deliver({
+    jsonrpc: "2.0",
+    id: 77,
+    method: "question/ask",
+    params: { questions: [{ question: "Which engine?", options: ["wasm", "js"] }] },
+  });
+  await tick();
+  assert.equal(overlay.classList.contains("hidden"), false, "the question was never raised");
+
+  dispatch(b, { type: "cancelTurn" });
+  b.deliver({ jsonrpc: "2.0", id: turn.id, error: { code: -32800, message: "context canceled" } });
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(overlay.classList.contains("hidden"), true, "the stopped turn's question stayed on screen");
+
+  b.sent.length = 0;
+  dispatch(b, { type: "questionReply", answers: [["wasm"]] });
+  await tick();
+  assert.equal(
+    b.sent.find((m) => m.id === 77 && m.result !== undefined),
+    undefined,
+    "an answer to the stopped turn's question must be dropped, not sent to a dead request"
+  );
+});
+
+// The diff renderer asks its host to tokenise code. This host has no
+// tokeniser; it used to say so in the chat once per diff block.
+test("a highlight request is answered plainly, without a note in the chat", async () => {
+  const b = await ready(loadBundle());
+  dispatch(b, { type: "highlightCode", requestId: "hl-1", language: "markdown", lines: ["# a <b>", "x & y"] });
+  await tick();
+  const res = b.inbound.find((m) => m.type === "highlightResult");
+  assert.ok(res, "the highlight request was never answered");
+  assert.equal(res.requestId, "hl-1");
+  assert.deepEqual(res.lines, ["# a &lt;b&gt;", "x &amp; y"]);
+  assert.equal(b.inbound.filter((m) => m.type === "systemNote").length, 0, "a highlight request must not put a note in the chat");
+});
+
 test("message_delta accumulates and reaches the renderer as text", async () => {
   const b = await ready(loadBundle());
   b.deliver({ jsonrpc: "2.0", method: "agent/event", params: { type: "message_delta", content: "Hel" } });

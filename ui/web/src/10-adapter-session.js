@@ -723,6 +723,22 @@
         void ensureConn(msg.projectId || "");
         return;
 
+      case "highlightCode":
+        // The diff renderer asks its host to tokenise code (04-diff-tools.js).
+        // This host has no tokeniser: the lines go back plain, at once, rather
+        // than as a note in the chat for every diff block.
+        toRenderer({
+          type: "highlightResult",
+          requestId: msg.requestId || "",
+          lines: (Array.isArray(msg.lines) ? msg.lines : []).map((l) =>
+            String(l == null ? "" : l)
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+          ),
+        });
+        return;
+
       default:
         // The composer's own messages — the model pill, the Orchestra
         // breakdown, slash commands, @-mentions, rewind, the pending bar — are
@@ -731,9 +747,8 @@
           return;
         }
         // What is left really does belong to a VS Code affordance this host
-        // does not have: opening an editor on a file or a diff, and asking the
-        // editor to tokenise a code block. Say so rather than swallow the
-        // click.
+        // does not have: opening an editor on a file or a diff. Say so rather
+        // than swallow the click.
         toRenderer({
           type: "systemNote",
           text: `"${msg.type}" needs an editor to open things in, so it does nothing here.`,
@@ -854,6 +869,9 @@
       // transcript the user is looking at.
       st.inFlightTurnId = null;
       st.status = "idle";
+      // A turn stopped while it waited on the person ends with no step "done"
+      // to take its prompt down, and an answer to it would go nowhere.
+      dropTurnAsk(projectId);
       renderProjects();
       // Write the answer into the session before anything else: the core
       // records the person's message when the turn starts and nothing else,

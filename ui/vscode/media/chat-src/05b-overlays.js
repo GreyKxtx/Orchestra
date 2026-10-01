@@ -111,9 +111,9 @@
     // The panel sits above the composer; take the focus so the keyboard
     // answers it (a digit picks an option, Enter sends a typed answer).
     if (q.options && q.options.length) {
-      /** @type {HTMLElement | null} */ (overlayOptions.querySelector("button"))?.focus();
+      /** @type {HTMLElement | null} */ (overlayOptions.querySelector("button"))?.focus({ preventScroll: true });
     } else {
-      overlayInput?.focus();
+      overlayInput?.focus({ preventScroll: true });
     }
   }
 

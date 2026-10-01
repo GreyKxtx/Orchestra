@@ -395,7 +395,7 @@
     }
     toRenderer({
       type: "systemNote",
-      text: `Model: ${r.model || model}${r.persisted ? " (saved)" : ""}`,
+      text: i18n(r.persisted ? "model.changed_saved" : "model.changed", { model: r.model || model }),
     });
     // The pill reads its label off the header message and the gauge its
     // ceiling off contextInfo. Both come from the core's own answer, which
