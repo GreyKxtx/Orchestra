@@ -289,6 +289,8 @@ export type HostToWebview =
     }
   | { type: "execChunk"; step: number; chunk: string }
   | { type: "todosUpdate"; todos: TodoItemPayload[] }
+  /** The user approved switching the turn to another mode (mode_route, from ≠ agent). */
+  | { type: "modeSwitched"; from: string; to: string }
   | { type: "stepUsage"; usage: StepUsagePayload; scope?: string }
   /** A turn is still running — re-arm the busy UI after a webview reload. */
   | { type: "turnInFlight" }

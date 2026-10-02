@@ -133,6 +133,10 @@ var table = []Spec{
 	{Name: "contract_freeze", Offer: LeadOnly, Lead: true, InProcess: true},
 	{Name: "question", Lead: true, InProcess: true},
 	{Name: "plan_exit", InProcess: true},
+	// Offered by the agent to top-level turns with a user to ask, not by name.
+	// Not the Lead's: its step-1 list has a budget, and a refused write still
+	// asks the user to switch (agent/mode_switch.go).
+	{Name: "mode_switch", Offer: Runtime, InProcess: true},
 
 	// Read-only git.
 	{Name: "git.status", Parallel: true},

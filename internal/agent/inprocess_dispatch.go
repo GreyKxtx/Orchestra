@@ -94,8 +94,9 @@ var inProcessTools = map[string]inProcessTool{
 	"update_working_state": {run: func(a *Agent, _ context.Context, c inProcessCall) inProcessOutcome {
 		return outcome(a.handleUpdateWorkingState(c.input))
 	}},
-	"question":  {run: (*Agent).runQuestion},
-	"plan_exit": {run: (*Agent).runPlanExit},
+	"question":    {run: (*Agent).runQuestion},
+	"plan_exit":   {run: (*Agent).runPlanExit},
+	"mode_switch": {run: (*Agent).runModeSwitch},
 }
 
 // inProcessHandler returns the handler for name when this run can serve it.
@@ -131,7 +132,15 @@ func (a *Agent) runInProcessTool(ctx context.Context, cb *guard.CircuitBreaker, 
 	if a.opts.AgentLogger != nil {
 		a.opts.AgentLogger.LogToolResult(c.name, len(content), time.Since(start).Milliseconds(), errText(res.err), content)
 	}
+	if a.opts.OnEvent != nil {
+		a.opts.OnEvent(AgentEvent{Step: c.step, Stream: toolCallCompletedStreamEvent(c.name, c.id, []byte(content), res.err)})
+	}
 	if res.early != nil {
+		// A switch goes on with this history: the call must have its answer,
+		// or the next half starts on an assistant call with no reply.
+		if res.early.SwitchToMode != "" {
+			*history = append(*history, llm.Message{Role: llm.RoleTool, ToolCallID: c.id, Content: res.reply})
+		}
 		emitStepDone("final")
 		return serialToolOutcome{EarlyResult: res.early}, nil
 	}
@@ -190,11 +199,24 @@ func (a *Agent) runQuestion(ctx context.Context, c inProcessCall) inProcessOutco
 	if a.opts.QuestionAsker == nil {
 		return inProcessOutcome{reply: `{"error":"question tool unavailable"}`, err: errQuestionUnavailable}
 	}
-	var req struct {
-		Questions []tools.QuestionItem `json:"questions"`
+	var raw struct {
+		Questions json.RawMessage `json:"questions"`
 	}
-	if err := json.Unmarshal(c.input, &req); err != nil {
+	if err := json.Unmarshal(c.input, &raw); err != nil {
 		return inProcessOutcome{err: err}
+	}
+	// A local model often sends the array as a JSON string. Refusing it sent
+	// the model round again, and the user was asked the same thing twice.
+	qs := raw.Questions
+	var inner string
+	if json.Unmarshal(qs, &inner) == nil {
+		qs = json.RawMessage(inner)
+	}
+	var req struct{ Questions []tools.QuestionItem }
+	if len(qs) > 0 {
+		if err := json.Unmarshal(qs, &req.Questions); err != nil {
+			return inProcessOutcome{err: fmt.Errorf(`"questions" must be an array of {"question": "...", "options": ["..."]}: %w`, err)}
+		}
 	}
 	// A model that flattens the argument — {"question": "..."} instead of
 	// {"questions": [{"question": "..."}]} — unmarshals cleanly into an
@@ -218,19 +240,22 @@ func (a *Agent) runQuestion(ctx context.Context, c inProcessCall) inProcessOutco
 	return inProcessOutcome{out: b}
 }
 
-// runPlanExit asks the user whether to leave plan mode for build.
+// runPlanExit asks the user whether to leave plan mode for build: the plan
+// mode's own mode_switch, which a no leaves planning rather than declined.
 func (a *Agent) runPlanExit(ctx context.Context, c inProcessCall) inProcessOutcome {
 	if a.opts.QuestionAsker == nil {
 		return inProcessOutcome{reply: `{"status":"refused","message":"plan_exit is unavailable in non-interactive mode. Finish with a final answer — the user will switch modes manually if needed."}`}
 	}
-	answers, err := a.opts.QuestionAsker.Ask(ctx, []tools.QuestionItem{{
-		Question: "Plan complete. Switch to build mode to apply changes?",
-		Options:  []string{"Yes, switch to build", "No, keep planning"},
-	}})
-	if err == nil && len(answers) > 0 {
-		ans := strings.ToLower(strings.TrimSpace(answers[0]))
-		if ans == "1" || ans == "yes" || ans == "y" || strings.HasPrefix(ans, "yes,") || ans == "да" || strings.HasPrefix(ans, "да,") {
-			return inProcessOutcome{early: &Result{Steps: c.step, SwitchToBuild: true, Todos: a.todos}}
+	reason := "the plan is ready"
+	if a.userSpeaksRussian {
+		reason = "план готов"
+	}
+	q := modeSwitchQuestion(ModePlan, ModeBuild, reason, a.userSpeaksRussian)
+	answers, err := a.opts.QuestionAsker.Ask(ctx, []tools.QuestionItem{q})
+	if err == nil && len(answers) > 0 && isYesAnswer(answers[0], q.Options[0]) {
+		return inProcessOutcome{
+			reply: `{"status":"switched","mode":"build","message":"The plan was approved; the turn goes on in build mode."}`,
+			early: &Result{Steps: c.step, SwitchToMode: ModeBuild, Todos: a.todos},
 		}
 	}
 	return inProcessOutcome{reply: `{"status":"continue","message":"Continue planning. Refine the plan and call plan_exit again when ready."}`}

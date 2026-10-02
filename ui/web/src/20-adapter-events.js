@@ -302,6 +302,17 @@
         break;
       }
 
+      // A switch the user approved (mode_switch, plan_exit): the composer
+      // shows the mode the turn went on in. from "agent" is the router's
+      // pick, which the Agent pill already stands for.
+      case "mode_route": {
+        const d = ev.data || {};
+        if (!isChild && d.from && d.from !== "agent" && d.to) {
+          toRenderer({ type: "modeSwitched", from: String(d.from), to: String(d.to) });
+        }
+        break;
+      }
+
       // The checklist bar above the composer. #todos-bar, #todos-chip and
       // #todos-list are in index.src.html and the renderer draws them from a
       // todosUpdate message — this host never produced one, so the markup sat

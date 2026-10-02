@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/llm"
 	"github.com/orchestra/orchestra/protocol/schema"
 )
 
@@ -39,7 +40,7 @@ func TestUnknownWorkspacePaths_CatchesAnInventedTree(t *testing.T) {
 - pkg/mcp — поддержка MCP
 - docs/ARCHITECTURE.md — архитектура`
 
-	got := unknownWorkspacePaths(answer, root)
+	got := unknownWorkspacePaths(answer, root, "")
 	if len(got) == 0 {
 		t.Fatal("an invented directory must be caught")
 	}
@@ -76,7 +77,7 @@ func TestUnknownWorkspacePaths_LeavesInnocentTextAlone(t *testing.T) {
 		"and/or":                      "Fill the name and/or the email.",
 	}
 	for name, answer := range cases {
-		if got := unknownWorkspacePaths(answer, root); len(got) != 0 {
+		if got := unknownWorkspacePaths(answer, root, ""); len(got) != 0 {
 			t.Errorf("%s must not be flagged, got %v", name, got)
 		}
 	}
@@ -92,7 +93,7 @@ func TestUnknownWorkspacePaths_CatchesAShortPathMarkedAsAPath(t *testing.T) {
 		"with an extension": "See nosuchdir/thing.md.",
 		"three segments":    "MCP support lives in pkg/mcp/client.",
 	} {
-		if got := unknownWorkspacePaths(answer, root); len(got) == 0 {
+		if got := unknownWorkspacePaths(answer, root, ""); len(got) == 0 {
 			t.Errorf("%s: an invented path must be caught", name)
 		}
 	}
@@ -102,10 +103,10 @@ func TestUnknownWorkspacePaths_CatchesAShortPathMarkedAsAPath(t *testing.T) {
 // an invented tree — the check only fires when the directory itself is unknown.
 func TestUnknownWorkspacePaths_OnlyFlagsAnUnknownDirectory(t *testing.T) {
 	root := groundingFixture(t)
-	if got := unknownWorkspacePaths("Look at docs/MISSING.md for that.", root); len(got) != 0 {
+	if got := unknownWorkspacePaths("Look at docs/MISSING.md for that.", root, ""); len(got) != 0 {
 		t.Fatalf("a missing file in a real directory must not be flagged: %v", got)
 	}
-	if got := unknownWorkspacePaths("Look at nosuchdir/thing.md for that.", root); len(got) == 0 {
+	if got := unknownWorkspacePaths("Look at nosuchdir/thing.md for that.", root, ""); len(got) == 0 {
 		t.Fatal("a file under an unknown directory must be flagged")
 	}
 }
@@ -198,5 +199,47 @@ func TestRun_TheGroundingCorrectionHappensOnlyOnce(t *testing.T) {
 	}
 	if script.i > 2 {
 		t.Fatalf("a stubborn model must be corrected once, not repeatedly: %d steps", script.i)
+	}
+}
+
+// Seen live on a plan: "ставим emsdk (~1 ГБ + VS Build Tools/MinGW)" in an
+// answer that also named a real path. "Tools/MinGW" is a choice between two
+// products, not a directory; the correction sent the model back to ask the
+// user its question again.
+func TestUnknownWorkspacePaths_CapitalisedAlternativesAreNotPaths(t *testing.T) {
+	root := groundingFixture(t)
+	answer := "See docs/ARCHITECTURE.md. Install emsdk (~1 GB + VS Build Tools/MinGW), render with Canvas2D/WebGL."
+	if got := unknownWorkspacePaths(answer, root, ""); len(got) != 0 {
+		t.Fatalf("product alternatives must not be flagged, got %v", got)
+	}
+	if got := unknownWorkspacePaths("See docs/ARCHITECTURE.md and `Assets/Scripts`.", root, ""); len(got) == 0 {
+		t.Fatal("a capitalised path in code formatting is still a claim")
+	}
+}
+
+// The same answer named phys/blackhole.cpp — a file the plan written earlier in
+// the conversation proposes. A path the conversation already holds was not
+// invented by this answer.
+func TestUnknownWorkspacePaths_APathTheConversationNamedIsNotInvented(t *testing.T) {
+	root := groundingFixture(t)
+	answer := "The plan puts the physics in phys/blackhole.cpp."
+	if got := unknownWorkspacePaths(answer, root, ""); len(got) == 0 {
+		t.Fatal("precondition: with no conversation the path is unknown")
+	}
+	known := "## Steps\n4. phys/blackhole.cpp — RK2 integrator"
+	if got := unknownWorkspacePaths(answer, root, known); len(got) != 0 {
+		t.Fatalf("a path from the conversation must not be flagged, got %v", got)
+	}
+}
+
+func TestConversationMentions_ReadsMessagesAndToolArguments(t *testing.T) {
+	got := conversationMentions([]llm.Message{
+		{Role: llm.RoleUser, Content: "build it"},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{Function: llm.ToolCallFunc{
+			Name: "write", Arguments: llm.ToolArguments(`{"path":".orchestra/plans/p.md","content":"phys/blackhole.cpp"}`),
+		}}}},
+	})
+	if !strings.Contains(got, "build it") || !strings.Contains(got, "phys/blackhole.cpp") {
+		t.Fatalf("conversationMentions = %q", got)
 	}
 }

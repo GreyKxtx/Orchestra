@@ -622,7 +622,7 @@ Response `result`:
 - `patch_path` (optional) — абсолютный путь к записанному `.patch` при `apply_output=patch`
 - `todos` (optional) — чеклист после хода (`todowrite`)
 - `plan_path` (optional) — путь plan-файла при `mode: plan`
-- `switch_to_build` (optional, legacy) — true если `plan_exit` одобрен; core обычно уже выполнил build-продолжение in-process
+- `switch_to_build` (optional, legacy) — true если переключение в `build` одобрено, а продолжение не выполнено; core обычно уже выполнил его in-process (о каждом переключении — событие `mode_route`)
 - `usage` (optional) — token summary
 
 Журнал хода. `agent.run` пишет те же события, что сессия пишет в свой `session.trajectory`, в `.orchestra/runs/<turn_id>.events.jsonl` (хранятся последние 50 файлов). Строки `.orchestra/llm_log.jsonl` любого хода несут `run_id` (его `turn_id`), а строки подагентов ещё `task_id`, `parent_task_id` и `depth`: один файл пишут все агенты дерева параллельно, и эти поля говорят, чья строка.
@@ -1217,7 +1217,7 @@ The params are `wire.AgentEvent` (protocol/wire/events.go; `AgentEvent` in the g
 | `done` | LLM stream ended | (full assembled response in agent state) |
 | `error` | LLM-stream-level error (different from `recoverable_error`) | `content`, `error` |
 | `todos_updated` | The model rewrote its checklist (`todowrite`) | `content` = JSON `[]wire.TodoItem` |
-| `mode_route` | A `mode: "agent"` turn was routed to its effective mode | `data` = `{from, to, reason, confidence}` |
+| `mode_route` | A `mode: "agent"` turn was routed to its effective mode (`from` = `agent`), or the user approved switching the turn to another mode — `mode_switch`, `plan_exit`, or a call refused for the mode's sake — and it goes on in `to` (`from` = the mode it left) | `data` = `{from, to, reason, confidence}` |
 | `child_started`, `child_queued`, `child_done`, `agent_message`, `workorders_relayed`, `integration_verify` | The task runtime: see `agent.run` above | child scope fields |
 | `user_message` | A message the user sent during the turn (`session.interject`) reached the model (v26) | `content` (the text), `data` = `{id}` — the id `session.interject` answered |
 
@@ -1293,7 +1293,7 @@ A refusal (or no client handler) is reported to the server as declined; nothing 
 
 ### `question/ask`
 
-Interactive Q&A for the `question` tool and `plan_exit` approval (plan → build).
+Interactive Q&A for the `question` tool and for mode switches: `plan_exit` (plan → build), `mode_switch`, and the agent's own question when a call is refused for the mode's sake.
 
 Params:
 

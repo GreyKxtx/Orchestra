@@ -633,11 +633,11 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 
 	turnCtx = launch.RunContext(tools.WithTurn(turnCtx, turn))
 	outHistory, res, err := ag.Run(turnCtx, inHistory, agentQuery)
-	// The plan→build continuation below is a second agent run the user did
+	// A mode switch the user approved continues below as another agent run the user did
 	// not ask for by name; a message sent during it goes as the next turn.
 	sess.EndInterjections()
 	if err == nil {
-		outHistory, res, err = maybeContinueBuildAfterPlan(turnCtx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
+		outHistory, res, err = continueInSwitchedMode(turnCtx, launch, params.OnEvent, launch.Custom.llmClient, c.validator, c.tools, outHistory, res)
 	}
 	launch.noteOutcome(res, err)
 	ck.finish(err)
@@ -680,7 +680,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		Patches:          res.Patches,
 		Ops:              res.Ops,
 		ApplyResponse:    res.ApplyResponse,
-		SwitchToBuild:    res.SwitchToBuild,
+		SwitchToBuild:    res.SwitchToMode == agent.ModeBuild,
 		Todos:            res.Todos,
 		PlanPath:         launch.Opts.PlanPath,
 		Usage:            usageSnapshotFrom(launch.Usage),

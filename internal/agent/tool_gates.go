@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -199,7 +200,11 @@ func (a *Agent) gateHuman(ctx context.Context, c *gateCall, _ []llm.Message) str
 
 // refuseCall answers a call a gate refused: the denial goes into history and
 // the log, and counts toward the denied-repeat breaker.
-func (a *Agent) refuseCall(cb *guard.CircuitBreaker, history *[]llm.Message, toolCallID string, c *gateCall, reason string) (serialToolOutcome, error) {
+func (a *Agent) refuseCall(cb *guard.CircuitBreaker, history *[]llm.Message, toolCallID string, step int, c *gateCall, reason string) (serialToolOutcome, error) {
+	// The UI showed the call start; without this its row spins until the turn ends.
+	if a.opts.OnEvent != nil {
+		a.opts.OnEvent(AgentEvent{Step: step, Stream: toolCallCompletedStreamEvent(c.name, toolCallID, nil, errors.New("denied: "+reason))})
+	}
 	*history = append(*history, llm.Message{
 		Role:       llm.RoleTool,
 		ToolCallID: toolCallID,

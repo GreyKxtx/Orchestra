@@ -127,6 +127,10 @@ var (
 var (
 	ToolSkillInvoke = task.ToolSkillInvoke
 	ToolTaskResult  = task.ToolTaskResult
+	ToolModeSwitch  = task.ToolModeSwitch
+
+	// ModeSwitchTargets are the modes mode_switch may name.
+	ModeSwitchTargets = task.ModeSwitchTargets
 )
 
 // Agency tool defs. send_message, agent_post and task_board are on no static

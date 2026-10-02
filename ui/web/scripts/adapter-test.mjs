@@ -921,6 +921,20 @@ test("a highlight request is answered plainly, without a note in the chat", asyn
   assert.equal(b.inbound.filter((m) => m.type === "systemNote").length, 0, "a highlight request must not put a note in the chat");
 });
 
+// A turn the user switched to another mode (mode_switch, plan_exit) tells the
+// composer; the router's own pick (from: agent) does not — the pill says
+// Agent and stays Agent.
+test("a mode switch the user approved reaches the composer; a routed turn does not", async () => {
+  const b = await ready(loadBundle());
+  b.deliver({ jsonrpc: "2.0", method: "agent/event", params: { type: "mode_route", data: { from: "agent", to: "ask" } } });
+  assert.equal(b.inbound.filter((m) => m.type === "modeSwitched").length, 0, "the router's pick is not a switch");
+  b.deliver({ jsonrpc: "2.0", method: "agent/event", params: { type: "mode_route", data: { from: "ask", to: "build" } } });
+  const sw = b.inbound.find((m) => m.type === "modeSwitched");
+  assert.ok(sw, "the approved switch never reached the renderer");
+  assert.equal(sw.from, "ask");
+  assert.equal(sw.to, "build");
+});
+
 test("message_delta accumulates and reaches the renderer as text", async () => {
   const b = await ready(loadBundle());
   b.deliver({ jsonrpc: "2.0", method: "agent/event", params: { type: "message_delta", content: "Hel" } });

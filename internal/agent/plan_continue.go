@@ -1,62 +1,21 @@
 package agent
 
-import (
-	"context"
-
-	"github.com/orchestra/orchestra/internal/tools"
-	"github.com/orchestra/orchestra/llm"
-	"github.com/orchestra/orchestra/protocol/schema"
-)
-
 const planApprovedQuery = "The plan has been approved. Execute the plan."
-
-// ContinueBuildAfterPlan runs a second agent turn in build mode when plan_exit
-// was approved (SwitchToBuild). Merges steps, patches/ops, and todos from both
-// turns into a single result.
-func ContinueBuildAfterPlan(
-	ctx context.Context,
-	llmClient llm.Client,
-	validator *schema.Validator,
-	toolRunner *tools.Runner,
-	buildOpts Options,
-	history []llm.Message,
-	res *Result,
-) ([]llm.Message, *Result, error) {
-	if res == nil || !res.SwitchToBuild {
-		return history, res, nil
-	}
-	buildOpts.Mode = ModeBuild
-	buildOpts.JustSwitchedFromPlan = true
-	// Carry todos written during the plan turn into the build agent; otherwise
-	// InitialTodos stays at the pre-turn snapshot and merge can wipe the plan checklist.
-	if len(res.Todos) > 0 {
-		buildOpts.InitialTodos = append([]tools.TodoItem(nil), res.Todos...)
-	}
-	buildAg, err := New(llmClient, validator, toolRunner, buildOpts)
-	if err != nil {
-		return history, res, err
-	}
-	outHist, buildRes, err := buildAg.Run(ctx, history, planApprovedQuery)
-	if err != nil {
-		return history, res, err
-	}
-	return outHist, mergeAgentResults(res, buildRes), nil
-}
 
 func mergeAgentResults(first, second *Result) *Result {
 	if second == nil {
 		if first != nil {
-			first.SwitchToBuild = false
+			first.SwitchToMode = ""
 		}
 		return first
 	}
 	if first == nil {
-		second.SwitchToBuild = false
+		second.SwitchToMode = ""
 		return second
 	}
 	merged := *first
 	merged.Steps = first.Steps + second.Steps
-	merged.SwitchToBuild = false
+	merged.SwitchToMode = ""
 	merged.MaxStepsExceeded = second.MaxStepsExceeded
 	if len(second.Patches) > 0 {
 		merged.Patches = second.Patches

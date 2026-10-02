@@ -384,6 +384,20 @@
       case "childLifecycle":
         handleChildLifecycle(msg);
         break;
+      case "modeSwitched": {
+        // The user approved a switch (mode_switch, plan_exit). A pinned mode
+        // follows it, so the next message goes on in the mode the user chose;
+        // Agent stays Agent — routing is what it is for.
+        const to = MODES.find((m) => m.id === msg.to);
+        if (to && modeId !== "agent") {
+          modeId = to.id;
+          syncModeUi();
+          host.setState({ ...(host.getState() || {}), modeId });
+        }
+        const label = (id) => (MODES.find((m) => m.id === id) || { label: id }).label;
+        appendMsg("system", i18n("mode.switched", { from: label(msg.from), to: label(msg.to) }));
+        break;
+      }
       case "diffViewer":
         showDiffViewer(msg.path || "", msg.before || "", msg.after || "", msg.language || "");
         break;

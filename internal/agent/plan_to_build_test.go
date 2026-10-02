@@ -14,7 +14,7 @@ import (
 
 // plan_exit and the plan → build switch had no end-to-end test of any kind.
 // mergeAgentResults was covered; the path that produces the results it merges
-// was not, and ContinueBuildAfterPlan had no caller in any test.
+// was not, and the build continuation (ContinueInSwitchedMode) had no caller in any test.
 //
 // The eval cannot cover it either: the switch happens only when a user
 // approves, and there is no user in an eval run. That is what makes this test
@@ -113,21 +113,21 @@ func TestPlanExit_ApprovedPlanRunsTheBuildTurnAndTheChangeLands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan turn: %v", err)
 	}
-	if res == nil || !res.SwitchToBuild {
+	if res == nil || res.SwitchToMode != ModeBuild {
 		t.Fatalf("an approved plan_exit must end the plan turn asking for build, got %+v", res)
 	}
 	if asker.asked != 1 {
 		t.Errorf("plan_exit must ask exactly once, asked %d times", asker.asked)
 	}
 
-	_, merged, err := ContinueBuildAfterPlan(context.Background(), client, v, tr, opts, hist, res)
+	_, merged, err := ContinueInSwitchedMode(context.Background(), client, v, tr, opts, hist, res)
 	if err != nil {
 		t.Fatalf("build turn: %v", err)
 	}
 	if merged == nil {
 		t.Fatal("the merged result is nil")
 	}
-	if merged.SwitchToBuild {
+	if merged.SwitchToMode != "" {
 		t.Error("the merged result still asks to switch; the second turn already happened")
 	}
 
@@ -164,7 +164,7 @@ func TestPlanExit_ARefusedSwitchKeepsPlanning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan turn: %v", err)
 	}
-	if res != nil && res.SwitchToBuild {
+	if res != nil && res.SwitchToMode != "" {
 		t.Fatal("a refused plan_exit must not ask for build mode")
 	}
 
@@ -194,7 +194,7 @@ func TestPlanExit_WithNoAskerRefusesRatherThanSwitching(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan turn: %v", err)
 	}
-	if res != nil && res.SwitchToBuild {
+	if res != nil && res.SwitchToMode != "" {
 		t.Fatal("a non-interactive run switched to build with nobody to approve it")
 	}
 }

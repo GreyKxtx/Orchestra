@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/orchestra/orchestra/llm"
 )
 
 // Grounding check: an answer that describes the workspace must not name parts
@@ -40,8 +42,10 @@ var pathCandidate = regexp.MustCompile(`[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+/?`)
 //
 // The parent rule is what keeps this quiet: ".orchestra/plan.json" is a file a
 // run creates, so a missing one inside a real directory is not a fabrication,
-// while "pkg/mcp" in a repository with no pkg/ is.
-func unknownWorkspacePaths(answer, workspaceRoot string) []string {
+// while "pkg/mcp" in a repository with no pkg/ is. known is what the
+// conversation said before this answer: a path named there — a file a plan
+// proposes, one the user mentioned — was not invented here.
+func unknownWorkspacePaths(answer, workspaceRoot, known string) []string {
 	root := strings.TrimSpace(workspaceRoot)
 	if root == "" || strings.TrimSpace(answer) == "" {
 		return nil
@@ -69,6 +73,9 @@ func unknownWorkspacePaths(answer, workspaceRoot string) []string {
 		if pathExistsIn(root, rel) || !markedAsPath(raw, rel, text, describesWorkspace) {
 			continue
 		}
+		if known != "" && strings.Contains(known, rel) {
+			continue
+		}
 		// A missing file inside a directory that exists is not an invented
 		// tree — only an unknown directory is.
 		if dir := path.Dir(rel); dir != "." && pathExistsIn(root, dir) {
@@ -85,7 +92,8 @@ func unknownWorkspacePaths(answer, workspaceRoot string) []string {
 // groundingCandidate normalises one match and rejects everything that is not a
 // claim about this workspace.
 func groundingCandidate(raw, text string) (string, bool) {
-	rel := strings.Trim(raw, "/")
+	// The full stop ending a sentence is not part of the path.
+	rel := strings.Trim(strings.TrimRight(raw, "."), "/")
 	if len(rel) < groundingMinCandidateLen || !strings.Contains(rel, "/") {
 		return "", false
 	}
@@ -114,16 +122,24 @@ func groundingCandidate(raw, text string) (string, bool) {
 // describing the workspace), code formatting, a dot (an extension, a dot
 // directory), a third segment, or its first segment named as a directory again
 // — the way an invented tree lists "pkg/" and "pkg/mcp".
+//
+// Two capitalised words ("Build Tools/MinGW", "Canvas2D/WebGL", "TCP/IP") are a
+// choice between names, not a directory, unless code formatting says otherwise.
 func markedAsPath(raw, rel, text string, describesWorkspace bool) bool {
-	if describesWorkspace || strings.Count(rel, "/") >= 2 || strings.Contains(rel, ".") {
+	if i := strings.Index(text, raw); i > 0 && text[i-1] == '`' {
 		return true
 	}
-	if i := strings.Index(text, raw); i > 0 && text[i-1] == '`' {
+	if capitalisedAlternatives.MatchString(rel) {
+		return false
+	}
+	if describesWorkspace || strings.Count(rel, "/") >= 2 || strings.Contains(rel, ".") {
 		return true
 	}
 	first, _, _ := strings.Cut(rel, "/")
 	return countDirMentions(text, first+"/") >= 2
 }
+
+var capitalisedAlternatives = regexp.MustCompile(`^[A-Z][A-Za-z0-9]*/[A-Z][A-Za-z0-9]*$`)
 
 // countDirMentions counts occurrences of dir that start a word.
 func countDirMentions(text, dir string) int {
@@ -156,9 +172,26 @@ func pathExistsIn(root, rel string) bool {
 	return err == nil
 }
 
+// conversationMentions is the text of a conversation — every message and every
+// tool call's arguments — for telling a path the answer repeats from one it
+// made up.
+func conversationMentions(history []llm.Message) string {
+	var b strings.Builder
+	for _, m := range history {
+		b.WriteString(m.Content)
+		b.WriteByte('\n')
+		for _, tc := range m.ToolCalls {
+			b.WriteString(string(tc.Function.Arguments))
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
 // rejectUngroundedFinal sends the answer back once when it describes parts of
 // the workspace that are not there. Callers must have established that the turn
 // mutated nothing, so a named path is a claim about the present, not a plan.
+// a.finalHistory, set by finalStep, is the conversation the answer comes from.
 func (a *Agent) rejectUngroundedFinal(visible string) (string, bool) {
 	if a == nil || a.groundingCorrected || a.tools == nil {
 		return "", false
@@ -166,7 +199,7 @@ func (a *Agent) rejectUngroundedFinal(visible string) (string, bool) {
 	if strings.TrimSpace(visible) == "" {
 		return "", false
 	}
-	bad := unknownWorkspacePaths(visible, a.tools.WorkspaceRoot())
+	bad := unknownWorkspacePaths(visible, a.tools.WorkspaceRoot(), conversationMentions(a.finalHistory))
 	if len(bad) == 0 {
 		return "", false
 	}

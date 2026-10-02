@@ -178,6 +178,30 @@ func ToolPlanExit() llm.ToolDef {
 	}
 }
 
+// ModeSwitchTargets are the modes a turn may ask to become: the ones a user
+// can pick in the composer, less agent, which only routes.
+var ModeSwitchTargets = []string{"build", "plan", "explore", "ask", "debug", "architecture", "orchestra"}
+
+func ToolModeSwitch() llm.ToolDef {
+	return llm.ToolDef{
+		Type: "function",
+		Function: llm.ToolFunctionDef{
+			Name: "mode_switch",
+			Description: "Ask the user to switch this turn to another mode when the current one cannot do what the task needs " +
+				"(edit files: build; plan first: plan; read-only answers: ask). The user decides; on yes the turn goes on in the new mode with this conversation.",
+			Parameters: toolschema.MustSchema(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mode", "reason"],
+  "properties": {
+    "mode": { "type": "string", "enum": ["build", "plan", "explore", "ask", "debug", "architecture", "orchestra"] },
+    "reason": { "type": "string", "minLength": 1, "description": "One sentence, in the user's language: what the new mode is needed for." }
+  }
+}`),
+		},
+	}
+}
+
 // ToolSkillInvoke returns the skill_invoke tool definition with the
 // caller-supplied list of valid skill names embedded in the JSON Schema enum.
 func ToolSkillInvoke(skillNames []string) llm.ToolDef {

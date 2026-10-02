@@ -271,7 +271,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 	ck.save()
 	outHistory, res, err := ag.Run(ctx, history, agentQuery)
 	if err == nil {
-		_, res, err = maybeContinueBuildAfterPlan(ctx, launch.Custom.llmClient, c.validator, c.tools, launch.Opts, outHistory, res)
+		_, res, err = continueInSwitchedMode(ctx, launch, params.OnEvent, launch.Custom.llmClient, c.validator, c.tools, outHistory, res)
 	}
 	launch.noteOutcome(res, err)
 	ck.finish(err)
@@ -287,7 +287,7 @@ func (c *Core) AgentRun(ctx context.Context, params AgentRunParams) (*AgentRunRe
 		Patches:       res.Patches,
 		Ops:           res.Ops,
 		ApplyResponse: res.ApplyResponse,
-		SwitchToBuild: res.SwitchToBuild,
+		SwitchToBuild: res.SwitchToMode == agent.ModeBuild,
 		Todos:         res.Todos,
 		PlanPath:      writtenPlanPath(c.workspaceRoot, launch.Opts.PlanPath),
 		Usage:         usageSnapshotFrom(launch.Usage),

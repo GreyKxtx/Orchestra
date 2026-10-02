@@ -1777,6 +1777,14 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           ...childCtx,
         });
         break;
+      case "mode_route": {
+        // A switch the user approved; from "agent" is the router's pick.
+        const d = (event.data || {}) as { from?: string; to?: string };
+        if (event.scope !== "child" && d.from && d.from !== "agent" && d.to) {
+          post({ type: "modeSwitched", from: d.from, to: d.to });
+        }
+        break;
+      }
       case "todos_updated": {
         const todos = parseTodosUpdated(event.content);
         if (todos.length > 0) {

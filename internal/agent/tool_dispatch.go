@@ -135,7 +135,14 @@ func (a *Agent) runSerialToolCall(ctx context.Context, cb *guard.CircuitBreaker,
 	}
 	gc := a.newGateCall(name, tc.Input)
 	if reason := a.runToolGates(ctx, gc, *history); reason != "" {
-		return a.refuseCall(cb, history, toolCallID, gc, reason)
+		// Refused for the mode's sake: the user may switch it (mode_switch.go).
+		if out, handled := a.switchForRefusedCall(ctx, history, tc, name, toolCallID, steps, reason); handled {
+			if out.EarlyResult != nil {
+				emitStepDone("final")
+			}
+			return out, nil
+		}
+		return a.refuseCall(cb, history, toolCallID, steps, gc, reason)
 	}
 	if h, ok := a.inProcessHandler(name); ok {
 		return a.runInProcessTool(ctx, cb, history, inProcessCall{id: toolCallID, name: name, input: tc.Input, step: steps}, h, emitStepDone)
@@ -162,7 +169,7 @@ func (a *Agent) runRunnerTool(ctx context.Context, cb *guard.CircuitBreaker, his
 	if a.opts.HooksRunner != nil {
 		dec := a.runPreToolHooks(callCtx, name, tc.Input)
 		if dec.Denied {
-			return a.refuseCall(cb, history, toolCallID, a.newGateCall(name, tc.Input), hookDenialReason(dec))
+			return a.refuseCall(cb, history, toolCallID, steps, a.newGateCall(name, tc.Input), hookDenialReason(dec))
 		}
 		if len(dec.Input) > 0 {
 			// The model asked for one thing and another ran. Everything after

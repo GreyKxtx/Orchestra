@@ -503,9 +503,10 @@ type Result struct {
 	// SubtaskResult is set when a child agent completed via task.result tool call.
 	SubtaskResult string
 
-	// SwitchToBuild is set when plan_exit was approved by the user.
-	// The caller should restart the agent in Mode "build" with JustSwitchedFromPlan=true.
-	SwitchToBuild bool
+	// SwitchToMode is the mode the user agreed to switch the turn to
+	// (mode_switch, plan_exit, or a call refused for the mode's sake). The
+	// caller goes on in it with ContinueInSwitchedMode.
+	SwitchToMode Mode
 
 	// MaxStepsExceeded is true when the run stopped at the step limit but
 	// staged/partial results were flushed (dry-run overlay or apply path).
@@ -652,6 +653,15 @@ type Agent struct {
 	// once for naming paths the workspace does not have. One correction only:
 	// a model that will not ground itself must not spend the window trying.
 	groundingCorrected bool
+	// finalHistory is the conversation the final under review answers, set by
+	// finalStep: a path it already named is not one the answer invented.
+	finalHistory []llm.Message
+	// modeSwitchDeclined records that the user said no to a mode switch this
+	// turn: a refused call is not put to them again (mode_switch.go).
+	modeSwitchDeclined bool
+	// userSpeaksRussian picks the language of the questions the agent itself
+	// puts to the user.
+	userSpeaksRussian bool
 	// codeChangeReminded records that this turn already got the "task requires
 	// code changes" reminder; the query-word heuristic behind it is not sure
 	// enough to refuse a second time.

@@ -19,7 +19,7 @@ func TestParallelFlags_AllBuiltinsClassified(t *testing.T) {
 		maximal = append(maximal, ListToolsForMode(mode, caps, true, true)...)
 	}
 	// Built by the agent for the turn, not by a mode list.
-	maximal = append(maximal, ToolSkillInvoke([]string{"sample"}), ToolSendMessage(), ToolAgentPost(), ToolTaskBoard())
+	maximal = append(maximal, ToolSkillInvoke([]string{"sample"}), ToolSendMessage(), ToolAgentPost(), ToolTaskBoard(), ToolModeSwitch())
 	for _, d := range allToolDefsMap() {
 		maximal = append(maximal, d)
 	}

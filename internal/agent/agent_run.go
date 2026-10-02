@@ -47,6 +47,7 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 		return nil, nil, fmt.Errorf("user query is empty")
 	}
 	a.beginTurn(ctx, userQuery)
+	a.userSpeaksRussian = speaksRussian(userQuery, history)
 	defer a.persistWorkingTurnDigest()
 	// Named returns: recordTurnLesson runs after result is fully built by
 	// whichever return statement fired, so it can still attach a
@@ -120,6 +121,7 @@ func (a *Agent) beginTurn(ctx context.Context, userQuery string) {
 	a.turnMutatingTools = 0
 	a.turnMutatedPaths = nil
 	a.groundingCorrected = false
+	a.modeSwitchDeclined = false
 	a.codeChangeReminded = false
 	a.resetExploreFirstGate()
 	a.overflowRecoveries = 0
@@ -502,7 +504,10 @@ func (l *turnLoop) finalStep(history []llm.Message, ans *modelAnswer) ([]llm.Mes
 		l.emitStepDone("invalid")
 		return history, nil, false, nil
 	}
-	if hint, reject := a.rejectPrematureFinal(l.userQuery, ans.step, ans.raw, l.steps); reject {
+	a.finalHistory = history
+	hint, reject := a.rejectPrematureFinal(l.userQuery, ans.step, ans.raw, l.steps)
+	a.finalHistory = nil
+	if reject {
 		if cbErr := l.cb.RecordInvalid(); cbErr != nil {
 			h, r, err := a.stopOnBreaker(history, l.steps, cbErr)
 			return h, r, true, err
