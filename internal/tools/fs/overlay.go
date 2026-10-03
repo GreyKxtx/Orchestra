@@ -409,7 +409,7 @@ func (o *Overlay) ApplyPatchesToStaged(c *Client, patchList []patches.Patch) err
 		if p.FileHash != "" {
 			current := o.currentHash(relSlash)
 			if current != "" && current != p.FileHash {
-				return protocol.NewError(protocol.StaleContent, "file hash mismatch", map[string]any{
+				return protocol.NewError(protocol.StaleContent, relSlash+" changed since the version this patch's file_hash names — read it again and patch the new version", map[string]any{
 					"path":     relSlash,
 					"expected": p.FileHash,
 					"actual":   current,
@@ -430,12 +430,12 @@ func (o *Overlay) ApplyPatchesToStaged(c *Client, patchList []patches.Patch) err
 			}
 			if p.Conditions != nil {
 				if p.Conditions.MustNotExist && o.fileExistsOnDisk(relSlash) {
-					return protocol.NewError(protocol.AlreadyExists, "file already exists", map[string]any{"path": relSlash})
+					return protocol.NewError(protocol.AlreadyExists, relSlash+" already exists — to replace it pass the file_hash read returns instead of must_not_exist, or change part of it with file.search_replace", map[string]any{"path": relSlash})
 				}
 				if p.Conditions.FileHash != "" {
 					current := o.currentHash(relSlash)
 					if current != "" && current != p.Conditions.FileHash {
-						return protocol.NewError(protocol.StaleContent, "file hash mismatch in write_atomic conditions", map[string]any{
+						return protocol.NewError(protocol.StaleContent, relSlash+" changed since the version this write's file_hash names — read it again and pass the new file_hash", map[string]any{
 							"path":     relSlash,
 							"expected": p.Conditions.FileHash,
 							"actual":   current,

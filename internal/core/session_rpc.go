@@ -464,6 +464,9 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 	inTodos := sess.CopyTodos()
 	planPath := sessionPlanPathLocked(sess, params.Mode)
 	turnStart := len(inHistory)
+	// What came before this message, for the auto-router: taken before the
+	// message itself joins the chat.
+	earlier := earlierExchange(sess.UIMessages())
 	if resumed == nil {
 		sess.AppendUIMessage(buildUserUIMessage(params.Content, params.Attachments))
 		// Record where this user turn's agent output will begin. This is the only
@@ -554,6 +557,7 @@ func (c *Core) SessionMessage(ctx context.Context, params SessionMessageParams) 
 		PlanPath:            planPath,
 		SessionID:           params.SessionID,
 		Query:               agentQuery,
+		Earlier:             earlier,
 		Apply:               params.Apply,
 		Backup:              params.Backup,
 		AllowExec:           params.AllowExec,

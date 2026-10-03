@@ -300,8 +300,50 @@ func (a *Agent) commitStagedAfterMutatingTool(ctx context.Context, steps int, to
 			a.opts.AgentLogger.LogDiskCommit(d.Path, len(d.After), "")
 		}
 	}
+	a.turnCommitted = mergeApplyResponses(a.turnCommitted, resp)
 	a.logf("incremental commit path=%s files=%d", toolPath, len(resp.ChangedFiles))
 	a.emitPendingOpsEvent(steps, a.tools.StagedOps(a.staging()), resp.Diffs, true)
+}
+
+// mergeApplyResponses is a then b as one change set: every file once, in the
+// order it was first touched, from its first Before to its last After. A file
+// that ended where it began is no change. A nil side gives back the other.
+func mergeApplyResponses(a, b *tools.FSApplyOpsResponse) *tools.FSApplyOpsResponse {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	out := &tools.FSApplyOpsResponse{Applied: a.Applied || b.Applied}
+	at := map[string]int{}
+	for _, d := range append(append([]applier.FileDiff{}, a.Diffs...), b.Diffs...) {
+		if i, ok := at[d.Path]; ok {
+			out.Diffs[i].After = d.After
+			continue
+		}
+		at[d.Path] = len(out.Diffs)
+		out.Diffs = append(out.Diffs, d)
+	}
+	diffs := out.Diffs[:0]
+	unchanged := map[string]bool{}
+	for _, d := range out.Diffs {
+		if d.Before == d.After {
+			unchanged[d.Path] = true
+			continue
+		}
+		diffs = append(diffs, d)
+	}
+	out.Diffs = diffs
+	seen := map[string]bool{}
+	for _, p := range append(append([]string{}, a.ChangedFiles...), b.ChangedFiles...) {
+		if seen[p] || unchanged[p] {
+			continue
+		}
+		seen[p] = true
+		out.ChangedFiles = append(out.ChangedFiles, p)
+	}
+	return out
 }
 
 // previewStagedAfterMutatingTool emits pending_ops (dry-run) after each successful

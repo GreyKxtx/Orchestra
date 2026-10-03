@@ -42,6 +42,9 @@ type agentLaunchSpec struct {
 	// OnGraphChange follows the turn's task graph (the run's checkpoint).
 	OnGraphChange func()
 	Query         string // user turn text; used by mode=agent auto-router
+	// Earlier is the conversation's last exchange before Query, for the
+	// auto-router: a short reply is routed by the work it continues.
+	Earlier string
 
 	Apply     bool
 	Backup    bool
@@ -427,7 +430,7 @@ func (c *Core) routeTurn(ctx context.Context, p *turnPrep) {
 	if !strings.EqualFold(p.requestedMode, string(agent.ModeAgent)) {
 		return
 	}
-	dec := c.classifyAgentMode(ctx, p.spec.Query, p.agentLogger)
+	dec := c.classifyAgentMode(ctx, p.spec.Query, p.spec.Earlier, p.agentLogger)
 	p.effectiveMode, p.routeReason, p.routeConfidence = dec.Mode, dec.Reason, dec.Confidence
 	if mode, kept := agent.ModeForRoutedTurn(p.effectiveMode, p.allowBrowser); kept {
 		p.routeReason = fmt.Sprintf("the browser is on and %s mode has no browser tools; router: %s", p.effectiveMode, p.routeReason)
@@ -611,13 +614,13 @@ func skillsAllowedInMode(mode string) bool {
 	}
 }
 
-func (c *Core) classifyAgentMode(ctx context.Context, query string, logger *llm.Logger) autorouter.Decision {
+func (c *Core) classifyAgentMode(ctx context.Context, query, earlier string, logger *llm.Logger) autorouter.Decision {
 	fallback := autorouter.HeuristicClassify(query)
 	if c.cfg == nil || !c.cfg.AutoRouter.ResolvedEnabled() {
 		return fallback
 	}
 	client := c.autoRouterClient(logger)
-	return autorouter.Classify(ctx, client, query)
+	return autorouter.ClassifyInContext(ctx, client, query, earlier)
 }
 
 func (c *Core) autoRouterClient(logger *llm.Logger) llm.Client {

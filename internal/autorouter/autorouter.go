@@ -23,6 +23,10 @@ type Decision struct {
 func HeuristicClassify(query string) Decision {
 	q := strings.ToLower(strings.TrimSpace(query))
 	switch {
+	// "Задай мне вопрос" asks the assistant to question the user before the
+	// work: it goes on with the work, it is not a question about the code.
+	case containsAny(q, "задай мне", "задавай мне", "спроси меня", "ask me"):
+		return Decision{Mode: "plan", Confidence: 0.6, Reason: "heuristic: the user wants to be asked before the work"}
 	case containsAny(q, "спланируй", "план ", "plan ", "architecture", "design ", "как лучше", "roadmap"):
 		return Decision{Mode: "plan", Confidence: 0.7, Reason: "heuristic: planning keywords"}
 	case containsAny(q, "найди", "где ", "find ", "search ", "locate ", "кто использует", "where is", "explore ", "покажи файл"):
@@ -51,6 +55,13 @@ var ClassifyTimeout = 30 * time.Second
 
 // Classify uses a one-shot LLM JSON reply, falling back to HeuristicClassify.
 func Classify(ctx context.Context, client llm.Client, query string) Decision {
+	return ClassifyInContext(ctx, client, query, "")
+}
+
+// ClassifyInContext is Classify with the conversation's earlier exchange in
+// view. "Да", "продолжай", "задай мне вопрос" mean nothing on their own: the
+// router saw only the new message and sent a build conversation to ask mode.
+func ClassifyInContext(ctx context.Context, client llm.Client, query, earlier string) Decision {
 	fallback := HeuristicClassify(query)
 	if client == nil || strings.TrimSpace(query) == "" {
 		return fallback
@@ -64,7 +75,7 @@ func Classify(ctx context.Context, client llm.Client, query string) Decision {
 	resp, err := client.Complete(ctx, llm.CompleteRequest{
 		Messages: []llm.Message{
 			{Role: llm.RoleSystem, Content: system},
-			{Role: llm.RoleUser, Content: query},
+			{Role: llm.RoleUser, Content: routerMessage(query, earlier)},
 		},
 	})
 	if err != nil || resp == nil {
@@ -89,6 +100,15 @@ func Classify(ctx context.Context, client llm.Client, query string) Decision {
 		dec.Confidence = fallback.Confidence
 	}
 	return dec
+}
+
+// routerMessage is the query, after the earlier exchange when there is one.
+func routerMessage(query, earlier string) string {
+	earlier = strings.TrimSpace(earlier)
+	if earlier == "" {
+		return query
+	}
+	return "Earlier in this conversation:\n" + earlier + "\n\nThe new message to route:\n" + query
 }
 
 func parseDecision(raw string) (Decision, bool) {
@@ -118,4 +138,5 @@ const defaultRouterPrompt = `You route coding assistant turns. Reply with ONLY J
 - plan: design/architecture/roadmap without editing yet
 - explore: find/search/locate files and symbols
 - ask: explain/describe how code works (Q&A, no edits)
+A message that continues earlier work (yes, go on, an answer, "ask me questions first") takes that work's mode.
 No markdown.`

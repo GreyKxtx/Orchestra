@@ -52,25 +52,37 @@ func unknownWorkspacePaths(answer, workspaceRoot, known string) []string {
 	}
 	text := fencedBlock.ReplaceAllString(stripThinkBlocks(answer), " ")
 
-	type candidate struct{ raw, rel string }
+	type candidate struct {
+		raw, rel   string
+		start, end int
+		exists     bool
+	}
 	var candidates []candidate
-	describesWorkspace := false
-	for _, raw := range pathCandidate.FindAllString(text, -1) {
+	for _, at := range pathCandidate.FindAllStringIndex(text, -1) {
+		raw := text[at[0]:at[1]]
 		if rel, ok := groundingCandidate(raw, text); ok {
-			candidates = append(candidates, candidate{raw, rel})
-			describesWorkspace = describesWorkspace || pathExistsIn(root, rel)
+			candidates = append(candidates, candidate{raw, rel, at[0], at[1], pathExistsIn(root, rel)})
 		}
+	}
+	// listedWithReal: the candidate stands in one enumeration with a path that
+	// exists ("internal/agent and pkg/mcp") — the answer is listing directories.
+	listedWithReal := func(i int) bool {
+		if i > 0 && candidates[i-1].exists && onlyListSeparator(text[candidates[i-1].end:candidates[i].start]) {
+			return true
+		}
+		return i+1 < len(candidates) && candidates[i+1].exists &&
+			onlyListSeparator(text[candidates[i].end:candidates[i+1].start])
 	}
 
 	seen := make(map[string]bool)
 	var out []string
-	for _, c := range candidates {
+	for i, c := range candidates {
 		raw, rel := c.raw, c.rel
 		if seen[rel] {
 			continue
 		}
 		seen[rel] = true
-		if pathExistsIn(root, rel) || !markedAsPath(raw, rel, text, describesWorkspace) {
+		if c.exists || !(listedWithReal(i) || markedAsPath(raw, rel, text)) {
 			continue
 		}
 		if known != "" && strings.Contains(known, rel) {
@@ -118,25 +130,37 @@ func groundingCandidate(raw, text string) (string, bool) {
 // markedAsPath tells a path from two words joined by a slash. "pkg/mcp" and
 // "combobox/dropdown" have the same shape, and a wrong complaint makes the
 // model rewrite a correct answer, so a two-segment name counts only when
-// something marks it as a path: the answer names a real path beside it (it is
-// describing the workspace), code formatting, a dot (an extension, a dot
+// something marks it as a path: code formatting, a dot (an extension, a dot
 // directory), a third segment, or its first segment named as a directory again
-// — the way an invented tree lists "pkg/" and "pkg/mcp".
+// — the way an invented tree lists "pkg/" and "pkg/mcp". A real path elsewhere
+// in the answer is not such a mark: "sample/eval" beside internal/agent/agent.go
+// is still two words.
 //
 // Two capitalised words ("Build Tools/MinGW", "Canvas2D/WebGL", "TCP/IP") are a
 // choice between names, not a directory, unless code formatting says otherwise.
-func markedAsPath(raw, rel, text string, describesWorkspace bool) bool {
+func markedAsPath(raw, rel, text string) bool {
 	if i := strings.Index(text, raw); i > 0 && text[i-1] == '`' {
 		return true
 	}
 	if capitalisedAlternatives.MatchString(rel) {
 		return false
 	}
-	if describesWorkspace || strings.Count(rel, "/") >= 2 || strings.Contains(rel, ".") {
+	if strings.Count(rel, "/") >= 2 || strings.Contains(rel, ".") {
 		return true
 	}
 	first, _, _ := strings.Cut(rel, "/")
 	return countDirMentions(text, first+"/") >= 2
+}
+
+// onlyListSeparator: the text between two names is nothing but the joint of a
+// list — a comma, "and", "or", in English or Russian.
+func onlyListSeparator(gap string) bool {
+	w := strings.ToLower(strings.Trim(gap, " 	`*,;"))
+	switch w {
+	case "", "and", "or", "и", "или":
+		return true
+	}
+	return false
 }
 
 var capitalisedAlternatives = regexp.MustCompile(`^[A-Z][A-Za-z0-9]*/[A-Z][A-Za-z0-9]*$`)

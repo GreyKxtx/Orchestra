@@ -23,9 +23,8 @@ func mergeAgentResults(first, second *Result) *Result {
 	if len(second.Ops) > 0 {
 		merged.Ops = second.Ops
 	}
-	if second.ApplyResponse != nil {
-		merged.ApplyResponse = second.ApplyResponse
-	}
+	// Both halves may have written files; the turn changed all of them.
+	merged.ApplyResponse = mergeApplyResponses(first.ApplyResponse, second.ApplyResponse)
 	merged.Applied = second.Applied || first.Applied
 	// Either run may have rewritten the shared history array; the caller
 	// persists whatever the LAST one returned, so the flag has to survive a

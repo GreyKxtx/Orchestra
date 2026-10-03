@@ -75,6 +75,9 @@ func TestUnknownWorkspacePaths_LeavesInnocentTextAlone(t *testing.T) {
 		// for naming "combobox/dropdown" as a path.
 		"two words joined by a slash": "3. **Plan** - a combobox/dropdown with three options: Free, Pro, Team",
 		"and/or":                      "Fill the name and/or the email.",
+		// Seen live on the 27B: an answer that named a real file beside it got
+		// "sample/eval" sent back as an invented path.
+		"word/word beside a real path": "internal/agent/agent.go runs the loop; the sample/eval split is 80/20.",
 	}
 	for name, answer := range cases {
 		if got := unknownWorkspacePaths(answer, root, ""); len(got) != 0 {

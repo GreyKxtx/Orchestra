@@ -61,6 +61,27 @@ func (c *Client) fileKnown(relSlash string) bool {
 	return err == nil
 }
 
+// versionHash is the hash of the file as the caller sees it: staged, or on
+// disk. Empty when there is no such file.
+func (c *Client) versionHash(relSlash string) string {
+	if c.Overlay != nil {
+		return c.Overlay.currentHash(relSlash)
+	}
+	return diskHash(c.Root, relSlash)
+}
+
+// currentText is the file as the caller sees it: staged, or on disk.
+func (c *Client) currentText(relSlash string) (string, bool) {
+	if c.Overlay != nil {
+		return c.Overlay.currentContent(c, relSlash)
+	}
+	b, err := os.ReadFile(filepath.Join(c.Root, filepath.FromSlash(relSlash)))
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
 // gateSyntax rejects content that does not parse, when the AST gate is on.
 //
 // Overlay.stageFile has always done this, which covered the dry-run path and

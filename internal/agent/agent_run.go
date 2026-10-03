@@ -64,6 +64,12 @@ func (a *Agent) run(ctx context.Context, history []llm.Message, userQuery string
 	defer func() {
 		if result != nil {
 			result.HistoryRewritten = l.historyRewritten
+			// Every return path, the breaker's and max_steps' included, reports
+			// what the turn already committed beside what its final applied.
+			if a.turnCommitted != nil {
+				result.ApplyResponse = mergeApplyResponses(a.turnCommitted, result.ApplyResponse)
+				result.Applied = true
+			}
 		}
 	}()
 
@@ -120,6 +126,7 @@ func (a *Agent) beginTurn(ctx context.Context, userQuery string) {
 	a.todos = append([]tools.TodoItem(nil), a.opts.InitialTodos...)
 	a.turnMutatingTools = 0
 	a.turnMutatedPaths = nil
+	a.turnCommitted = nil
 	a.groundingCorrected = false
 	a.modeSwitchDeclined = false
 	a.codeChangeReminded = false

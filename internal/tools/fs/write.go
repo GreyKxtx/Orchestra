@@ -27,14 +27,42 @@ func (c *Client) Write(ctx context.Context, req FSWriteRequest) (*FSWriteRespons
 	if pathErr != nil {
 		return nil, pathErr
 	}
-	if !req.MustNotExist && fileHash == "" && c.Overlay != nil && !c.Overlay.fileExistsOnDisk(relSlash) {
-		if _, _, ok := c.Overlay.stagedContent(relSlash); !ok {
-			req.MustNotExist = true
+	exists := c.fileKnown(relSlash)
+	// A file only this turn has staged is the model's own draft: writing it
+	// again needs no hash, as it never did.
+	onDisk := exists
+	if c.Overlay != nil {
+		onDisk = c.Overlay.fileExistsOnDisk(relSlash)
+	}
+	if !req.MustNotExist && fileHash == "" && !onDisk {
+		req.MustNotExist = true
+	}
+	// Each refusal below names the file and the call that would succeed: a
+	// local model told only "requires file_hash or must_not_exist" tried
+	// must_not_exist next, on a file that was there.
+	if onDisk && fileHash == "" {
+		code := protocol.InvalidLLMOutput
+		if req.MustNotExist {
+			code = protocol.AlreadyExists
+		}
+		return nil, protocol.NewError(code,
+			"fs.write: "+relSlash+" already exists, and write replaces all of it — "+
+				"read it first and pass the file_hash read returns, or use edit to change part of it",
+			map[string]any{"path": relSlash})
+	}
+	if exists && fileHash != "" {
+		if current := c.versionHash(relSlash); current != "" && current != fileHash {
+			return nil, protocol.NewError(protocol.StaleContent,
+				"fs.write: "+relSlash+" changed since the version your file_hash names "+
+					"(a write or edit after you read it) — read it again and pass the new file_hash",
+				map[string]any{"path": relSlash, "expected": fileHash, "actual": current})
 		}
 	}
-	if !req.MustNotExist && fileHash == "" {
-		return nil, protocol.NewError(protocol.InvalidLLMOutput,
-			"fs.write requires file_hash (for overwrite) or must_not_exist=true (for create)", nil)
+	if exists {
+		current, _ := c.currentText(relSlash)
+		req.Content = c.fitLineEndings(relSlash, req.Content, current, true)
+	} else {
+		req.Content = c.fitLineEndings(relSlash, req.Content, "", false)
 	}
 	// A file_hash for a file that does not exist is a create dressed as an
 	// overwrite — the model has just read some other file and pasted its hash,

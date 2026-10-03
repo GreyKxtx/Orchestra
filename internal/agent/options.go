@@ -649,6 +649,12 @@ type Agent struct {
 	// what this turn has already touched.
 	turnMutatedPaths map[string]bool
 
+	// turnCommitted is what this Run already wrote to disk under Apply, one
+	// mutating tool at a time. The final's own apply sees only what is still
+	// staged, so without it the Result of a turn that changed files said it
+	// changed none.
+	turnCommitted *tools.FSApplyOpsResponse
+
 	// groundingCorrected records that this turn already sent the answer back
 	// once for naming paths the workspace does not have. One correction only:
 	// a model that will not ground itself must not spend the window trying.
