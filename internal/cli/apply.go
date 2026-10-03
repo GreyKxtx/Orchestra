@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,6 +30,7 @@ import (
 	"github.com/orchestra/orchestra/protocol"
 	"github.com/orchestra/orchestra/protocol/jsonrpc"
 	"github.com/orchestra/orchestra/protocol/schema"
+	"github.com/orchestra/orchestra/protocol/wire"
 	"github.com/spf13/cobra"
 )
 
@@ -626,13 +628,21 @@ func runApplyInProcess(ctx context.Context, cfg *config.ProjectConfig, params co
 
 // printModeRoute tells the terminal where mode=agent sent the turn.
 func printModeRoute(method string, params any) {
-	m, ok := params.(map[string]any)
-	if method != "agent/event" || !ok || m["type"] != "mode_route" {
+	printModeRouteTo(os.Stderr, method, params)
+}
+
+// printModeRouteTo reads the core's typed notification; a switch the user
+// approved arrives the same way, with from the mode the turn left.
+func printModeRouteTo(w io.Writer, method string, params any) {
+	ev, ok := params.(wire.AgentEvent)
+	if method != wire.NotifyAgentEvent || !ok || ev.Type != wire.EventModeRoute {
 		return
 	}
-	data, _ := m["data"].(map[string]any)
-	conf, _ := data["confidence"].(float64)
-	fmt.Fprintf(os.Stderr, "[auto_router] agent → %v (%.0f%%) %v\n", data["to"], conf*100, data["reason"])
+	r, ok := ev.Data.(wire.ModeRoute)
+	if !ok {
+		return
+	}
+	fmt.Fprintf(w, "[auto_router] %s → %s (%.0f%%) %s\n", r.From, r.To, r.Confidence*100, r.Reason)
 }
 
 // takeCoreResult turns a core run's result into what apply records and

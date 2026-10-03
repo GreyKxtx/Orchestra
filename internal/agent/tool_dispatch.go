@@ -33,10 +33,11 @@ func (a *Agent) resolveToolCalls(step *Step, llmResp *llm.CompleteResponse) []To
 	if len(step.Tools) > 0 {
 		out := make([]ToolCall, len(step.Tools))
 		for i, tc := range step.Tools {
+			name := digest.NormalizeToolName(tc.Name)
 			out[i] = ToolCall{
 				ID:    tc.ID,
-				Name:  digest.NormalizeToolName(tc.Name),
-				Input: tc.Input,
+				Name:  name,
+				Input: a.coerceArgs(name, tc.Input),
 			}
 		}
 		return out
@@ -44,12 +45,24 @@ func (a *Agent) resolveToolCalls(step *Step, llmResp *llm.CompleteResponse) []To
 	if step.Tool != nil {
 		tc := *step.Tool
 		tc.Name = digest.NormalizeToolName(tc.Name)
+		tc.Input = a.coerceArgs(tc.Name, tc.Input)
 		if tc.ID == "" && llmResp != nil && len(llmResp.Message.ToolCalls) > 0 {
 			tc.ID = llmResp.Message.ToolCalls[0].ID
 		}
 		return []ToolCall{tc}
 	}
 	return nil
+}
+
+// coerceArgs unwraps arguments sent as JSON strings where the tool's schema
+// wants an array or an object (tool_args.go).
+func (a *Agent) coerceArgs(name string, input json.RawMessage) json.RawMessage {
+	for _, d := range a.buildToolDefs() {
+		if d.Function.Name == name {
+			return coerceStringifiedArgs(input, d)
+		}
+	}
+	return input
 }
 
 // isWebTool is a tool that reaches the network on the model's behalf and needs

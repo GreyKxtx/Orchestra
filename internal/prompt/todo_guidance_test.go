@@ -38,3 +38,24 @@ func TestBuildPrompts_EveryFamilyIsToldAboutTheTodoList(t *testing.T) {
 		t.Errorf("only %d build prompts found; the walk is not covering the set", seen)
 	}
 }
+
+// build-local told the model to finish one todo and end the turn — "the next
+// todo belongs to a NEW user turn" — while the final guard refuses a final with
+// an open todo. A model that obeyed the prompt was refused; one that obeyed
+// the guard ignored the prompt. Live runs on a local 27B did the whole list in
+// one turn either way, so the prompts say that now.
+func TestBuildPrompts_DoTheWholeChecklistInOneTurn(t *testing.T) {
+	for _, name := range []string{"build-local.txt", "build.txt"} {
+		body, err := promptFiles.ReadFile("files/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(body)
+		if strings.Contains(s, "NEW user turn") || strings.Contains(s, "One user turn = one todo") {
+			t.Errorf("%s still ends a turn on an open checklist", name)
+		}
+		if !strings.Contains(s, "report in the user's language") {
+			t.Errorf("%s does not ask for a report after the edits", name)
+		}
+	}
+}

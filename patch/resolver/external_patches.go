@@ -157,7 +157,7 @@ func resolveSearchReplace(projectRoot string, p patches.Patch) (ops.ReplaceRange
 		// whitespace / CRLF that p.Search lacks, and the applier's
 		// strict re-check would otherwise reject.
 		Expected:    string(before[start:end]),
-		Replacement: p.Replace,
+		Replacement: fitReplacement(string(before[start:end]), p.Replace, string(before)),
 		Conditions: ops.Conditions{
 			FileHash:    p.FileHash,
 			AllowFuzzy:  true,
@@ -1157,9 +1157,36 @@ func ApplySearchReplace(content []byte, search, replace string) ([]byte, error) 
 
 	var buf strings.Builder
 	buf.WriteString(s[:start])
-	buf.WriteString(replace)
+	buf.WriteString(fitReplacement(s[start:end], replace, s))
 	buf.WriteString(s[end:])
 	return []byte(buf.String()), nil
+}
+
+// fitReplacement is replace as it goes into file in place of matched: in the
+// file's line endings, and keeping the "\r" a trimmed match took from the end
+// of a CRLF line. The match stops before that line's "\n", so whatever the
+// replacement's last line is — an empty one too, when the search ended with a
+// line break and matched the blank line after it — it needs the "\r" back, or
+// the line is left on a bare LF.
+func fitReplacement(matched, replace, file string) string {
+	r := matchLineEndings(replace, file)
+	if strings.HasSuffix(matched, "\r") && !strings.HasSuffix(r, "\r") {
+		r += "\r"
+	}
+	return r
+}
+
+// matchLineEndings writes replace with the line endings of the file it goes
+// into. A model writes "\n" whatever the file uses; spliced into a CRLF file as
+// is, every edited line ended in a bare LF — a mixed file, and a diff that shows
+// each edit's untouched neighbours as changed. A file that is mostly LF, or
+// has no line breaks, takes replace as it is.
+func matchLineEndings(replace, file string) string {
+	crlf := strings.Count(file, "\r\n")
+	if crlf == 0 || crlf*2 < strings.Count(file, "\n") || !strings.Contains(replace, "\n") {
+		return replace
+	}
+	return strings.ReplaceAll(strings.ReplaceAll(replace, "\r\n", "\n"), "\n", "\r\n")
 }
 
 // ApplyUnifiedDiff applies a unified diff to content. Returns new content, or a

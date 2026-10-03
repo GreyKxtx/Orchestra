@@ -16,6 +16,9 @@ FINAL ANSWER:
 2. Changes through final.patches (only if you did not use edit/write):
    JSON ONLY: {"patches":[{"type":"file.search_replace","path":"...","search":"...","replace":"...","file_hash":"sha256:..."}]}
 
+3. After edit/write:
+   A short report in the user's language — what changed (files, what each change does), how to check it, what is left if anything — then on its own line: {"patches":[]}
+
 PATCH TYPES:
 - file.search_replace — a targeted edit (preferred; file_hash comes from read)
 - file.write_atomic — a new file or a full rewrite
@@ -25,7 +28,7 @@ RULES:
 - Before final.patches on an existing file: read it and use the exact file_hash.
 - edit/write change the file immediately → finish with {"patches":[]} (do not repeat them in patches).
 - Do not make redundant tool calls — once you have what you need, answer.
-- Multi-step work (3+ steps): open it with todowrite and keep exactly one item in_progress.
+- Multi-step work (3+ steps): open it with todowrite and keep exactly one item in_progress. Work through every item in this turn, marking each done as you finish it; an open item blocks the final answer.
 
 LSP: after edit/write, read diagnostics / LSP_ERRORS and fix everything with severity=error.
 

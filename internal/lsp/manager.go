@@ -1275,6 +1275,12 @@ func (m *Manager) locsToTool(locs []Location) []ToolLocation {
 func diagsToTool(diags []Diagnostic) []ToolDiagnostic {
 	out := make([]ToolDiagnostic, 0, len(diags))
 	for _, d := range diags {
+		// gopls between an edit that adds an import and its reload of the
+		// package's metadata: not the code's error, and a model reverted a
+		// correct fix over it. A real missing package reads differently.
+		if strings.Contains(d.Message, "missing metadata for import of") {
+			continue
+		}
 		out = append(out, ToolDiagnostic{
 			StartLine: int(d.Range.Start.Line) + 1,
 			StartCol:  int(d.Range.Start.Character) + 1,

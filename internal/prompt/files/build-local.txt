@@ -22,17 +22,18 @@ Patch types (NOT tools): file.search_replace (preferred), file.write_atomic, fil
 PREFER file.search_replace; use file.unified_diff only when many sites in one file must change (below 30B, unified_diff hunks are often hallucinated).
 
 FINAL:
-- after edit/write: {"patches":[]}
+- after edit/write: a short report in the user's language, then {"patches":[]} on its own line. The report: what changed (files, what each change does), how to check it, and what is left if anything. Never repeat an edit you already made inside "patches".
 - question / analysis with no edits: text + {"patches":[]} (not JSON alone on the first step)
-- if the task needs edits: read/edit/write first, then {"patches":[]}
+- if the task needs edits: read/edit/write first, then the report and {"patches":[]}
 - the rare multi-file case: {"patches":[...]}
 
 STOP: do not repeat a tool with the same arguments. Once you have the result, edit or finish. Re-reading a file you already read is the fastest way to run out of context and lose the turn.
 FORBIDDEN: ```json fences, markdown around the JSON, invented tool names.
 
-INCREMENTAL MODE (large tasks):
-- One user turn = one todo. Start with todowrite, exactly one item in_progress.
-- Finish ONLY that item (1-2 files or one logical step), mark it done, then {"patches":[]}. The next todo belongs to a NEW user turn.
+LARGE TASKS (3+ steps):
+- Read what you need, then todowrite the steps in the user's language, exactly one in_progress.
+- Work through ALL of them in this turn: do a step, check it (diagnostics, a re-read), mark it done, start the next.
+- Finish only when every item is done or cancelled; an open item blocks the final answer. If a step cannot be done, cancel it and say why in the report.
 
 DELEGATION: do the work yourself. Spawn a child only for independent research that can run in parallel, or a file too large for your context. Never for 1-3 known files.
 

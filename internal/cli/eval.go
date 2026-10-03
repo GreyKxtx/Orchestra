@@ -14,6 +14,7 @@ import (
 	"github.com/orchestra/orchestra/internal/core"
 	evalharness "github.com/orchestra/orchestra/internal/eval"
 	"github.com/orchestra/orchestra/llm"
+	"github.com/orchestra/orchestra/protocol/wire"
 	"github.com/spf13/cobra"
 )
 
@@ -42,6 +43,22 @@ func init() {
 	evalCmd.Flags().IntVar(&evalRepeat, "repeat", 1, "Run each task this many times; a task that wins some runs and loses others is reported FLAKY")
 	evalCmd.Flags().BoolVar(&evalKeep, "keep-failed", false, "Leave a failed run's workspace on disk and print where, so its .orchestra/llm_log.jsonl can be read")
 	rootCmd.AddCommand(evalCmd)
+}
+
+// answerCollector gathers the root agent's message_delta text from the core's
+// notifications, which are typed wire.AgentEvent values.
+func answerCollector() (onEvent func(method string, params any), answer func() string) {
+	var b strings.Builder
+	onEvent = func(method string, params any) {
+		ev, ok := params.(wire.AgentEvent)
+		if method != wire.NotifyAgentEvent || !ok || ev.Scope == "child" {
+			return
+		}
+		if ev.Type == string(llm.StreamEventMessageDelta) {
+			b.WriteString(ev.Content)
+		}
+	}
+	return onEvent, b.String
 }
 
 // evalStatus names the outcome of running one task `runs` times, of which
@@ -168,22 +185,7 @@ func runEval(cmd *cobra.Command, args []string) error {
 		// editor panel, the web adapter — builds it by accumulating
 		// message_delta, so the harness does exactly the same rather than
 		// widening the core's result shape for the sake of a test.
-		var answer strings.Builder
-		onEvent := func(method string, params any) {
-			if method != "agent/event" {
-				return
-			}
-			m, ok := params.(map[string]any)
-			if !ok {
-				return
-			}
-			if kind, _ := m["type"].(string); kind != string(llm.StreamEventMessageDelta) {
-				return
-			}
-			if chunk, _ := m["content"].(string); chunk != "" {
-				answer.WriteString(chunk)
-			}
-		}
+		onEvent, answer := answerCollector()
 
 		res, err := c.AgentRun(ctx, core.AgentRunParams{
 			Query:     run.Query,
@@ -196,7 +198,7 @@ func runEval(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return evalharness.AgentOutcome{}, err
 		}
-		return evalharness.AgentOutcome{Steps: res.Steps, Answer: answer.String(), PlanPath: res.PlanPath}, nil
+		return evalharness.AgentOutcome{Steps: res.Steps, Answer: answer(), PlanPath: res.PlanPath}, nil
 	}
 
 	runner := &evalharness.Runner{RunAgent: runAgent, KeepFailed: evalKeep}

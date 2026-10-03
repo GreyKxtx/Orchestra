@@ -49,8 +49,14 @@ func offeredInMode(mode string, caps Capabilities) map[string]bool {
 	for _, name := range []string{"send_message", "agent_post", "task_board"} {
 		offered[name] = true
 	}
-	if spec, _ := roles.Lookup(mode); !spec.ReadOnly() && !spec.Tools.Lead {
+	spec, _ := roles.Lookup(mode)
+	if !spec.ReadOnly() && !spec.Tools.Lead {
 		offered["skill_invoke"] = true
+	}
+	// The agent appends mode_switch to a top-level turn with a user to ask,
+	// the Lead's budgeted list excepted (agent/mode_switch.go).
+	if spec.Kind == roles.TopLevel && !spec.Tools.Lead {
+		offered["mode_switch"] = true
 	}
 	return offered
 }

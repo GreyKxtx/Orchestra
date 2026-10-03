@@ -747,3 +747,96 @@ func TestBlockAnchorFind_Ambiguous(t *testing.T) {
 		t.Fatalf("hits: want 2, got %d", hits)
 	}
 }
+
+// A model writes its replacement with "\n" whatever the file uses. Spliced
+// into a CRLF file as is, every edited line ended in a bare LF: a mixed file,
+// and a diff that shows the untouched neighbours of each edit as changed.
+func TestApplySearchReplace_KeepsTheFilesLineEndings(t *testing.T) {
+	crlf := []byte("a {\r\n  x: 1;\r\n}\r\n")
+	got, err := ApplySearchReplace(crlf, "  x: 1;\n", "  x: 1;\n  y: 2;\n")
+	if err != nil {
+		t.Fatalf("ApplySearchReplace: %v", err)
+	}
+	if want := "a {\r\n  x: 1;\r\n  y: 2;\r\n}\r\n"; string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	lf := []byte("a {\n  x: 1;\n}\n")
+	got, err = ApplySearchReplace(lf, "  x: 1;\n", "  x: 1;\n  y: 2;\n")
+	if err != nil || string(got) != "a {\n  x: 1;\n  y: 2;\n}\n" {
+		t.Fatalf("an LF file must stay LF: %q, %v", got, err)
+	}
+}
+
+func TestResolveSearchReplace_KeepsTheFilesLineEndings(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.css"), []byte("a {\r\n  x: 1;\r\n}\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	op, err := resolveSearchReplace(root, patches.Patch{Type: patches.TypeFileSearchReplace, Path: "a.css", Search: "  x: 1;\n", Replace: "  x: 1;\n  y: 2;\n"})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if op.Replacement != "  x: 1;\r\n  y: 2;\r\n" {
+		t.Fatalf("Replacement = %q", op.Replacement)
+	}
+}
+
+// The forgiving match takes a line's trailing "\r" as whitespace and includes
+// it in the range; a replacement that ends without one left the next "\n"
+// alone — "</head>" on a bare LF after a <style> block was replaced.
+func TestApplySearchReplace_KeepsTheCRTheMatchSwallowed(t *testing.T) {
+	file := []byte("<head>\r\n  <style>x</style>\r\n</head>\r\n")
+	got, err := ApplySearchReplace(file, "  <style>x</style>", "  <link href=\"s.css\">")
+	if err != nil {
+		t.Fatalf("ApplySearchReplace: %v", err)
+	}
+	if want := "<head>\r\n  <link href=\"s.css\">\r\n</head>\r\n"; string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// The live case: a search that ends mid-line ("</head>") over a CRLF file
+// whose lines the forgiving pass matched trimmed.
+func TestApplySearchReplace_KeepsCRLFAfterATrimmedMatch(t *testing.T) {
+	file := []byte("<head>\r\n  <title>t</title>\r\n  <style>\r\n    a {}  \r\n  </style>\r\n</head>\r\n<body>\r\n")
+	got, err := ApplySearchReplace(file, "  <title>t</title>\n  <style>\n    a {}\n  </style>\n</head>", "  <title>t</title>\n  <link href=\"s.css\">\n</head>")
+	if err != nil {
+		t.Fatalf("ApplySearchReplace: %v", err)
+	}
+	if want := "<head>\r\n  <title>t</title>\r\n  <link href=\"s.css\">\r\n</head>\r\n<body>\r\n"; string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// The live case behind a stray blank line: the search ends with "\n", the
+// trimmed match stops before the file's line break, and the replacement's own
+// trailing "\n" landed in front of it — two line breaks where there was one.
+func TestApplySearchReplace_NoStrayBlankLineAfterATrimmedMatch(t *testing.T) {
+	file := []byte("<b>r</b>\r\n<b>p</b>\r\n<div>\r\n")
+	got, err := ApplySearchReplace(file, "<b>r</b>\n<b>p</b>\n", "<b>r</b>\n<b>p</b>\n<b>s</b>\n")
+	if err != nil {
+		t.Fatalf("ApplySearchReplace: %v", err)
+	}
+	if want := "<b>r</b>\r\n<b>p</b>\r\n<b>s</b>\r\n<div>\r\n"; string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	lf := []byte("<b>r</b>  \n<b>p</b>  \n<div>\n")
+	got, err = ApplySearchReplace(lf, "<b>r</b>\n<b>p</b>\n", "<b>r</b>\n<b>p</b>\n<b>s</b>\n")
+	if err != nil || string(got) != "<b>r</b>\n<b>p</b>\n<b>s</b>\n<div>\n" {
+		t.Fatalf("LF file with trailing spaces: %q, %v", got, err)
+	}
+}
+
+// Replayed from a live run: the search ended with "\n", the line-trimmed match
+// took the blank line after it as the search's last (empty) line, and that
+// blank line was left on a bare LF.
+func TestApplySearchReplace_KeepsTheBlankLineATrimmedMatchTook(t *testing.T) {
+	file := []byte("  <b>r</b>\r\n  <b>p</b>\r\n\r\n  <label>\r\n")
+	got, err := ApplySearchReplace(file, "  <b>r</b>\n  <b>p</b>\n", "  <b>r</b>\n  <b>p</b>\n  <b>s</b>\n")
+	if err != nil {
+		t.Fatalf("ApplySearchReplace: %v", err)
+	}
+	if want := "  <b>r</b>\r\n  <b>p</b>\r\n  <b>s</b>\r\n\r\n  <label>\r\n"; string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
