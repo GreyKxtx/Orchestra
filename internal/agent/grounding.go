@@ -56,12 +56,16 @@ func unknownWorkspacePaths(answer, workspaceRoot, known string) []string {
 		raw, rel   string
 		start, end int
 		exists     bool
+		itemHead   bool // the first thing in a list item
 	}
 	var candidates []candidate
+	realItemHead := false
 	for _, at := range pathCandidate.FindAllStringIndex(text, -1) {
 		raw := text[at[0]:at[1]]
 		if rel, ok := groundingCandidate(raw, text); ok {
-			candidates = append(candidates, candidate{raw, rel, at[0], at[1], pathExistsIn(root, rel)})
+			c := candidate{raw, rel, at[0], at[1], pathExistsIn(root, rel), startsListItem(text, at[0])}
+			realItemHead = realItemHead || (c.exists && c.itemHead)
+			candidates = append(candidates, c)
 		}
 	}
 	// listedWithReal: the candidate stands in one enumeration with a path that
@@ -82,10 +86,13 @@ func unknownWorkspacePaths(answer, workspaceRoot, known string) []string {
 			continue
 		}
 		seen[rel] = true
-		if c.exists || !(listedWithReal(i) || markedAsPath(raw, rel, text)) {
+		// In a list whose items start with real paths, an item that starts
+		// with a path is one too.
+		inPathList := realItemHead && c.itemHead
+		if c.exists || !(inPathList || listedWithReal(i) || markedAsPath(raw, rel, text)) {
 			continue
 		}
-		if known != "" && strings.Contains(known, rel) {
+		if known != "" && (strings.Contains(known, rel) || namesFromTheConversation(rel, known)) {
 			continue
 		}
 		// A missing file inside a directory that exists is not an invented
@@ -150,6 +157,49 @@ func markedAsPath(raw, rel, text string) bool {
 	}
 	first, _, _ := strings.Cut(rel, "/")
 	return countDirMentions(text, first+"/") >= 2
+}
+
+// namesFromTheConversation: a two-segment name with no extension whose halves
+// the conversation already holds as words — "cx/cy" after reading code that
+// declares cx and cy — is a pair of names, not a directory.
+func namesFromTheConversation(rel, known string) bool {
+	first, second, ok := strings.Cut(rel, "/")
+	if !ok || strings.Contains(second, "/") || strings.Contains(rel, ".") {
+		return false
+	}
+	return hasWord(known, first) && hasWord(known, second)
+}
+
+// hasWord: s contains w with no identifier character on either side.
+func hasWord(s, w string) bool {
+	if w == "" {
+		return false
+	}
+	for i := 0; ; {
+		j := strings.Index(s[i:], w)
+		if j < 0 {
+			return false
+		}
+		at := i + j
+		end := at + len(w)
+		if (at == 0 || !isIdentChar(s[at-1])) && (end == len(s) || !isIdentChar(s[end])) {
+			return true
+		}
+		i = at + 1
+	}
+}
+
+func isIdentChar(c byte) bool {
+	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+}
+
+// listItemPrefix is the start of a Markdown list item, up to its first word.
+var listItemPrefix = regexp.MustCompile("^[ \\t]*(?:[-*+]|[0-9]+[.)])[ \\t]+[`*]*$")
+
+// startsListItem: the text before at, on its line, is only a list marker.
+func startsListItem(text string, at int) bool {
+	lineStart := strings.LastIndexByte(text[:at], '\n') + 1
+	return listItemPrefix.MatchString(text[lineStart:at])
 }
 
 // onlyListSeparator: the text between two names is nothing but the joint of a

@@ -12,6 +12,7 @@ Prefer ask for "explain/what does/how does" without asking to change code.
 Prefer explore for "where is / find / who uses".
 Prefer plan when the user asks for a plan or design before implementation.
 Prefer build for clear implementation requests.
+Running a command (bash, tests, a build, node, npm, a count of lines) needs build: explore and ask cannot run commands.
 When the message comes after "Earlier in this conversation", route the work, not the words:
 - A short continuation — yes, go on, do it, an answer to the assistant's question — takes the mode of the work the conversation is doing.
 - "Ask me questions" / "ask me first", in any language, asks YOU to question the user before the work. It is never ask mode: pick the mode of that work (build, or plan when nothing has been built yet).

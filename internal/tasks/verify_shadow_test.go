@@ -47,7 +47,9 @@ func TestAcceptanceChecks_RunInThePreviewsShadow(t *testing.T) {
 	t.Setenv("ORCHESTRA_VERIFY_HELPER_FILE", "a.txt")
 	r := &TaskRunner{toolRunner: tr}
 	r.child.Caps.Exec = true
-	cmd := os.Args[0] + " -test.run=TestVerifyHelper$ -test.count=1"
+	// Quoted: a Windows path's backslashes are escapes to bash (Git Bash runs
+	// the checks where it is installed).
+	cmd := `"` + os.Args[0] + `" -test.run=TestVerifyHelper$ -test.count=1`
 	out := r.runAcceptanceChecksAt(ctx, []AcceptanceCheck{{Cmd: cmd, ExpectExit: 0, ExpectStdout: "staged"}})
 	if len(out) != 1 || out[0].Skip || !out[0].OK {
 		t.Fatalf("the check must run in the shadow and see the staged edit: %+v", out)

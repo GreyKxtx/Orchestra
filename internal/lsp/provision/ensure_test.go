@@ -30,6 +30,7 @@ func (f *fakeInstaller) Install(ctx context.Context, e registry.Entry, destDir s
 }
 
 func TestEnsure_Gopls_FakeInstaller(t *testing.T) {
+	noServersOnPath(t)
 	cache := filepath.Join(t.TempDir(), "cache")
 	t.Setenv("ORCHESTRA_LSP_CACHE", cache)
 	fake := &fakeInstaller{}

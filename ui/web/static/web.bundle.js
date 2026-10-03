@@ -5539,6 +5539,11 @@
     if (!messagesEl) {
       return null;
     }
+    // A saved answer is the stream as it came, the closing {"patches":[]}
+    // included: the live bubble strips it, so a reopened chat must too.
+    if (role === "assistant" && typeof text === "string") {
+      text = stripFinalEnvelope(text);
+    }
     const el = document.createElement("div");
     el.className = `msg ${role}`;
     if (role === "user") {
@@ -9426,6 +9431,11 @@
   // person sent mid-turn, the agent's words continue in a new bubble below it,
   // and that bubble must not repeat what was said above it.
   const turnTextShownFrom = new Map();
+  // Where the current step's words start in turnTextByProject. A final the
+  // core refuses (step_done "invalid": a path it could not find, an open
+  // checklist) was already streamed; the model then answers again, and both
+  // answers ended up glued together on screen and in the session file.
+  const turnStepTextFrom = new Map();
   /** @type {Map<string, Map<string, any>>} */
   const liveToolBlocksByProject = new Map();
   // The rest of the turn, kept for the same reason: the core records the
@@ -9551,6 +9561,21 @@
     const blocks = blocksForProject(projectId);
 
     switch (ev.type) {
+      case "step_done":
+        if (!isChild) {
+          let acc = turnTextByProject.get(projectId) || "";
+          if (ev.content === "invalid") {
+            const from = Math.max(turnStepTextFrom.get(projectId) || 0, turnTextShownFrom.get(projectId) || 0);
+            if (from < acc.length) {
+              acc = acc.slice(0, from);
+              turnTextByProject.set(projectId, acc);
+              toRenderer({ type: "deltaSync", content: acc.slice(turnTextShownFrom.get(projectId) || 0) });
+            }
+          }
+          turnStepTextFrom.set(projectId, acc.length);
+        }
+        break;
+
       case "message_delta":
         if (ev.content && !isChild) {
           const acc = (turnTextByProject.get(projectId) || "") + ev.content;
@@ -9890,6 +9915,7 @@
     if (ev.data && ev.data.type === "turnStart") {
       turnTextByProject.set(currentProjectId, "");
       turnTextShownFrom.set(currentProjectId, 0);
+      turnStepTextFrom.set(currentProjectId, 0);
       turnReasoningByProject.set(currentProjectId, "");
       turnToolsByProject.set(currentProjectId, []);
       turnUsageByProject.delete(currentProjectId);

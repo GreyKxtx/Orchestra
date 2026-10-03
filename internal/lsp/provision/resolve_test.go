@@ -45,6 +45,7 @@ func TestResolve_MissingKnownBinary(t *testing.T) {
 }
 
 func TestResolve_CacheHit(t *testing.T) {
+	noServersOnPath(t)
 	cache := filepath.Join(t.TempDir(), "cache")
 	t.Setenv("ORCHESTRA_LSP_CACHE", cache)
 	e, ok := registry.ByID("gopls")

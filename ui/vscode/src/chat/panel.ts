@@ -70,6 +70,12 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
   private readonly disposables: vscode.Disposable[] = [];
   /** Streamed assistant text for the active LLM step (reset after each tool batch). */
   private turnAssistantText = "";
+  /**
+   * Where the current step's words start in turnAssistantText. A final the
+   * core refuses (step_done "invalid") was already streamed; the model then
+   * answers again, and the two answers were glued together.
+   */
+  private turnStepTextFrom = 0;
   /** Committed prose segments before tool blocks within the same user turn. */
   private turnAssistantSegments: string[] = [];
   private turnReasoning = "";
@@ -961,7 +967,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
             provider: msg.provider,
           });
           void vscode.window.showInformationMessage(
-            `Orchestra model: ${res.model}${res.persisted ? " (saved)" : ""}`
+            t(res.persisted ? "model.set_saved" : "model.set", { model: res.model })
           );
           await this.refreshHeaderAndHistory();
           return;
@@ -1261,6 +1267,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
   private resetTurnProjection(): void {
     this.flushDeltaSync(false);
     this.turnAssistantText = "";
+    this.turnStepTextFrom = 0;
     this.turnAssistantSegments = [];
     this.turnReasoning = "";
     this.turnToolBlocks.clear();
@@ -1495,6 +1502,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       this.turnAssistantSegments.push(seg);
     }
     this.turnAssistantText = "";
+    this.turnStepTextFrom = 0;
   }
 
   private assistantVisibleText(): string {
@@ -1689,6 +1697,17 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           lessonPromoteSuggestion: event.lesson_promote_suggestion,
           playbookPromoteSuggestion: event.playbook_promote_suggestion,
         });
+        break;
+      case "step_done":
+        if (event.scope !== "child") {
+          if (event.content === "invalid" && this.turnStepTextFrom < this.turnAssistantText.length) {
+            this.turnAssistantText = this.turnAssistantText.slice(0, this.turnStepTextFrom);
+            if (render) {
+              this.scheduleDeltaSync();
+            }
+          }
+          this.turnStepTextFrom = this.turnAssistantText.length;
+        }
         break;
       case "message_delta":
         if (event.content && event.scope !== "child") {

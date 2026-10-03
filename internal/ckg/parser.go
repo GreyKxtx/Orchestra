@@ -352,7 +352,7 @@ func parseGoFile(_ context.Context, fc *fileCtx, root *sitter.Node) ([]Node, []E
 
 // ---- Generic polyglot parsing ----
 
-func parseGenericFile(_ context.Context, fc *fileCtx, root *sitter.Node) ([]Node, []Edge, string, error) {
+func parseGenericFile(ctx context.Context, fc *fileCtx, root *sitter.Node) ([]Node, []Edge, string, error) {
 	var nodes []Node
 	var edges []Edge
 
@@ -503,6 +503,13 @@ func parseGenericFile(_ context.Context, fc *fileCtx, root *sitter.Node) ([]Node
 				})
 			}
 		}
+	}
+
+	// A component's className and the stylesheets it imports (web_jsx.go).
+	if isJSXHost(fc.ext) {
+		styleNodes, styleEdges := jsxStyleLinks(ctx, fc, root, pkgFQN)
+		nodes = append(nodes, styleNodes...)
+		edges = append(edges, styleEdges...)
 	}
 
 	return nodes, edges, pkgDecl, nil

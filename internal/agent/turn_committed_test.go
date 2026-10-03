@@ -80,3 +80,67 @@ func TestMergeApplyResponses_KeepsFirstBeforeAndLastAfter(t *testing.T) {
 		t.Fatal("a nil side must return the other unchanged")
 	}
 }
+
+// Seen live: a model wrote a helper .check.js, ran it, deleted it — and the
+// turn reported .check.js as changed. With Apply a delete or a rename goes
+// straight to disk; the result has to know about it like it knows about a
+// write.
+func TestRun_ApplyReportsDeletesAndRenames(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "old.txt"), []byte("keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "gone.txt"), []byte("bye\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err := schema.NewValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, err := tools.NewRunner(root, tools.RunnerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { tr.Close() })
+	client := &recordingLLM{steps: []string{
+		`{"type":"tool_call","tool":{"name":"write","input":{"path":"helper.txt","content":"tmp\n"}}}`,
+		// The same file by another spelling, and a path given absolute.
+		`{"type":"tool_call","tool":{"name":"fs.delete","input":{"path":"./helper.txt"}}}`,
+		`{"type":"tool_call","tool":{"name":"fs.delete","input":{"path":` + jsonString(filepath.Join(root, "gone.txt")) + `}}}`,
+		`{"type":"tool_call","tool":{"name":"fs.rename","input":{"path":"old.txt","new_path":"new.txt"}}}`,
+		`{"type":"final","final":{"patches":[]}}`,
+	}}
+	ag, err := New(client, v, tr, Options{MaxSteps: 10, Apply: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := tr.NewTurn(tools.TurnOptions{DryRun: true, Apply: true})
+	defer turn.Close()
+	_, res, err := ag.Run(tools.WithTurn(context.Background(), turn), nil, "write a helper, use it, remove it; delete gone.txt; rename old.txt to new.txt")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res == nil || res.ApplyResponse == nil {
+		t.Fatalf("no apply response:\n%s", recordedToolMessages(client))
+	}
+	got := map[string]applier.FileDiff{}
+	for _, d := range res.ApplyResponse.Diffs {
+		got[d.Path] = d
+	}
+	changed := map[string]bool{}
+	for _, p := range res.ApplyResponse.ChangedFiles {
+		changed[p] = true
+	}
+	if changed["helper.txt"] {
+		t.Errorf("a file created and deleted in the turn is no change: %v", res.ApplyResponse.ChangedFiles)
+	}
+	if d, ok := got["gone.txt"]; !ok || d.Before != "bye\n" || d.After != "" || !changed["gone.txt"] {
+		t.Errorf("gone.txt diff = %+v (changed %v)", d, res.ApplyResponse.ChangedFiles)
+	}
+	if d := got["old.txt"]; d.Before != "keep me\n" || d.After != "" {
+		t.Errorf("old.txt diff = %+v", d)
+	}
+	if d := got["new.txt"]; d.Before != "" || d.After != "keep me\n" {
+		t.Errorf("new.txt diff = %+v", d)
+	}
+}

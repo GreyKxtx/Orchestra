@@ -41,6 +41,7 @@ func (f *fakeInstall) Install(ctx context.Context, e registry.Entry, destDir str
 }
 
 func TestManager_EnsureOnAsk_Approved(t *testing.T) {
+	noServersOnPath(t)
 	cache := filepath.Join(t.TempDir(), "c")
 	t.Setenv("ORCHESTRA_LSP_CACHE", cache)
 	fake := &fakeInstall{}
@@ -106,6 +107,7 @@ func TestManager_EnsureOnAsk_Denied(t *testing.T) {
 // declines does not answer for the next one, and a turn whose client
 // approves gets the install even though the last one said no.
 func TestManager_EnsureOnAsk_ConsentIsTheCallers(t *testing.T) {
+	noServersOnPath(t)
 	cache := filepath.Join(t.TempDir(), "c")
 	t.Setenv("ORCHESTRA_LSP_CACHE", cache)
 	fake := &fakeInstall{}

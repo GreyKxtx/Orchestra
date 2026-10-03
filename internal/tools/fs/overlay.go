@@ -395,8 +395,10 @@ func (o *Overlay) ApplyPatchesToStaged(c *Client, patchList []patches.Patch) err
 		}
 
 		var currentContent []byte
+		exists := false
 		if content, _, ok := o.stagedContent(relSlash); ok {
 			currentContent = []byte(content)
+			exists = true
 		} else {
 			absPath := filepath.Join(o.root, filepath.FromSlash(relSlash))
 			b, err := os.ReadFile(absPath)
@@ -404,6 +406,7 @@ func (o *Overlay) ApplyPatchesToStaged(c *Client, patchList []patches.Patch) err
 				return fmt.Errorf("read %s: %w", relSlash, err)
 			}
 			currentContent = b
+			exists = err == nil
 		}
 
 		if p.FileHash != "" {
@@ -443,7 +446,9 @@ func (o *Overlay) ApplyPatchesToStaged(c *Client, patchList []patches.Patch) err
 					}
 				}
 			}
-			newContent = []byte(p.Content)
+			// The same fit write gives: a whole file in the final is still
+			// a file in this project.
+			newContent = []byte(fitLineEndings(o.root, relSlash, p.Content, string(currentContent), exists))
 		default:
 			return protocol.NewError(protocol.InvalidLLMOutput, "unsupported patch type", map[string]any{"type": p.Type})
 		}

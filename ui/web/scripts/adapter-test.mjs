@@ -947,6 +947,35 @@ test("message_delta accumulates and reaches the renderer as text", async () => {
   assert.equal(texts[texts.length - 1], "Hello", "deltas must accumulate, not replace");
 });
 
+// A final the core refuses was streamed before it was refused; the model then
+// answers again. Live on a local model both answers ended up glued together
+// ("...build-режим.Привет!") — on screen and in the saved session.
+test("the text of a refused final does not stay in the answer", async () => {
+  const b = await ready(loadBundle());
+  dispatch(b, { type: "send", text: "hi", mode: "build", profile: "", apply: false, allowExec: false });
+  await tick();
+  const ev = (params) => b.deliver({ jsonrpc: "2.0", method: "agent/event", params });
+  ev({ type: "message_delta", content: "Looking. " });
+  ev({ type: "step_done", content: "tool_call" });
+  ev({ type: "message_delta", content: "First answer with cx/cy." });
+  ev({ type: "step_done", content: "invalid" });
+  ev({ type: "message_delta", content: "Second answer." });
+  ev({ type: "step_done", content: "final" });
+
+  const texts = b.inbound.filter((m) => m.type === "delta" || m.type === "deltaSync").map((m) => m.content);
+  assert.equal(texts[texts.length - 1], "Looking. Second answer.", "the refused step's words must go: " + JSON.stringify(texts));
+
+  answer(b, "session.message", { steps: 3 });
+  await tick();
+  await tick();
+  answer(b, "session.get", { session_id: "s-1", ui_messages: [{ role: "user", text: "hi" }] });
+  await tick();
+  await tick();
+  const sync = b.sent.find((m) => m.method === "session.ui_sync");
+  assert.ok(sync, "the answer must be saved");
+  assert.equal(sync.params.ui_messages[1].text, "Looking. Second answer.");
+});
+
 test("child-scoped deltas do not leak into the main transcript", async () => {
   const b = await ready(loadBundle());
   b.deliver({

@@ -161,7 +161,7 @@ func (r *BackgroundRegistry) SpawnBackground(parent context.Context, req BashBac
 	// was handed to CommandContext as the name of a binary and never started —
 	// while the bash description sends the model here precisely for build,
 	// test and dev-server command lines.
-	cmdName, argList, _, shellErr := MaybeShellExec(strings.TrimSpace(req.Command), req.Args)
+	cmdName, argList, viaShell, shellErr := MaybeShellExec(strings.TrimSpace(req.Command), req.Args)
 	if shellErr != nil {
 		return nil, shellErr
 	}
@@ -176,6 +176,7 @@ func (r *BackgroundRegistry) SpawnBackground(parent context.Context, req BashBac
 	cmd.Env = commandEnv(req.Env)
 	cmd.Stdin = nil
 	subproc.SetProcessGroup(cmd)
+	keepShellLine(cmd, viaShell)
 
 	id := r.nextID()
 	p := &bgProcess{

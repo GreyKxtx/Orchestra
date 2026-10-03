@@ -8,6 +8,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Added — React components in the code graph's styling (2026-10)
+
+- **`className` is linked to the rules that style it.** A `.jsx`/`.tsx`/`.js`/`.ts` file that imports a stylesheet of the workspace (`import './App.css'`) gets an `imports` edge to it and an element per class or id a rule of that sheet styles — from `className="a b"`, `{"a"}`, `{clsx("a", on && "b")}`, `` {`a ${x}`} `` — with `styled_by` edges to the rules, as a page's `class` attribute has. A change to the stylesheet parses the component again. Classes no imported rule styles (utility classes) add nothing; a stylesheet imported only by another file (a global `index.css` in `main.tsx`) is not followed.
+- **A new parser re-reads an existing graph.** The store keeps `ckg.ParserVersion` (`ckg_meta`); when the graph was made by another version every file's stamp is cleared once, and the next pass parses each file again — an unchanged page or component used to keep what the old parser saw until it was edited. The tables are not dropped.
+
+### Fixed — tests that read the developer's machine (2026-10)
+
+- **Six tests failed on any machine with gopls on `PATH` or skills in `~/.orchestra/skills`.** The core's tests now run with a home directory of their own, and the language-server provisioning tests with an empty `PATH`; the local run is green like CI's.
+- **A whole file in `final.patches` gets the project's line endings** too, the way `write` does.
+- **The grounding check again catches an invented directory in a list of real ones**: in a list whose items start with paths that exist, an item that starts with a path is taken as one ("- web/static — …" beside "- internal/core — …"); prose inside an item is not.
+- **VS Code: "Orchestra model: … (saved)" is in the UI language** and says where it was saved.
+
+### Fixed — what a live session on a one-page project turned up (2026-10)
+
+- **A refused final no longer stays glued to the answer.** The core refuses a final it cannot accept (an unknown path, an open checklist) after the text has streamed; the model answers again, and the web/desktop chat and the VS Code panel showed both answers run together ("…build-режим.Привет!") and saved them so. On `step_done` `invalid` the clients now drop that step's words.
+- **`bash` on Windows is bash.** The tool is called bash and models write bash — `'…'`, `\"` inside double quotes, `=>` — while the line went to `cmd.exe`: every `node -e "…"` failed ("Unterminated string constant"), and a model worked around it with a helper script. Where Git for Windows is installed its `bash.exe` now runs the line (`internal/execshell`: beside the `git` on `PATH` or where the installer puts it, never the WSL `bash.exe` in the Windows directory; `ORCHESTRA_EXEC_SHELL=cmd` or a path decides instead), with `MSYS_NO_PATHCONV` so `cmd /c exit 3` reaches `cmd` as written. Without Git Bash `cmd.exe` still runs it, now verbatim (`cmd /s /c`, not Go's backslash-escaped quoting). The environment the model is shown names the shell the tool really uses instead of `ComSpec`. The auto-router sends a request to run a command to Build.
+- **A delete or a rename is in the turn's changes.** With `--apply` they go straight to disk, and the result knew only about writes and edits: a helper a model wrote, ran and deleted was reported as changed, a real deletion was not reported. A file created and deleted in the same turn is now no change; a deleted file's diff ends empty, a renamed one moves.
+- **The grounding check took "центр `cx/cy`" for a path.** A two-part name whose halves the conversation already holds as words (variables the model just read) is a pair of names. The price: an invented two-segment directory whose halves both occur as words in what the model read passes too.
+- **`exec.allow` / `exec.deny` read the line in the language of the shell that runs it**, not the OS: under Git Bash `^` is an ordinary character, and `echo ^; rm -rf x` would have been judged as one `echo` by the cmd.exe lexer.
+- **A reopened chat no longer shows `{"patches":[]}`** at the end of an answer: the live bubble stripped the final envelope, the saved one did not.
+- **`ORCHESTRA.md` does not vote on line endings.** In a one-page CRLF project the LF file `orchestra init` wrote tied the vote, and new files came out LF.
+
 ### Fixed — the rest of what the live runs turned up (2026-10)
 
 - **A turn that applied its edits names them.** With `--apply` (and `agent.run apply: true`, `session.message apply: true`) each `write`/`edit` is committed the moment it lands, so the final's apply found nothing staged and the result carried no `apply_response`: the CLI printed `Changed files: (none)` after a turn that had changed files. The agent now keeps what it committed during the turn and adds it to the result on every return path — the final, max_steps, the breaker — one diff per file from its first version to its last; a turn continued in another mode reports both halves.

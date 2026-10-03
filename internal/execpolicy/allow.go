@@ -11,15 +11,22 @@ package execpolicy
 import (
 	"fmt"
 	"path/filepath"
-	"runtime"
 	"strings"
+
+	"github.com/orchestra/orchestra/internal/execshell"
 )
 
 // CommandAllowed reports whether every command that command (with args, when
 // it runs without a shell) would start is on allow and none is on deny. An
 // empty allow list allows nothing. reason says why a line was refused.
 func CommandAllowed(command string, args []string, allow, deny []string) (ok bool, reason string) {
-	return commandAllowedFor(command, args, allow, deny, runtime.GOOS == "windows")
+	return commandAllowedFor(command, args, allow, deny, lexesAsCmd(execshell.Default()))
+}
+
+// lexesAsCmd: the line is read the way cmd.exe reads it. Only cmd.exe —
+// Git Bash on Windows runs bash, where '^' escapes nothing and ';' splits.
+func lexesAsCmd(s execshell.Shell) bool {
+	return s.Kind == execshell.KindCmd
 }
 
 // commandAllowedFor is CommandAllowed for the shell of the given platform.
@@ -77,8 +84,8 @@ func listed(list []string, base string) bool {
 }
 
 // NeedsShell mirrors the exec tool's dispatch (exec.MaybeShellExec): a
-// command containing any of these characters runs through sh -c (cmd /c on
-// Windows).
+// command containing any of these characters runs through the shell
+// (internal/execshell: sh, Git Bash, or cmd.exe).
 func NeedsShell(command string) bool {
 	return strings.ContainsAny(command, " \t|&;<>()*?`$\"'")
 }

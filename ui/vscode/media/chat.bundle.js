@@ -5209,6 +5209,11 @@
     if (!messagesEl) {
       return null;
     }
+    // A saved answer is the stream as it came, the closing {"patches":[]}
+    // included: the live bubble strips it, so a reopened chat must too.
+    if (role === "assistant" && typeof text === "string") {
+      text = stripFinalEnvelope(text);
+    }
     const el = document.createElement("div");
     el.className = `msg ${role}`;
     if (role === "user") {

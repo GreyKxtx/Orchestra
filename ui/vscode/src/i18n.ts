@@ -43,6 +43,8 @@ const CATALOGUE: Record<UiLang, Record<string, string>> = {
     "notice.compaction_done": "Chat summarised: history compressed, work continues",
     "notice.compaction": "Chat summary — {detail}",
     "access.ask.hint": "Ask — shell with confirmation; edits go through Accept/Reject",
+    "model.set": "Orchestra model: {model}",
+    "model.set_saved": "Orchestra model: {model} (saved to .orchestra.yml)",
   },
   ru: {
     "trust.ignored":
@@ -69,6 +71,8 @@ const CATALOGUE: Record<UiLang, Record<string, string>> = {
     "notice.compaction_done": "Суммаризация чата: история сжата, работа продолжается",
     "notice.compaction": "Суммаризация чата — {detail}",
     "access.ask.hint": "Ask — shell с подтверждением; правки через Accept/Reject",
+    "model.set": "Модель Orchestra: {model}",
+    "model.set_saved": "Модель Orchestra: {model} (сохранено в .orchestra.yml)",
   },
 };
 

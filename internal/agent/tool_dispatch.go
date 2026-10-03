@@ -202,9 +202,13 @@ func (a *Agent) runRunnerTool(ctx context.Context, cb *guard.CircuitBreaker, his
 		return serialToolOutcome{}, cbErr
 	}
 
+	moved := a.beforeDiskMove(name, tc.Input)
 	start := time.Now()
 	out, err := a.tools.Call(callCtx, name, tc.Input)
 	dur := time.Since(start).Milliseconds()
+	if err == nil {
+		a.afterDiskMove(moved)
+	}
 	if err != nil {
 		a.observeWorkingTool(name, tc.Input, out, err)
 	}

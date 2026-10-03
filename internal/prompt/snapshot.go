@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/orchestra/orchestra/internal/execshell"
 )
 
 // WorkspaceSnapshot is a minimal "IDE snapshot" attached to each user request.
@@ -40,7 +42,9 @@ func BuildUserInfoSnapshot(workspaceRoot string) WorkspaceSnapshot {
 	shell := strings.TrimSpace(os.Getenv("ORCH_SHELL"))
 	if shell == "" {
 		if runtime.GOOS == "windows" {
-			shell = strings.TrimSpace(os.Getenv("ComSpec"))
+			// The shell the bash tool really runs in — Git Bash when it is
+			// installed, else cmd.exe — not the user's ComSpec.
+			shell = execshell.Default().Describe()
 		} else {
 			shell = strings.TrimSpace(os.Getenv("SHELL"))
 		}

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/tools"
+	"github.com/orchestra/orchestra/patch/patches"
 )
 
 // A model writes "\n". In a project whose files are CRLF that left every new
@@ -136,5 +137,40 @@ func TestFSWrite_SameExtensionNeighboursDecide(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(root, "helper.go")); string(b) != content {
 		t.Fatalf("helper.go = %q, want LF like main.go", b)
+	}
+}
+
+// A whole file in final.patches is fitted the same way write is.
+func TestFinalWriteAtomic_FollowsTheProjectsLineEndings(t *testing.T) {
+	r, root := newWriteRunner(t)
+	mustWrite(t, filepath.Join(root, "index.html"), "<html>\r\n</html>\r\n")
+	turn := r.NewTurn(tools.TurnOptions{DryRun: true})
+	defer turn.Close()
+	ctx := tools.WithTurn(context.Background(), turn)
+	err := r.ApplyPatchesToStaged(ctx, []patches.Patch{{
+		Type: patches.TypeFileWriteAtomic, Path: "app.js", Content: "let a = 1;\nlet b = 2;\n",
+		Conditions: &patches.WriteAtomicConditions{MustNotExist: true},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.StagedFileContent(ctx)["app.js"]; got != "let a = 1;\r\nlet b = 2;\r\n" {
+		t.Fatalf("app.js = %q, want CRLF like index.html", got)
+	}
+}
+
+// Seen live: a one-page CRLF project whose only other file was the
+// ORCHESTRA.md that orchestra init wrote (LF). One vote each, a tie, and the
+// new app.js and style.css came out LF. The file Orchestra writes is not a
+// vote for the project's style.
+func TestFSWrite_OrchestrasOwnFilesDoNotVote(t *testing.T) {
+	r, root := newWriteRunner(t)
+	mustWrite(t, filepath.Join(root, "index.html"), "<html>\r\n</html>\r\n")
+	mustWrite(t, filepath.Join(root, "ORCHESTRA.md"), "# ORCHESTRA.md\n\nrules\n")
+	if _, err := r.FSWrite(context.Background(), tools.FSWriteRequest{Path: "app.js", Content: "let a = 1;\nlet b = 2;\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "app.js")); string(b) != "let a = 1;\r\nlet b = 2;\r\n" {
+		t.Fatalf("app.js = %q, want CRLF like index.html", b)
 	}
 }

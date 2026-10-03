@@ -21,6 +21,15 @@ func TestExecRun_Helper(t *testing.T) {
 		fmt.Print(strings.Repeat("a", 200_000))
 	case "sleep":
 		time.Sleep(500 * time.Millisecond)
+	case "args":
+		// What follows the test flags, as the program received it.
+		var rest []string
+		for _, a := range os.Args[1:] {
+			if !strings.HasPrefix(a, "-test.") {
+				rest = append(rest, a)
+			}
+		}
+		fmt.Print("ARGS:" + strings.Join(rest, "|"))
 	}
 }
 

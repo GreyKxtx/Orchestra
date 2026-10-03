@@ -3,6 +3,8 @@ package execpolicy
 import (
 	"strings"
 	"testing"
+
+	"github.com/orchestra/orchestra/internal/execshell"
 )
 
 func TestCommandAllowed(t *testing.T) {
@@ -85,5 +87,19 @@ func TestCommandsWindows(t *testing.T) {
 	}
 	if _, err := commandsFor(`%COMSPEC% /c evil`, true); err == nil || !strings.Contains(err.Error(), "literal") {
 		t.Fatalf("an expanded command name must be refused, got %v", err)
+	}
+}
+
+// The line is judged in the language of the shell that runs it. With Git Bash
+// on Windows a '^' is an ordinary character: lexed as cmd.exe, "echo ^; rm -rf x"
+// was one command, echo, while bash ran two.
+func TestCommandAllowed_JudgesTheLineAsItsShellRunsIt(t *testing.T) {
+	allow := []string{"echo", "rm"}
+	deny := []string{"rm"}
+	if ok, _ := commandAllowedFor(`echo ^; rm -rf x`, nil, allow, deny, lexesAsCmd(execshell.Shell{Kind: execshell.KindBash})); ok {
+		t.Fatal("bash runs rm after the ';' — a deny on rm must hold")
+	}
+	if !lexesAsCmd(execshell.Shell{Kind: execshell.KindCmd}) || lexesAsCmd(execshell.Shell{Kind: execshell.KindSh}) {
+		t.Fatal("only cmd.exe is lexed as cmd.exe")
 	}
 }

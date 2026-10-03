@@ -76,3 +76,6 @@ sse.log
 # browser, a whole browser profile (cookies, login data, tokens). One `git add
 # -A` away from publishing those to a public repository.
 .claude/scratch/
+
+# Impeccable design-plugin state (hook cache, per-machine)
+.impeccable/

@@ -192,6 +192,7 @@ func TestConfigStaysALeaf(t *testing.T) {
 	allowed := map[string]bool{
 		modulePath + "/internal/config":     true,
 		modulePath + "/internal/execpolicy": true,
+		modulePath + "/internal/execshell":  true, // stdlib only: which shell a line runs in
 		modulePath + "/internal/authstore":  true,
 		modulePath + "/internal/llmauth":    true,
 		modulePath + "/internal/toolspec":   true,

@@ -7,12 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/orchestra/orchestra/internal/execpolicy"
+	"github.com/orchestra/orchestra/internal/execshell"
 	"github.com/orchestra/orchestra/internal/tools/toolpath"
 	"github.com/orchestra/orchestra/protocol"
 )
@@ -84,7 +84,7 @@ func Run(parent context.Context, workspaceRoot string, defaultTimeout time.Durat
 	cmd.Dir = absDir
 	cmd.Env = commandEnv(req.Env)
 	cmd.Stdin = nil
-	_ = viaShell
+	keepShellLine(cmd, viaShell)
 
 	streamCB := outputCBFromCtx(parent)
 	lim := &outputLimiter{limit: limit}
@@ -185,10 +185,10 @@ func MaybeShellExec(cmdName string, args []string) (string, []string, bool, erro
 				"(splicing args into a shell line is unsafe)",
 			map[string]any{"command": cmdName, "args": args})
 	}
-	if runtime.GOOS == "windows" {
-		return "cmd", []string{"/c", cmdName}, true, nil
-	}
-	return "sh", []string{"-c", cmdName}, true, nil
+	// bash on Windows when Git Bash is there: the tool is called bash and the
+	// model writes bash (internal/execshell).
+	sh := execshell.Default()
+	return sh.Path, sh.Args(cmdName), true, nil
 }
 
 type outputLimiter struct {

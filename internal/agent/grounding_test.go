@@ -246,3 +246,37 @@ func TestConversationMentions_ReadsMessagesAndToolArguments(t *testing.T) {
 		t.Fatalf("conversationMentions = %q", got)
 	}
 }
+
+// A list whose items start with real paths is a list of paths: an invented
+// one among them is caught even with nothing else marking it.
+func TestUnknownWorkspacePaths_AnInventedItemInAListOfPaths(t *testing.T) {
+	root := groundingFixture(t)
+	answer := "Структура:\n- internal/core — RPC\n- docs/ARCHITECTURE.md — архитектура\n- web/static — фронтенд"
+	got := unknownWorkspacePaths(answer, root, "")
+	if len(got) != 1 || got[0] != "web/static" {
+		t.Fatalf("got %v, want [web/static]", got)
+	}
+	// Two words inside a list item's prose are still two words.
+	prose := "- internal/core — RPC, the sample/eval split lives here"
+	if got := unknownWorkspacePaths(prose, root, ""); len(got) != 0 {
+		t.Fatalf("got %v for prose inside a list item", got)
+	}
+}
+
+// Seen live: an answer about a page said "центр `cx/cy`" — two variables the
+// model had just read — and was sent back as naming an invented path. A pair
+// whose halves are both names the conversation already holds is a pair of
+// names.
+func TestUnknownWorkspacePaths_APairOfNamesFromTheCodeIsNotAPath(t *testing.T) {
+	root := groundingFixture(t)
+	known := `{"path":"index.html","content":"let cx = W / 2, cy = H / 2;\nfunction moveBH(e) { cx = e.x; cy = e.y; }"}`
+	answer := "Состояние: размеры `W/H`, центр `cx/cy`, см. internal/core."
+	if got := unknownWorkspacePaths(answer, root, known); len(got) != 0 {
+		t.Fatalf("got %v, want nothing: cx and cy are variables the model read", got)
+	}
+	// An invented directory whose halves the conversation never named is
+	// still caught.
+	if got := unknownWorkspacePaths("MCP support lives in `pkg/mcp`.", root, known); len(got) == 0 {
+		t.Fatal("an invented path must still be caught")
+	}
+}

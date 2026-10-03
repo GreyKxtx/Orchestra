@@ -34,6 +34,7 @@ func (f *blockingInstall) Install(ctx context.Context, e registry.Entry, destDir
 }
 
 func TestManager_AsyncEnsure_PendingThenReady(t *testing.T) {
+	noServersOnPath(t)
 	cache := filepath.Join(t.TempDir(), "c")
 	t.Setenv("ORCHESTRA_LSP_CACHE", cache)
 	block := &blockingInstall{release: make(chan struct{})}

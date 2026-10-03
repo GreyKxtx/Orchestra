@@ -2,6 +2,7 @@ package exec
 
 import (
 	"context"
+	"github.com/orchestra/orchestra/internal/execshell"
 	"runtime"
 	"strings"
 	"testing"
@@ -29,8 +30,8 @@ func TestMaybeShellExec_CommandWithSpacesGoesToShell(t *testing.T) {
 	if !viaShell {
 		t.Fatal("command with space should be routed via shell")
 	}
-	if cmd != "cmd" && cmd != "sh" {
-		t.Errorf("unexpected shell name: %q", cmd)
+	if want := execshell.Default().Path; cmd != want {
+		t.Errorf("shell = %q, want this machine's %q", cmd, want)
 	}
 	if len(args) != 2 {
 		t.Fatalf("expected 2 args, got %v", args)

@@ -24,7 +24,7 @@ const (
 // fitLineEndings returns content with the line endings of the file it
 // replaces (current, when exists), or else of its neighbours. Content without a
 // line break, or a project that has no clear convention, is left as it came.
-func (c *Client) fitLineEndings(relSlash, content string, current string, exists bool) string {
+func fitLineEndings(root, relSlash, content, current string, exists bool) string {
 	if !strings.Contains(content, "\n") {
 		return content
 	}
@@ -37,7 +37,7 @@ func (c *Client) fitLineEndings(relSlash, content string, current string, exists
 	if exists {
 		crlf, lf = countLineEndings([]byte(current))
 	} else {
-		crlf, lf = c.neighbourLineEndings(relSlash)
+		crlf, lf = neighbourLineEndings(root, relSlash)
 	}
 	switch {
 	case crlf > lf:
@@ -47,6 +47,10 @@ func (c *Client) fitLineEndings(relSlash, content string, current string, exists
 	}
 	return content
 }
+
+// orchestraOwnFile are the files Orchestra itself writes into a project
+// (orchestra init): their line endings are Orchestra's, not the project's.
+var orchestraOwnFile = map[string]bool{"ORCHESTRA.md": true}
 
 // isUnixScript: a shell script by its name, or any script by its shebang.
 func isUnixScript(relSlash, content string) bool {
@@ -61,11 +65,11 @@ func isUnixScript(relSlash, content string) bool {
 // on disk — in its directory, or the nearest one above it that has any. Files
 // of its own kind decide when there are any: a .go file follows the .go files,
 // not the .bat files next to them.
-func (c *Client) neighbourLineEndings(relSlash string) (crlf, lf int) {
+func neighbourLineEndings(root, relSlash string) (crlf, lf int) {
 	dir := path.Dir(relSlash)
 	ext := strings.ToLower(path.Ext(relSlash))
 	for {
-		abs := filepath.Join(c.Root, filepath.FromSlash(dir))
+		abs := filepath.Join(root, filepath.FromSlash(dir))
 		if ext != "" {
 			if crlf, lf = sampleDirLineEndings(abs, path.Base(relSlash), ext); crlf+lf > 0 {
 				return crlf, lf
@@ -91,7 +95,7 @@ func sampleDirLineEndings(dir, skip, ext string) (crlf, lf int) {
 		if sampled >= lineEndingSampleFiles {
 			break
 		}
-		if !e.Type().IsRegular() || e.Name() == skip || strings.HasPrefix(e.Name(), ".") {
+		if !e.Type().IsRegular() || e.Name() == skip || strings.HasPrefix(e.Name(), ".") || orchestraOwnFile[e.Name()] {
 			continue
 		}
 		if ext != "" && strings.ToLower(filepath.Ext(e.Name())) != ext {

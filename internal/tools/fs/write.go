@@ -60,9 +60,9 @@ func (c *Client) Write(ctx context.Context, req FSWriteRequest) (*FSWriteRespons
 	}
 	if exists {
 		current, _ := c.currentText(relSlash)
-		req.Content = c.fitLineEndings(relSlash, req.Content, current, true)
+		req.Content = fitLineEndings(c.Root, relSlash, req.Content, current, true)
 	} else {
-		req.Content = c.fitLineEndings(relSlash, req.Content, "", false)
+		req.Content = fitLineEndings(c.Root, relSlash, req.Content, "", false)
 	}
 	// A file_hash for a file that does not exist is a create dressed as an
 	// overwrite — the model has just read some other file and pasted its hash,

@@ -3,7 +3,9 @@ package ckg
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -227,7 +229,10 @@ func (s *Store) migrate() error {
 		if err := s.ensureFileStamps(); err != nil {
 			return err
 		}
-		return s.ensureEmbeddingHashColumn()
+		if err := s.ensureEmbeddingHashColumn(); err != nil {
+			return err
+		}
+		return s.ensureParserVersion()
 	}
 
 	// Local cache: any older user_version (including v4 without package /
@@ -349,6 +354,39 @@ func (s *Store) migrate() error {
 	}
 	if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", targetVersion)); err != nil {
 		return fmt.Errorf("migrate v%d: set user_version: %w", targetVersion, err)
+	}
+	return s.ensureParserVersion()
+}
+
+// ParserVersion is the version of what the parsers find in a file. Bump it
+// when a parser starts to see something new in files it already read (pages
+// and stylesheets, React classNames): the schema is the same, but a graph made
+// by the older parser lacks what the new one would add, and an unchanged file
+// is otherwise never parsed again.
+const ParserVersion = 2
+
+// ensureParserVersion clears every file's stamp once when the graph was made
+// by another parser version, so the next pass hashes and parses each file
+// again; the tables and everything not derived from parsing stay.
+func (s *Store) ensureParserVersion() error {
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS ckg_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		return fmt.Errorf("ckg store: create ckg_meta: %w", err)
+	}
+	var stored string
+	err := s.db.QueryRow(`SELECT value FROM ckg_meta WHERE key = 'parser_version'`).Scan(&stored)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("ckg store: read parser_version: %w", err)
+	}
+	want := strconv.Itoa(ParserVersion)
+	if stored == want {
+		return nil
+	}
+	if _, err := s.db.Exec(`UPDATE files SET hash = '', mtime_ns = 0`); err != nil {
+		return fmt.Errorf("ckg store: reset file stamps: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO ckg_meta(key, value) VALUES('parser_version', ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, want); err != nil {
+		return fmt.Errorf("ckg store: write parser_version: %w", err)
 	}
 	return nil
 }
