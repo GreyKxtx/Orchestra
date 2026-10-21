@@ -976,6 +976,46 @@ test("the text of a refused final does not stay in the answer", async () => {
   assert.equal(sync.params.ui_messages[1].text, "Looking. Second answer.");
 });
 
+// A click on a changed file asked the host for an editor this page does not
+// have, and every click left "openDiff needs an editor" in the chat. The page
+// has its own diff viewer.
+test("a click on a changed file opens the page's diff viewer, not a note", async () => {
+  const b = await ready(loadBundle());
+  dispatch(b, { type: "openDiff", path: "index.html", before: "a", after: "b" });
+  await tick();
+  const viewer = b.inbound.find((m) => m.type === "diffViewer");
+  assert.ok(viewer, "no diffViewer: " + JSON.stringify(b.inbound.map((m) => m.type)));
+  assert.equal(viewer.path, "index.html");
+  assert.equal(viewer.after, "b");
+  assert.ok(!b.inbound.some((m) => m.type === "systemNote" && /needs an editor/.test(m.text || "")), "the note is gone");
+});
+
+// Seen live: three "changes applied" lines while the bar came back each time.
+// A note is the truth about one click — not an apply that applied nothing, and
+// not the applies Auto makes by itself after every edit.
+test("the applied note is said only for an apply that applied, and never for Auto's", async () => {
+  const b = await ready(loadBundle());
+  const notes = () => b.inbound.filter((m) => m.type === "systemNote").length;
+  const settle = async (msg, result) => {
+    b.sent.length = 0; // answer() takes the first request it finds
+    dispatch(b, msg);
+    await tick();
+    const call = b.sent.find((m) => m.method === "session.apply_pending");
+    assert.ok(call, "applyPending must reach session.apply_pending");
+    answer(b, "session.apply_pending", result);
+    await tick();
+    await tick();
+  };
+
+  const start = notes();
+  await settle({ type: "applyPending", auto: true }, { applied: true });
+  assert.equal(notes(), start, "Auto's own apply says nothing");
+  await settle({ type: "applyPending" }, { applied: false });
+  assert.equal(notes(), start, "an apply that applied nothing says nothing");
+  await settle({ type: "applyPending" }, { applied: true });
+  assert.equal(notes(), start + 1, "a click that applied says so");
+});
+
 test("child-scoped deltas do not leak into the main transcript", async () => {
   const b = await ready(loadBundle());
   b.deliver({

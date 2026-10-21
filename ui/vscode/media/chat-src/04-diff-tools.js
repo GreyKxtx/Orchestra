@@ -121,7 +121,7 @@
     head.className = "diff-preview-head";
     head.innerHTML =
       diffExtBadgeHtml(filePath) +
-      `<button type="button" class="diff-preview-name" title="${escapeAttr(i18n("diff.open_file"))}">${escapeAttr(basename(filePath))}</button>` +
+      diffNameHtml(filePath) +
       `<span class="tool-diff-pending">…</span>`;
     const lines = document.createElement("div");
     lines.className = "diff-preview-body tool-diff-pending-body";
@@ -156,18 +156,117 @@
     }
     pendingBar.classList.remove("hidden");
     const fileCount = pendingState.diff.length;
-    if (pendingLabel) {
-      pendingLabel.textContent = fileCount
-        ? `${fileCount} file${fileCount === 1 ? "" : "s"} changed`
-        : `${n} pending change${n === 1 ? "" : "s"}`;
+    let add = 0;
+    let del = 0;
+    for (const d of pendingState.diff) {
+      const s = countDiffStats(d.before, d.after);
+      add += s.add || 0;
+      del += s.del || 0;
     }
-    renderPendingReviewList();
+    if (pendingLabel) {
+      pendingLabel.innerHTML =
+        escapeAttr(fileCount ? i18n("pending.files_changed", { n: fileCount }) : i18n("pending.changes", { n })) +
+        diffStatsHtml({ add, del });
+    }
+    ensurePendingToggle();
+    pendingBar.classList.toggle("collapsed", !pendingExpanded);
+    if (pendingExpanded) {
+      renderPendingReviewList();
+    }
+  }
+
+  /** The bar's show/hide button beside Apply and Discard. */
+  function ensurePendingToggle() {
+    if (!pendingLabel) return;
+    const btn = document.getElementById("pending-toggle-btn");
+    if (!btn) return;
+    if (!btn.dataset.bound) {
+      btn.dataset.bound = "1";
+      btn.addEventListener("click", () => {
+        pendingExpanded = !pendingExpanded;
+        renderPendingBar();
+      });
+      pendingLabel.addEventListener("click", () => btn.click());
+    }
+    // The set's icons, not ▾ ✓ ✗: font glyphs come out at a different size
+    // and weight in every font and sat crooked in their boxes.
+    btn.innerHTML = pendingExpanded
+      ? orchIconMarkup("chevron-up", { size: "sm" })
+      : orchIconMarkup("chevron-down", { size: "sm" });
+    const applyBtn = document.getElementById("pending-apply-btn");
+    if (applyBtn && !applyBtn.querySelector("svg")) applyBtn.innerHTML = orchIconMarkup("check", { size: "sm" });
+    const rejectBtn = document.getElementById("pending-reject-btn");
+    if (rejectBtn && !rejectBtn.querySelector("svg")) rejectBtn.innerHTML = orchIconMarkup("close", { size: "sm" });
+    btn.title = i18n(pendingExpanded ? "pending.collapse" : "pending.expand");
+    btn.setAttribute("aria-label", btn.title);
+    btn.setAttribute("aria-expanded", String(pendingExpanded));
+  }
+
+  // Access "Auto" is the person's word that the agent writes and runs without
+  // asking. A turn keeps the flags it was sent with, so switching to Auto in
+  // the middle of one changed nothing: the bar kept asking to accept every
+  // edit. Under Auto the bar settles itself.
+  function maybeAutoApplyPending() {
+    if (accessId !== "auto" || !(pendingState.ops.length || pendingState.diff.length)) return;
+    // auto: no "changes applied" line per edit — under Auto that is every edit.
+    host.postMessage({ type: "applyPending", auto: true });
+  }
+
+  /** @param {any} request A command's consent under Auto is already given. */
+  function autoApprovesPermission(request) {
+    const kind = request && request.kind;
+    return accessId === "auto" && (!kind || kind === "exec");
   }
 
   function diffExtBadgeHtml(filePath) {
     const ext = fileExtLabel(filePath || "");
     const lang = langFromPath(filePath || "");
     return `<span class="diff-ext-badge lang-${escapeAttr(lang)}">${escapeAttr(ext)}</span>`;
+  }
+
+  /** The file's name, then its folder in grey: a card names the file at a
+   *  glance and still tells two index.html apart. */
+  function diffNameHtml(filePath) {
+    const p = String(filePath || "").replace(/\\/g, "/");
+    const name = basename(p) || "file";
+    const dir = p.length > name.length ? p.slice(0, p.length - name.length).replace(/\/+$/, "") : "";
+    return (
+      `<button type="button" class="diff-preview-name" title="${escapeAttr((p ? p + " — " : "") + i18n("diff.open_file"))}">${escapeAttr(name)}</button>` +
+      (dir ? `<span class="diff-preview-dir">${escapeAttr(dir)}</span>` : "")
+    );
+  }
+
+  // A card in the chat shows the first few changed lines and folds the rest:
+  // a new 200-line file was a wall of green between two sentences.
+  const DIFF_FOLD_ROWS = 6;
+
+  function applyDiffFold(block, card, lines, stats) {
+    card.querySelector(".diff-fold-btn")?.remove();
+    const rows = lines.querySelectorAll(".diff-u-row").length;
+    const total = Math.max(rows, (stats?.add || 0) + (stats?.del || 0));
+    // Folding away one or two lines costs a click and saves nothing.
+    const foldable = rows > DIFF_FOLD_ROWS + 2;
+    const open = block.dataset.diffOpen === "1";
+    card.classList.toggle("folded", foldable && !open);
+    if (!foldable) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "diff-fold-btn";
+    btn.textContent = open ? i18n("diff.fold") : i18n("diff.unfold", { n: total - DIFF_FOLD_ROWS });
+    btn.setAttribute("aria-expanded", String(open));
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      block.dataset.diffOpen = open ? "0" : "1";
+      applyDiffFold(block, card, lines, stats);
+    });
+    card.appendChild(btn);
+    if (!lines.dataset.foldBound) {
+      lines.dataset.foldBound = "1";
+      lines.addEventListener("click", () => {
+        if (card.classList.contains("folded")) card.querySelector(".diff-fold-btn")?.click();
+      });
+    }
   }
 
   function diffStatsHtml(stats) {
@@ -187,7 +286,12 @@
     if (!pendingState.diff.length) {
       return;
     }
+    // Two overlapping draws (pending data twice in quick succession) each
+    // appended the whole list; a draw that a newer one replaced stops.
+    const draw = {};
+    pendingReviewListEl._draw = draw;
     for (let idx = 0; idx < pendingState.diff.length; idx++) {
+      if (pendingReviewListEl._draw !== draw) return;
       const d = pendingState.diff[idx];
       const stats = countDiffStats(d.before, d.after);
       const item = document.createElement("div");
@@ -199,7 +303,7 @@
       head.className = "diff-preview-head";
       head.innerHTML =
         diffExtBadgeHtml(d.path || "") +
-        `<button type="button" class="diff-preview-name" title="${escapeAttr(i18n("diff.open_file"))}">${escapeAttr(basename(d.path || "file"))}</button>` +
+        diffNameHtml(d.path || "") +
         diffStatsHtml(stats) +
         // Per-file decisions, the same two the a/x keys make. Without them the
         // only discoverable choice is all-or-nothing on the bar below.
@@ -214,7 +318,7 @@
       item.appendChild(head);
       item.appendChild(body);
       pendingReviewListEl.appendChild(item);
-      await renderUnifiedDiffLines(body, d.before || "", d.after || "", d.path || "", 28);
+      await renderUnifiedDiffLines(body, d.before || "", d.after || "", d.path || "", 14);
       if (idx === diffReviewCursor) {
         item.scrollIntoView({ block: "nearest", behavior: "smooth" });
       }
@@ -306,8 +410,10 @@
 
   /** Myers-style line alignment for side-by-side diff panes. */
   function alignDiffLines(before, after) {
-    const a = (before || "").split("\n");
-    const b = (after || "").split("\n");
+    // An empty side has no lines, not one empty line: a new file is all "+",
+    // without a "−" for a blank line that never was.
+    const a = before ? before.split("\n") : [];
+    const b = after ? after.split("\n") : [];
     const n = a.length;
     const m = b.length;
     const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
@@ -324,12 +430,13 @@
         rows.push({ type: "same", left: a[i], right: b[j], leftNum: i + 1, rightNum: j + 1 });
         i++;
         j++;
-      } else if (j < m && (i >= n || dp[i][j + 1] >= dp[i + 1][j])) {
-        rows.push({ type: "add", right: b[j], rightNum: j + 1 });
-        j++;
-      } else if (i < n) {
+      } else if (i < n && (j >= m || dp[i + 1][j] >= dp[i][j + 1])) {
+        // On a tie the old line goes first: a replaced line reads − then +.
         rows.push({ type: "del", left: a[i], leftNum: i + 1 });
         i++;
+      } else if (j < m) {
+        rows.push({ type: "add", right: b[j], rightNum: j + 1 });
+        j++;
       }
     }
     return rows;

@@ -2580,8 +2580,9 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
         <div class="pending-head">
           <span id="pending-label" class="pending-label">0 pending changes</span>
           <div class="pending-head-actions">
-            <button type="button" id="pending-apply-btn" class="pending-icon-btn pending-apply-btn" data-i18n-title="pending.apply_title" title="Apply changes" data-i18n-aria-label="pending.apply_aria" aria-label="Apply">✓</button>
-            <button type="button" id="pending-reject-btn" class="pending-icon-btn pending-reject-btn" data-i18n-title="pending.discard_title" title="Discard changes" data-i18n-aria-label="pending.discard_aria" aria-label="Discard">✗</button>
+            <button type="button" id="pending-toggle-btn" class="pending-icon-btn pending-toggle-btn" aria-expanded="false"></button>
+            <button type="button" id="pending-apply-btn" class="pending-icon-btn pending-apply-btn" data-i18n-title="pending.apply_title" title="Apply changes" data-i18n-aria-label="pending.apply_aria" aria-label="Apply"></button>
+            <button type="button" id="pending-reject-btn" class="pending-icon-btn pending-reject-btn" data-i18n-title="pending.discard_title" title="Discard changes" data-i18n-aria-label="pending.discard_aria" aria-label="Discard"></button>
           </div>
         </div>
         <div id="pending-review-list" class="pending-review-list"></div>

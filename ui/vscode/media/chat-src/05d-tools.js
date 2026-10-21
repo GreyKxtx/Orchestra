@@ -165,28 +165,38 @@
     return typeof path === "string" ? path.trim() : "";
   }
 
-  function toolPreviewLine(name, argsRaw, content) {
+  /**
+   * A row's words: the tool, then what it ran on — "Read · src/app.js",
+   * "Glob · *", "Shell · List files in the working directory". The detail is
+   * the path as the model gave it, the pattern, or a command's own
+   * description (the command itself when it has none, and in the tooltip).
+   * @returns {{ name: string; detail: string; title: string }}
+   */
+  function toolRowParts(name, argsRaw, content) {
     const disp = toolDisplayName(name);
+    const kind = toolKind(name);
+    // A search names what it looked for; the folder it looked in ("." more
+    // often than not) goes to the tooltip.
+    if (kind === "search" || kind === "glob") {
+      const args = parseToolArgs(argsRaw);
+      const pat = String(args.pattern || args.query || "");
+      const where = String(args.path || "");
+      if (pat) return { name: disp, detail: pat, title: where ? pat + "  in  " + where : pat };
+    }
     const path = toolPathFromArgs(name, argsRaw, content);
     if (path) {
-      return `${disp} ${basename(path)}`;
+      return { name: disp, detail: path, title: path };
     }
-    if (toolKind(name) === "search" || toolKind(name) === "glob") {
+    if (kind === "exec") {
       const args = parseToolArgs(argsRaw);
-      const pat = args.pattern || args.query || "";
-      return pat ? `${disp} "${pat}"` : disp;
-    }
-    if (toolKind(name) === "exec") {
-      const args = parseToolArgs(argsRaw);
-      const cmd = args.command || args.description || "";
-      if (cmd) {
-        return cmd.length > 56 ? cmd.slice(0, 53) + "…" : cmd;
-      }
+      const cmd = String(args.command || "");
+      const desc = String(args.description || "");
+      return { name: disp, detail: desc || cmd, title: cmd || desc };
     }
     if (content && content.length < 80) {
-      return `${disp} · ${content}`;
+      return { name: disp, detail: content, title: "" };
     }
-    return disp;
+    return { name: disp, detail: "", title: "" };
   }
 
   // formatToolDuration renders a tool's wall time the way the TUI does
@@ -407,10 +417,24 @@
     if (!running) {
       block.classList.toggle("tool-failed", toolResultIsError(content));
     }
-    if (label) label.textContent = toolPreviewLine(name, argsRaw, content);
-    if (sub) {
-      sub.textContent = filePath && filePath.includes("/") ? filePath : "";
+    if (label) {
+      const parts = toolRowParts(name, argsRaw, content);
+      label.textContent = "";
+      const nameEl = document.createElement("span");
+      nameEl.className = "tr-name";
+      nameEl.textContent = parts.name;
+      label.appendChild(nameEl);
+      if (parts.detail) {
+        const detailEl = document.createElement("span");
+        detailEl.className = "tr-detail" + (filePath && parts.detail === filePath ? " tr-path" : "");
+        detailEl.textContent = parts.detail;
+        label.appendChild(detailEl);
+      }
+      if (parts.title) head.title = parts.title;
     }
+    // The detail carries the whole path now; a second copy at the right edge
+    // said the same thing smaller.
+    if (sub) sub.textContent = "";
     if (statsEl && filePath && toolKind(name) === "write") {
       const diff = findDiffForPath(filePath);
       if (diff) {

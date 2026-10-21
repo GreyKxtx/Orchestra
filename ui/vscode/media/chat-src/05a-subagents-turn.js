@@ -225,7 +225,8 @@
       toolTraceEl.appendChild(toolTraceSummary);
       toolTraceEl.appendChild(list);
       inner.appendChild(toolTraceEl);
-      toolTraceEl.open = false;
+      // Open while the turn works: the rows are what the person watches.
+      toolTraceEl.open = true;
     }
     return toolTraceEl.querySelector(".tool-trace-list");
   }
@@ -244,76 +245,107 @@
     updateToolTraceSummary();
   }
 
+  // A finished group stays open when it is short enough to read at a glance;
+  // a long one folds to its "N tool calls" line. Thoughts do not count.
+  const TRACE_OPEN_MAX_CALLS = 12;
+
+  function settleToolTrace() {
+    if (!toolTraceEl) return;
+    const calls = toolTraceEl.querySelectorAll(".tool-trace-list > .tool-block:not(.think-row)").length;
+    toolTraceEl.open = calls <= TRACE_OPEN_MAX_CALLS;
+  }
+
   function updateToolTraceSummary() {
     if (!toolTraceSummary) {
       return;
     }
-    const parts = [];
-    if (turnToolCount.read) {
-      const n = turnToolCount.read;
-      parts.push(`${n} ${n === 1 ? "read" : "reads"}`);
-    }
-    if (turnToolCount.search) {
-      const n = turnToolCount.search;
-      parts.push(`${n} ${n === 1 ? "search" : "searches"}`);
-    }
-    if (turnToolCount.write) {
-      const n = turnToolCount.write;
-      parts.push(`${n} ${n === 1 ? "edit" : "edits"}`);
-    }
-    if (turnToolCount.other) {
-      const n = turnToolCount.other;
-      parts.push(`${n} tool${n === 1 ? "" : "s"}`);
-    }
-    let text = parts.length ? `Explored ${parts.join(", ")}` : "Tools";
-    // Only when a live tool both started and finished: a group still running,
-    // or one replayed from history, has no honest number to show.
-    if (turnToolFirstStart && turnToolLastEnd > turnToolFirstStart) {
-      text += ` · ${formatToolDuration(turnToolLastEnd - turnToolFirstStart)}`;
-    }
-    toolTraceSummary.textContent = text;
+    // "8 tool calls": the count is the one thing the folded group has to say;
+    // the per-kind breakdown ("Explored 3 reads, 2 searches, 1 tool") is
+    // what the rows below already show. A group of thoughts and no tools is
+    // named by the thinking.
+    const n = turnToolCount.read + turnToolCount.search + turnToolCount.write + turnToolCount.other;
+    toolTraceSummary.textContent = n ? i18nCount("trace.calls", n) : i18n("reason.brief");
   }
 
-  /** @returns {HTMLElement | null} */
-  function ensureReasoning() {
-    const inner = ensureTurn();
-    if (!inner) {
-      return null;
+  /**
+   * A "Think · …" row in the turn's trace, between the tool calls it led to.
+   * The model's reasoning used to be one fold above all the tools, so what
+   * it thought before the fifth call sat four rows away from that call.
+   * One line, ellipsised; a click shows the whole of it.
+   * @param {string=} text a whole thought (restored history)
+   * @returns {HTMLElement | null}
+   */
+  function makeThinkRow(text) {
+    const list = ensureToolTraceList();
+    if (!list) return null;
+    const row = document.createElement("div");
+    row.className = "tool-block done think-row";
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "tool-head";
+    head.innerHTML =
+      `<span class="tool-icon">${orchIconMarkup("think", { size: "sm" })}</span>` +
+      `<span class="tool-label"><span class="tr-name"></span><span class="tr-detail"></span></span>`;
+    const nameEl = head.querySelector(".tr-name");
+    if (nameEl) nameEl.textContent = i18n("think.label");
+    const body = document.createElement("pre");
+    body.className = "trace-body think-body hidden";
+    head.addEventListener("click", () => {
+      body.classList.toggle("hidden");
+      head.classList.toggle("open");
+    });
+    row.appendChild(head);
+    row.appendChild(body);
+    list.appendChild(row);
+    if (text) {
+      body.textContent = text;
+      setThinkLine(row, false);
     }
+    updateToolTraceSummary();
+    return row;
+  }
+
+  /** The row's one line: the start of the thought, or its newest words while it streams. */
+  function setThinkLine(row, live) {
+    const body = row.querySelector(".think-body");
+    const detail = row.querySelector(".tr-detail");
+    if (!body || !detail) return;
+    const flat = (body.textContent || "").replace(/\s+/g, " ").trim();
+    detail.textContent = live && flat.length > 240 ? "…" + flat.slice(-240) : flat;
+  }
+
+  /** @returns {HTMLElement | null} the body of the thought being streamed. */
+  function ensureReasoning() {
     if (!reasoningDetails) {
-      reasoningDetails = document.createElement("details");
-      reasoningDetails.className = "reasoning-trace trace-details";
-      const sum = document.createElement("summary");
-      sum.className = "trace-summary";
-      sum.textContent = i18n("reason.brief");
-      reasoningBody = document.createElement("pre");
-      reasoningBody.className = "trace-body reasoning-body";
-      reasoningDetails.appendChild(sum);
-      reasoningDetails.appendChild(reasoningBody);
-      inner.insertBefore(reasoningDetails, toolTraceEl || null);
-      reasoningDetails.open = false;
-      reasoningStarted = Date.now();
+      reasoningDetails = makeThinkRow();
+      reasoningBody = reasoningDetails ? reasoningDetails.querySelector(".think-body") : null;
+      if (!reasoningStarted) reasoningStarted = Date.now();
     }
     return reasoningBody;
   }
 
+  /** Streamed reasoning: the text goes into the open thought's row. */
+  function appendReasoning(chunk) {
+    const body = ensureReasoning();
+    if (!body || !reasoningDetails) return;
+    body.textContent = (body.textContent || "") + chunk;
+    setThinkLine(reasoningDetails, true);
+  }
+
+  /** A tool call or the answer began: the thought before it is done. */
   function finalizeReasoningSummary() {
     if (!reasoningDetails || !reasoningBody) {
-      return;
-    }
-    const text = (reasoningBody.textContent || "").trim();
-    if (!text) {
-      reasoningDetails.remove();
       reasoningDetails = null;
       reasoningBody = null;
       return;
     }
-    const sum = reasoningDetails.querySelector(".trace-summary");
-    if (sum) {
-      const sec = reasoningStarted ? Math.round((Date.now() - reasoningStarted) / 1000) : 0;
-      sum.textContent = sec >= 2 ? i18n("reason.for", { n: sec }) : i18n("reason.brief");
+    if (!(reasoningBody.textContent || "").trim()) {
+      reasoningDetails.remove();
+    } else {
+      setThinkLine(reasoningDetails, false);
     }
-    reasoningDetails.open = false;
+    reasoningDetails = null;
+    reasoningBody = null;
   }
 
   function messagesHostFor(msg) {
@@ -431,7 +463,18 @@
   async function renderUnifiedDiffLines(container, before, after, filePath, maxLines = 32) {
     const lang = langFromPath(filePath || "");
     const allRows = alignDiffLines(before, after);
-    const changedRows = allRows.filter((r) => r.type !== "same");
+    // A changed row remembers whether unchanged lines came before it, so two
+    // hunks are drawn as two, not glued into one block.
+    const changedRows = [];
+    let gap = false;
+    for (const r of allRows) {
+      if (r.type === "same") {
+        gap = changedRows.length > 0;
+        continue;
+      }
+      changedRows.push({ ...r, afterGap: gap });
+      gap = false;
+    }
     const displayRows = changedRows.slice(0, maxLines);
     if (displayRows.length === 0) {
       const hint = document.createElement("div");
@@ -447,6 +490,12 @@
     );
     const htmlLines = await requestHighlight(codeLines, lang);
     displayRows.forEach((r, idx) => {
+      if (r.afterGap) {
+        const sep = document.createElement("div");
+        sep.className = "diff-u-sep";
+        sep.textContent = "⋯";
+        container.appendChild(sep);
+      }
       const row = document.createElement("div");
       row.className = "diff-u-row " + r.type;
       const ln = r.type === "del" ? r.leftNum : r.rightNum;
@@ -486,10 +535,7 @@
       diffWrap.className = "tool-body tool-diff-body diff-preview-card";
       const head = document.createElement("div");
       head.className = "diff-preview-head";
-      head.innerHTML =
-        diffExtBadgeHtml(filePath) +
-        `<button type="button" class="diff-preview-name" title="Open file (Shift+click: side-by-side diff)">${escapeAttr(basename(filePath))}</button>` +
-        diffStatsHtml(stats);
+      head.innerHTML = diffExtBadgeHtml(filePath) + diffNameHtml(filePath) + diffStatsHtml(stats);
       const lines = document.createElement("div");
       lines.className = "diff-preview-body";
       diffWrap.appendChild(head);
@@ -507,10 +553,7 @@
     } else {
       const head = diffWrap.querySelector(".diff-preview-head");
       if (head) {
-        head.innerHTML =
-          diffExtBadgeHtml(filePath) +
-          `<button type="button" class="diff-preview-name" title="Open file (Shift+click: side-by-side diff)">${escapeAttr(basename(filePath))}</button>` +
-          diffStatsHtml(stats);
+        head.innerHTML = diffExtBadgeHtml(filePath) + diffNameHtml(filePath) + diffStatsHtml(stats);
         head.querySelector(".diff-preview-name")?.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -521,6 +564,15 @@
     const lines = diffWrap.querySelector(".diff-preview-body");
     if (!lines) return;
     lines.classList.remove("tool-diff-pending-body");
-    lines.textContent = "";
-    await renderUnifiedDiffLines(lines, before, after, filePath, 40);
+    // A card is drawn again whenever pending data for its file arrives, and
+    // the highlighting is async: draws that overlapped all appended into the
+    // same body and each line showed up three times. Draw off-screen; only
+    // the newest draw puts its rows in.
+    const token = {};
+    lines._diffDraw = token;
+    const fresh = document.createElement("div");
+    await renderUnifiedDiffLines(fresh, before, after, filePath, 40);
+    if (lines._diffDraw !== token) return;
+    lines.replaceChildren(...fresh.childNodes);
+    applyDiffFold(block, diffWrap, lines, stats);
   }

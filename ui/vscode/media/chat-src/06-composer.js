@@ -684,6 +684,7 @@
       accessId = id;
       syncAccessUi();
       closeMenus();
+      maybeAutoApplyPending();
     }
   });
 

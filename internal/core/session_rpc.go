@@ -1020,6 +1020,7 @@ func (c *Core) SessionApplyPending(ctx context.Context, params SessionApplyPendi
 			}
 		}
 	}
+	snapshotSettledPending(c.workspaceRoot, sess)
 
 	return &SessionApplyPendingResult{
 		Applied:       true,
@@ -1072,12 +1073,23 @@ func (c *Core) sessionApplyFromStaging(
 		sess.SetPending(nil)
 	}
 	sess.Unlock()
+	snapshotSettledPending(c.workspaceRoot, sess)
 
 	return &SessionApplyPendingResult{
 		Applied:       true,
 		ApplyResponse: merged,
 		RemainingOps:  remaining,
 	}, nil
+}
+
+// snapshotSettledPending writes the session after its pending ops were
+// settled. The chat reloads the review bar from the session file: cleared only
+// in memory, the applied edits came back as pending — and could not be applied
+// again, a created file being there now.
+func snapshotSettledPending(workspaceRoot string, sess *coresession.Session) {
+	if err := sess.Snapshot(workspaceRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "core: session %s apply snapshot failed: %v\n", sess.ID, err)
+	}
 }
 
 func rpcApplyError(err error) error {

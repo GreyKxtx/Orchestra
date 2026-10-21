@@ -44,8 +44,16 @@ func (a *Agent) runModeSwitch(ctx context.Context, c inProcessCall) inProcessOut
 	if !slices.Contains(tools.ModeSwitchTargets, string(target)) {
 		return inProcessOutcome{err: fmt.Errorf("mode_switch: %q is not a mode to switch to; one of %s", req.Mode, strings.Join(tools.ModeSwitchTargets, ", "))}
 	}
+	// Not an error: the model was told the mode, and a turn routed to build
+	// after a conversation in plan still reaches for it. Saying "go on" costs
+	// nothing; a red error in the chat cost the user a scare.
 	if target == a.currentMode() {
-		return inProcessOutcome{err: fmt.Errorf("this turn is already in %s mode", target)}
+		out, _ := json.Marshal(map[string]string{
+			"status":  "already",
+			"mode":    string(target),
+			"message": "This turn is already in " + string(target) + " mode — go on with the task in it.",
+		})
+		return inProcessOutcome{out: out}
 	}
 	return a.askModeSwitch(ctx, c, target, strings.TrimSpace(req.Reason))
 }

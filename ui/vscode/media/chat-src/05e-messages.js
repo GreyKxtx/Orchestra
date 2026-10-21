@@ -10,20 +10,11 @@
     assistantTurn.appendChild(assistantTurnInner);
     messagesEl.appendChild(assistantTurn);
 
+    // A saved turn keeps its reasoning as one text: one Think row at the head
+    // of the trace, the way the live turn began.
     const reasoning = (opts?.reasoning || "").trim();
     if (reasoning) {
-      reasoningDetails = document.createElement("details");
-      reasoningDetails.className = "reasoning-trace trace-details";
-      const sum = document.createElement("summary");
-      sum.className = "trace-summary";
-      sum.textContent = i18n("reason.brief");
-      reasoningBody = document.createElement("pre");
-      reasoningBody.className = "trace-body reasoning-body";
-      reasoningBody.textContent = reasoning;
-      reasoningDetails.appendChild(sum);
-      reasoningDetails.appendChild(reasoningBody);
-      assistantTurnInner.appendChild(reasoningDetails);
-      reasoningDetails.open = false;
+      makeThinkRow(reasoning);
     }
 
     const tools = Array.isArray(opts?.toolBlocks) ? opts.toolBlocks : [];
@@ -64,9 +55,7 @@
       assistantTurnInner.appendChild(assistantBubble);
     }
 
-    if (toolTraceEl) {
-      toolTraceEl.open = false;
-    }
+    settleToolTrace();
     resetTurnState();
     void syncToolDiffPreviews();
     messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -171,6 +160,8 @@
     if (msg.phase === "start") {
       if (msg.scope !== "child") {
         commitPreToolText();
+        // The next thought after this call is a row of its own, below it.
+        finalizeReasoningSummary();
         bumpToolTraceCount(msg.toolName);
       } else {
         assistantBubble = null;

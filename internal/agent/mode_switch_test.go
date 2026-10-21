@@ -159,3 +159,37 @@ func TestModeSwitch_OfferedToTopLevelTurnsWithAUser(t *testing.T) {
 		}
 	}
 }
+
+// Seen live: a turn the router had sent to build opened with
+// mode_switch{build} — the conversation before it had been in plan — and the
+// user saw a red "this turn is already in build mode". The tool names the
+// mode the turn is in and does not offer it; a call that names it anyway is
+// told to go on, without an error and without asking anyone.
+func TestModeSwitch_TheCurrentModeIsNotATargetAndNotAnError(t *testing.T) {
+	tr, v, _ := planWorkspace(t)
+	asker := &approvingAsker{answer: "Yes"}
+	ag, err := New(&scriptLLM{}, v, tr, Options{Mode: ModeBuild, QuestionAsker: asker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var def llm.ToolDef
+	for _, d := range ag.buildToolDefs() {
+		if d.Function.Name == "mode_switch" {
+			def = d
+		}
+	}
+	if !strings.Contains(def.Function.Description, "build") || strings.Contains(string(def.Function.Parameters), `"build"`) {
+		t.Fatalf("mode_switch must say the turn is in build and not offer build: %s / %s", def.Function.Description, def.Function.Parameters)
+	}
+
+	out := ag.runModeSwitch(context.Background(), inProcessCall{input: []byte(`{"mode":"build","reason":"edit index.html"}`)})
+	if out.err != nil {
+		t.Fatalf("naming the current mode must not be an error: %v", out.err)
+	}
+	if !strings.Contains(string(out.out), "already") {
+		t.Fatalf("the model must be told it is already there: %s", out.out)
+	}
+	if asker.asked != 0 {
+		t.Fatalf("nobody is asked about a switch to where the turn already is")
+	}
+}

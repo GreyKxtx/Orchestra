@@ -93,21 +93,40 @@
         '<span class="typing-dots" aria-hidden="true">' +
         '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>' +
         "</span>" +
-        '<span class="typing-label"></span>';
+        '<span class="typing-label"></span>' +
+        '<span class="typing-time"></span>';
+    }
+    // Always the last thing in the chat: made before the turn's first row,
+    // it used to stay above everything the turn then added.
+    if (messagesEl.lastElementChild !== typingIndicatorEl) {
       messagesEl.appendChild(typingIndicatorEl);
     }
     const lab = typingIndicatorEl.querySelector(".typing-label");
     if (lab) {
       lab.textContent = label || i18n("turn.working");
     }
+    tickTypingClock();
     messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  /** "Read… 1m 51s": how long the turn has been at it, in whole seconds. */
+  function tickTypingClock() {
+    const el = typingIndicatorEl?.querySelector(".typing-time");
+    if (!el) return;
+    const sec = busySince ? Math.floor((Date.now() - busySince) / 1000) : 0;
+    el.textContent = sec < 1 ? "" : sec < 60 ? sec + "s" : Math.floor(sec / 60) + "m " + String(sec % 60).padStart(2, "0") + "s";
   }
 
   function updateBusyUi() {
     const label = runStatusLabel();
+    // One status, under the turn. The same "Grep…" also sat over the composer
+    // and in the header's corner — three places saying one thing.
     if (composerStatus) {
-      composerStatus.classList.toggle("hidden", !busy);
+      composerStatus.classList.add("hidden");
       composerStatus.setAttribute("aria-busy", busy ? "true" : "false");
+    }
+    if (chromeHint) {
+      chromeHint.classList.toggle("while-busy", busy);
     }
     if (composerStatusLabel) {
       composerStatusLabel.textContent = label;
@@ -124,7 +143,7 @@
       sendBtn.title = stops ? "Stop" : "Send";
       sendBtn.setAttribute("aria-label", stops ? "Stop" : "Send");
     }
-    setTypingIndicator(busy && !assistantBubble?.textContent?.trim(), label);
+    setTypingIndicator(busy, label);
   }
 
   function setChromeHint(text, isError) {
@@ -153,6 +172,17 @@
 
   function setBusy(next) {
     busy = next;
+    if (next && !busySince) {
+      busySince = Date.now();
+      busyTicker = setInterval(tickTypingClock, 1000);
+      // Under Node (the adapter tests load this bundle) a live interval keeps
+      // the process from ever exiting; a page does not care.
+      if (busyTicker && typeof busyTicker.unref === "function") busyTicker.unref();
+    } else if (!next && busySince) {
+      busySince = 0;
+      clearInterval(busyTicker);
+      busyTicker = 0;
+    }
     if (contextBtn) {
       contextBtn.classList.toggle("busy", next);
     }

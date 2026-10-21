@@ -739,6 +739,13 @@
         });
         return;
 
+      // A diff has a viewer of its own on this page: the renderer's
+      // side-by-side panel. Pointing the click there beats a note that the
+      // page has no editor — which a click on every changed file produced.
+      case "openDiff":
+        toRenderer({ type: "diffViewer", path: msg.path || "", before: msg.before || "", after: msg.after || "" });
+        return;
+
       default:
         // The composer's own messages — the model pill, the Orchestra
         // breakdown, slash commands, @-mentions, rewind, the pending bar — are

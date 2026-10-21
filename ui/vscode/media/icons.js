@@ -58,6 +58,8 @@
     todo: '<path d="M3.5 6.5l1.8 1.8 3-3"/><path d="M3.5 16l1.8 1.8 3-3"/><path d="M12 7h8.5"/><path d="M12 16.5h8.5"/>',
     question: '<path d="M4 5.5h16v10.5H9.5L4 20.5z"/><path d="M12 12.5v-.4c0-1.1 1.6-1.3 1.6-2.6A1.6 1.6 0 0 0 10.5 9"/>',
     memory: '<path d="M6.5 3.5h11v17l-5.5-3.8-5.5 3.8z"/>',
+    // think: a light bulb — the model's reasoning between its calls.
+    think: '<path d="M9.5 17.5h5"/><path d="M10.5 21h3"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2v1.5h5V16c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>',
     skill: '<path d="M11 3l1.7 4.3L17 9l-4.3 1.7L11 15l-1.7-4.3L5 9l4.3-1.7z"/><path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8z"/>',
     trash: '<path d="M4 6.5h16"/><path d="M9.5 6.5V4.5h5v2"/><path d="M6.5 6.5l.9 13h9.2l.9-13"/>',
     diff: '<path d="M4 8h11"/><path d="M12 5l3 3-3 3"/><path d="M20 16H9"/><path d="M12 13l-3 3 3 3"/>',

@@ -128,6 +128,9 @@ var (
 	ToolSkillInvoke = task.ToolSkillInvoke
 	ToolTaskResult  = task.ToolTaskResult
 	ToolModeSwitch  = task.ToolModeSwitch
+	// ToolModeSwitchFrom is mode_switch for a turn in that mode: the mode is
+	// named and not offered as a target.
+	ToolModeSwitchFrom = task.ToolModeSwitchFrom
 
 	// ModeSwitchTargets are the modes mode_switch may name.
 	ModeSwitchTargets = task.ModeSwitchTargets

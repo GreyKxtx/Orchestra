@@ -162,6 +162,7 @@
         diffReviewCursor = 0;
         renderPendingBar();
         void syncToolDiffPreviews();
+        maybeAutoApplyPending();
         break;
       }
       // The host decides the language — the editor's display language, the
@@ -189,6 +190,7 @@
       }
       case "pendingCleared":
         pendingState = { ops: [], diff: [] };
+        pendingExpanded = false;
         diffReviewCursor = 0;
         renderPendingBar();
         syncToolDiffStats();
@@ -207,9 +209,15 @@
         void syncToolDiffPreviews();
         break;
       }
-      case "permissionRequest":
-        showPermissionOverlay(msg.request || {});
+      case "permissionRequest": {
+        const req = msg.request || {};
+        if (autoApprovesPermission(req)) {
+          host.postMessage({ type: "permissionReply", approved: true, always: false });
+          break;
+        }
+        showPermissionOverlay(req);
         break;
+      }
       case "questionAsk":
         showQuestionOverlay(Array.isArray(msg.questions) ? msg.questions : []);
         break;
@@ -333,9 +341,8 @@
         });
         break;
       case "reasoningDelta": {
-        const body = ensureReasoning();
-        if (body && typeof msg.content === "string") {
-          body.textContent = (body.textContent || "") + msg.content;
+        if (typeof msg.content === "string") {
+          appendReasoning(msg.content);
           if (messagesEl) {
             messagesEl.scrollTop = messagesEl.scrollHeight;
           }
@@ -344,6 +351,10 @@
       }
       case "delta":
       case "deltaSync": {
+        // The answer began: the thought before it is a finished row.
+        if (typeof msg.content === "string" && msg.content.trim()) {
+          finalizeReasoningSummary();
+        }
         if (busy) {
           busyStatusText = i18n("turn.writing");
           updateBusyUi();
@@ -548,9 +559,7 @@
       case "turnComplete":
         flushAssistantMarkdown();
         finalizeReasoningSummary();
-        if (toolTraceEl) {
-          toolTraceEl.open = false;
-        }
+        settleToolTrace();
         if (!msg.queuedNext) {
           setBusy(false);
         }

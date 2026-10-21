@@ -186,6 +186,9 @@
 
   /** @type {{ ops: any[]; diff: { path?: string; before?: string; after?: string; reviewStatus?: string }[] }} */
   let pendingState = { ops: [], diff: [] };
+  // The review bar opens as one line — files, +/− and the two buttons — and
+  // shows its diffs only when asked: the full list took half the window.
+  let pendingExpanded = false;
   // Diffs for changes the turn already wrote to disk. Kept apart from
   // pendingState on purpose: these need no decision from the user, so they must
   // never raise the apply bar — they only give the tool blocks a real diff to
@@ -231,7 +234,7 @@
   let toolTraceEl = null;
   /** @type {HTMLElement | null} */
   let toolTraceSummary = null;
-  /** @type {HTMLDetailsElement | null} */
+  /** The "Think" row of the thought being streamed, in the turn's trace. @type {HTMLElement | null} */
   let reasoningDetails = null;
   /** @type {HTMLElement | null} */
   let reasoningBody = null;
@@ -245,6 +248,10 @@
   let turnToolLastEnd = 0;
   let busy = false;
   let busyStatusText = i18n("turn.working");
+  // When the running turn began, for the status line's clock, and the timer
+  // that ticks it. Both zero while idle.
+  let busySince = 0;
+  let busyTicker = 0;
   /** @type {Array<{ id: string; preview: string; fileCount?: number }>} */
   let sendQueue = [];
   /** @type {HTMLElement | null} */

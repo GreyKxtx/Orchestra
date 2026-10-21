@@ -61,6 +61,8 @@
 
       "diff.loading": "Loading diff preview…",
       "diff.more_lines": "… {n} more changed lines",
+      "diff.unfold": "Show {n} more",
+      "diff.fold": "Collapse",
       "diff.open_file": "Open file (Shift+click: side-by-side diff)",
       "diff.keep": "Keep",
       "diff.drop": "Drop",
@@ -118,6 +120,10 @@
       "pending.apply_aria": "Apply",
       "pending.discard_title": "Discard changes",
       "pending.discard_aria": "Discard",
+      "pending.files_changed": "{n} files changed",
+      "pending.changes": "{n} pending changes",
+      "pending.expand": "Show the changes",
+      "pending.collapse": "Hide the changes",
 
       "diff.open_in_editor": "Open in editor",
       "diff.close": "Close",
@@ -206,6 +212,9 @@
       "code.open_file": "Open file",
       "reason.brief": "Thought briefly",
       "reason.for": "Thought for {n}s",
+      "trace.calls.one": "{n} tool call",
+      "trace.calls.other": "{n} tool calls",
+      "think.label": "Think",
       "diff.no_changes": "No line changes detected",
       "diff.unavailable": "Diff preview unavailable",
 
@@ -791,6 +800,8 @@
 
       "diff.loading": "Готовлю показ изменений…",
       "diff.more_lines": "… ещё {n} изменённых строк",
+      "diff.unfold": "Развернуть · ещё {n}",
+      "diff.fold": "Свернуть",
       "diff.open_file": "Открыть файл (Shift+клик: дифф в две колонки)",
       "diff.keep": "Принять",
       "diff.drop": "Отклонить",
@@ -849,6 +860,10 @@
       "pending.apply_aria": "Применить",
       "pending.discard_title": "Отклонить изменения",
       "pending.discard_aria": "Отклонить",
+      "pending.files_changed": "Изменено файлов: {n}",
+      "pending.changes": "Ожидающих правок: {n}",
+      "pending.expand": "Показать изменения",
+      "pending.collapse": "Скрыть изменения",
 
       "diff.open_in_editor": "Открыть в редакторе",
       "diff.close": "Закрыть",
@@ -937,6 +952,11 @@
       "code.open_file": "Открыть файл",
       "reason.brief": "Думал недолго",
       "reason.for": "Думал {n} с",
+      "trace.calls.one": "{n} вызов инструмента",
+      "trace.calls.few": "{n} вызова инструментов",
+      "trace.calls.many": "{n} вызовов инструментов",
+      "trace.calls.other": "{n} вызова инструментов",
+      "think.label": "Мысли",
       "diff.no_changes": "Изменений в строках нет",
       "diff.unavailable": "Показать изменения не удалось",
 
@@ -1544,6 +1564,26 @@
       }
     }
     return s;
+  }
+
+  /**
+   * A count in words: `key.one`, `key.few`, `key.many` or `key.other`, as the
+   * language's plural rules pick for n ("1 вызов", "2 вызова", "5 вызовов"),
+   * falling back to `key.other`.
+   * @param {string} key @param {number} n
+   */
+  function i18nCount(key, n) {
+    let form = "other";
+    try {
+      form = new Intl.PluralRules(uiLang).select(n);
+    } catch {
+      form = n === 1 ? "one" : "other";
+    }
+    const table = I18N_CATALOGUE[uiLang] || {};
+    const fallback = I18N_CATALOGUE[I18N_FALLBACK_LANG] || {};
+    const has = (k) => Object.prototype.hasOwnProperty.call(table, k) || Object.prototype.hasOwnProperty.call(fallback, k);
+    const k = has(key + "." + form) ? key + "." + form : key + ".other";
+    return i18n(k, { n });
   }
 
   /**

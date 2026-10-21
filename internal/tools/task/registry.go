@@ -183,18 +183,36 @@ func ToolPlanExit() llm.ToolDef {
 var ModeSwitchTargets = []string{"build", "plan", "explore", "ask", "debug", "architecture", "orchestra"}
 
 func ToolModeSwitch() llm.ToolDef {
+	return ToolModeSwitchFrom("")
+}
+
+// ToolModeSwitchFrom is mode_switch for a turn in current: the description
+// says which mode the turn is in and the enum leaves it out — a model that did
+// not know switched a build turn to build.
+func ToolModeSwitchFrom(current string) llm.ToolDef {
+	var targets []string
+	for _, m := range ModeSwitchTargets {
+		if m != current {
+			targets = append(targets, m)
+		}
+	}
+	desc := "Ask the user to switch this turn to another mode when the current one cannot do what the task needs " +
+		"(edit files: build; plan first: plan; read-only answers: ask). The user decides; on yes the turn goes on in the new mode with this conversation."
+	if current != "" {
+		desc = "This turn is in " + current + " mode. " + desc + " Never call it to stay in " + current + "."
+	}
+	enum, _ := json.Marshal(targets)
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.ToolFunctionDef{
-			Name: "mode_switch",
-			Description: "Ask the user to switch this turn to another mode when the current one cannot do what the task needs " +
-				"(edit files: build; plan first: plan; read-only answers: ask). The user decides; on yes the turn goes on in the new mode with this conversation.",
+			Name:        "mode_switch",
+			Description: desc,
 			Parameters: toolschema.MustSchema(`{
   "type": "object",
   "additionalProperties": false,
   "required": ["mode", "reason"],
   "properties": {
-    "mode": { "type": "string", "enum": ["build", "plan", "explore", "ask", "debug", "architecture", "orchestra"] },
+    "mode": { "type": "string", "enum": ` + string(enum) + ` },
     "reason": { "type": "string", "minLength": 1, "description": "One sentence, in the user's language: what the new mode is needed for." }
   }
 }`),

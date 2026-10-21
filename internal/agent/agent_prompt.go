@@ -78,7 +78,7 @@ func (a *Agent) computeToolDefs() []llm.ToolDef {
 	}
 	// Every top-level mode can ask the user to become another (mode_switch.go).
 	if a.offersModeSwitch() {
-		base = append(base, tools.ToolModeSwitch())
+		base = append(base, tools.ToolModeSwitchFrom(string(a.currentMode())))
 	}
 	// A skill may change files, so a mode that only reads is not offered one.
 	if a.opts.Mode != ModeOrchestra && !a.modeSpec().ReadOnly() && a.opts.SkillRunner != nil && len(a.opts.Skills) > 0 {

@@ -57,7 +57,7 @@
         return true;
 
       case "applyPending":
-        void settlePending(true, msg.paths);
+        void settlePending(true, msg.paths, msg.auto === true);
         return true;
 
       case "discardPending":
@@ -830,8 +830,10 @@
    * @param {boolean} apply true applies the staged changes, false discards.
    * @param {string[]=} paths when given, settle only these files and leave the
    *   rest of the turn pending — the review list's per-file Keep / Drop.
+   * @param {boolean=} quiet an apply the renderer made itself (access Auto):
+   *   no note in the chat for it.
    */
-  async function settlePending(apply, paths) {
+  async function settlePending(apply, paths, quiet) {
     const st = projectState(currentProjectId);
     const method = apply ? "session.apply_pending" : "session.discard_pending";
     const only = Array.isArray(paths) ? paths.filter((p) => String(p || "").trim()) : [];
@@ -864,6 +866,12 @@
       // message posted here was "pending", which that switch has no case for,
       // so the bar stayed on screen after the user had applied or discarded.
       toRenderer({ type: "pendingCleared" });
+    }
+    // "Changes applied" when nothing was applied told the person their click
+    // worked while the edits came back; and under Auto it is every edit.
+    const settled = apply ? r.applied === true : r.discarded === true;
+    if (quiet || !settled) {
+      return;
     }
     toRenderer({
       type: "systemNote",

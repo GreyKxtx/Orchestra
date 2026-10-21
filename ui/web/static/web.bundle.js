@@ -65,6 +65,8 @@
 
       "diff.loading": "Loading diff preview…",
       "diff.more_lines": "… {n} more changed lines",
+      "diff.unfold": "Show {n} more",
+      "diff.fold": "Collapse",
       "diff.open_file": "Open file (Shift+click: side-by-side diff)",
       "diff.keep": "Keep",
       "diff.drop": "Drop",
@@ -122,6 +124,10 @@
       "pending.apply_aria": "Apply",
       "pending.discard_title": "Discard changes",
       "pending.discard_aria": "Discard",
+      "pending.files_changed": "{n} files changed",
+      "pending.changes": "{n} pending changes",
+      "pending.expand": "Show the changes",
+      "pending.collapse": "Hide the changes",
 
       "diff.open_in_editor": "Open in editor",
       "diff.close": "Close",
@@ -210,6 +216,9 @@
       "code.open_file": "Open file",
       "reason.brief": "Thought briefly",
       "reason.for": "Thought for {n}s",
+      "trace.calls.one": "{n} tool call",
+      "trace.calls.other": "{n} tool calls",
+      "think.label": "Think",
       "diff.no_changes": "No line changes detected",
       "diff.unavailable": "Diff preview unavailable",
 
@@ -795,6 +804,8 @@
 
       "diff.loading": "Готовлю показ изменений…",
       "diff.more_lines": "… ещё {n} изменённых строк",
+      "diff.unfold": "Развернуть · ещё {n}",
+      "diff.fold": "Свернуть",
       "diff.open_file": "Открыть файл (Shift+клик: дифф в две колонки)",
       "diff.keep": "Принять",
       "diff.drop": "Отклонить",
@@ -853,6 +864,10 @@
       "pending.apply_aria": "Применить",
       "pending.discard_title": "Отклонить изменения",
       "pending.discard_aria": "Отклонить",
+      "pending.files_changed": "Изменено файлов: {n}",
+      "pending.changes": "Ожидающих правок: {n}",
+      "pending.expand": "Показать изменения",
+      "pending.collapse": "Скрыть изменения",
 
       "diff.open_in_editor": "Открыть в редакторе",
       "diff.close": "Закрыть",
@@ -941,6 +956,11 @@
       "code.open_file": "Открыть файл",
       "reason.brief": "Думал недолго",
       "reason.for": "Думал {n} с",
+      "trace.calls.one": "{n} вызов инструмента",
+      "trace.calls.few": "{n} вызова инструментов",
+      "trace.calls.many": "{n} вызовов инструментов",
+      "trace.calls.other": "{n} вызова инструментов",
+      "think.label": "Мысли",
       "diff.no_changes": "Изменений в строках нет",
       "diff.unavailable": "Показать изменения не удалось",
 
@@ -1551,6 +1571,26 @@
   }
 
   /**
+   * A count in words: `key.one`, `key.few`, `key.many` or `key.other`, as the
+   * language's plural rules pick for n ("1 вызов", "2 вызова", "5 вызовов"),
+   * falling back to `key.other`.
+   * @param {string} key @param {number} n
+   */
+  function i18nCount(key, n) {
+    let form = "other";
+    try {
+      form = new Intl.PluralRules(uiLang).select(n);
+    } catch {
+      form = n === 1 ? "one" : "other";
+    }
+    const table = I18N_CATALOGUE[uiLang] || {};
+    const fallback = I18N_CATALOGUE[I18N_FALLBACK_LANG] || {};
+    const has = (k) => Object.prototype.hasOwnProperty.call(table, k) || Object.prototype.hasOwnProperty.call(fallback, k);
+    const k = has(key + "." + form) ? key + "." + form : key + ".other";
+    return i18n(k, { n });
+  }
+
+  /**
    * Translate markup that was written in HTML rather than built in JS:
    * data-i18n sets the text, data-i18n-html sets markup (for the handful of
    * strings that carry a <code> or <em> — the catalogue is compiled in, never
@@ -1645,6 +1685,8 @@
     todo: '<path d="M3.5 6.5l1.8 1.8 3-3"/><path d="M3.5 16l1.8 1.8 3-3"/><path d="M12 7h8.5"/><path d="M12 16.5h8.5"/>',
     question: '<path d="M4 5.5h16v10.5H9.5L4 20.5z"/><path d="M12 12.5v-.4c0-1.1 1.6-1.3 1.6-2.6A1.6 1.6 0 0 0 10.5 9"/>',
     memory: '<path d="M6.5 3.5h11v17l-5.5-3.8-5.5 3.8z"/>',
+    // think: a light bulb — the model's reasoning between its calls.
+    think: '<path d="M9.5 17.5h5"/><path d="M10.5 21h3"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2v1.5h5V16c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/>',
     skill: '<path d="M11 3l1.7 4.3L17 9l-4.3 1.7L11 15l-1.7-4.3L5 9l4.3-1.7z"/><path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8z"/>',
     trash: '<path d="M4 6.5h16"/><path d="M9.5 6.5V4.5h5v2"/><path d="M6.5 6.5l.9 13h9.2l.9-13"/>',
     diff: '<path d="M4 8h11"/><path d="M12 5l3 3-3 3"/><path d="M20 16H9"/><path d="M12 13l-3 3 3 3"/>',
@@ -2273,6 +2315,9 @@
 
   /** @type {{ ops: any[]; diff: { path?: string; before?: string; after?: string; reviewStatus?: string }[] }} */
   let pendingState = { ops: [], diff: [] };
+  // The review bar opens as one line — files, +/− and the two buttons — and
+  // shows its diffs only when asked: the full list took half the window.
+  let pendingExpanded = false;
   // Diffs for changes the turn already wrote to disk. Kept apart from
   // pendingState on purpose: these need no decision from the user, so they must
   // never raise the apply bar — they only give the tool blocks a real diff to
@@ -2318,7 +2363,7 @@
   let toolTraceEl = null;
   /** @type {HTMLElement | null} */
   let toolTraceSummary = null;
-  /** @type {HTMLDetailsElement | null} */
+  /** The "Think" row of the thought being streamed, in the turn's trace. @type {HTMLElement | null} */
   let reasoningDetails = null;
   /** @type {HTMLElement | null} */
   let reasoningBody = null;
@@ -2332,6 +2377,10 @@
   let turnToolLastEnd = 0;
   let busy = false;
   let busyStatusText = i18n("turn.working");
+  // When the running turn began, for the status line's clock, and the timer
+  // that ticks it. Both zero while idle.
+  let busySince = 0;
+  let busyTicker = 0;
   /** @type {Array<{ id: string; preview: string; fileCount?: number }>} */
   let sendQueue = [];
   /** @type {HTMLElement | null} */
@@ -3102,7 +3151,7 @@
     head.className = "diff-preview-head";
     head.innerHTML =
       diffExtBadgeHtml(filePath) +
-      `<button type="button" class="diff-preview-name" title="${escapeAttr(i18n("diff.open_file"))}">${escapeAttr(basename(filePath))}</button>` +
+      diffNameHtml(filePath) +
       `<span class="tool-diff-pending">…</span>`;
     const lines = document.createElement("div");
     lines.className = "diff-preview-body tool-diff-pending-body";
@@ -3137,18 +3186,117 @@
     }
     pendingBar.classList.remove("hidden");
     const fileCount = pendingState.diff.length;
-    if (pendingLabel) {
-      pendingLabel.textContent = fileCount
-        ? `${fileCount} file${fileCount === 1 ? "" : "s"} changed`
-        : `${n} pending change${n === 1 ? "" : "s"}`;
+    let add = 0;
+    let del = 0;
+    for (const d of pendingState.diff) {
+      const s = countDiffStats(d.before, d.after);
+      add += s.add || 0;
+      del += s.del || 0;
     }
-    renderPendingReviewList();
+    if (pendingLabel) {
+      pendingLabel.innerHTML =
+        escapeAttr(fileCount ? i18n("pending.files_changed", { n: fileCount }) : i18n("pending.changes", { n })) +
+        diffStatsHtml({ add, del });
+    }
+    ensurePendingToggle();
+    pendingBar.classList.toggle("collapsed", !pendingExpanded);
+    if (pendingExpanded) {
+      renderPendingReviewList();
+    }
+  }
+
+  /** The bar's show/hide button beside Apply and Discard. */
+  function ensurePendingToggle() {
+    if (!pendingLabel) return;
+    const btn = document.getElementById("pending-toggle-btn");
+    if (!btn) return;
+    if (!btn.dataset.bound) {
+      btn.dataset.bound = "1";
+      btn.addEventListener("click", () => {
+        pendingExpanded = !pendingExpanded;
+        renderPendingBar();
+      });
+      pendingLabel.addEventListener("click", () => btn.click());
+    }
+    // The set's icons, not ▾ ✓ ✗: font glyphs come out at a different size
+    // and weight in every font and sat crooked in their boxes.
+    btn.innerHTML = pendingExpanded
+      ? orchIconMarkup("chevron-up", { size: "sm" })
+      : orchIconMarkup("chevron-down", { size: "sm" });
+    const applyBtn = document.getElementById("pending-apply-btn");
+    if (applyBtn && !applyBtn.querySelector("svg")) applyBtn.innerHTML = orchIconMarkup("check", { size: "sm" });
+    const rejectBtn = document.getElementById("pending-reject-btn");
+    if (rejectBtn && !rejectBtn.querySelector("svg")) rejectBtn.innerHTML = orchIconMarkup("close", { size: "sm" });
+    btn.title = i18n(pendingExpanded ? "pending.collapse" : "pending.expand");
+    btn.setAttribute("aria-label", btn.title);
+    btn.setAttribute("aria-expanded", String(pendingExpanded));
+  }
+
+  // Access "Auto" is the person's word that the agent writes and runs without
+  // asking. A turn keeps the flags it was sent with, so switching to Auto in
+  // the middle of one changed nothing: the bar kept asking to accept every
+  // edit. Under Auto the bar settles itself.
+  function maybeAutoApplyPending() {
+    if (accessId !== "auto" || !(pendingState.ops.length || pendingState.diff.length)) return;
+    // auto: no "changes applied" line per edit — under Auto that is every edit.
+    host.postMessage({ type: "applyPending", auto: true });
+  }
+
+  /** @param {any} request A command's consent under Auto is already given. */
+  function autoApprovesPermission(request) {
+    const kind = request && request.kind;
+    return accessId === "auto" && (!kind || kind === "exec");
   }
 
   function diffExtBadgeHtml(filePath) {
     const ext = fileExtLabel(filePath || "");
     const lang = langFromPath(filePath || "");
     return `<span class="diff-ext-badge lang-${escapeAttr(lang)}">${escapeAttr(ext)}</span>`;
+  }
+
+  /** The file's name, then its folder in grey: a card names the file at a
+   *  glance and still tells two index.html apart. */
+  function diffNameHtml(filePath) {
+    const p = String(filePath || "").replace(/\\/g, "/");
+    const name = basename(p) || "file";
+    const dir = p.length > name.length ? p.slice(0, p.length - name.length).replace(/\/+$/, "") : "";
+    return (
+      `<button type="button" class="diff-preview-name" title="${escapeAttr((p ? p + " — " : "") + i18n("diff.open_file"))}">${escapeAttr(name)}</button>` +
+      (dir ? `<span class="diff-preview-dir">${escapeAttr(dir)}</span>` : "")
+    );
+  }
+
+  // A card in the chat shows the first few changed lines and folds the rest:
+  // a new 200-line file was a wall of green between two sentences.
+  const DIFF_FOLD_ROWS = 6;
+
+  function applyDiffFold(block, card, lines, stats) {
+    card.querySelector(".diff-fold-btn")?.remove();
+    const rows = lines.querySelectorAll(".diff-u-row").length;
+    const total = Math.max(rows, (stats?.add || 0) + (stats?.del || 0));
+    // Folding away one or two lines costs a click and saves nothing.
+    const foldable = rows > DIFF_FOLD_ROWS + 2;
+    const open = block.dataset.diffOpen === "1";
+    card.classList.toggle("folded", foldable && !open);
+    if (!foldable) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "diff-fold-btn";
+    btn.textContent = open ? i18n("diff.fold") : i18n("diff.unfold", { n: total - DIFF_FOLD_ROWS });
+    btn.setAttribute("aria-expanded", String(open));
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      block.dataset.diffOpen = open ? "0" : "1";
+      applyDiffFold(block, card, lines, stats);
+    });
+    card.appendChild(btn);
+    if (!lines.dataset.foldBound) {
+      lines.dataset.foldBound = "1";
+      lines.addEventListener("click", () => {
+        if (card.classList.contains("folded")) card.querySelector(".diff-fold-btn")?.click();
+      });
+    }
   }
 
   function diffStatsHtml(stats) {
@@ -3168,7 +3316,12 @@
     if (!pendingState.diff.length) {
       return;
     }
+    // Two overlapping draws (pending data twice in quick succession) each
+    // appended the whole list; a draw that a newer one replaced stops.
+    const draw = {};
+    pendingReviewListEl._draw = draw;
     for (let idx = 0; idx < pendingState.diff.length; idx++) {
+      if (pendingReviewListEl._draw !== draw) return;
       const d = pendingState.diff[idx];
       const stats = countDiffStats(d.before, d.after);
       const item = document.createElement("div");
@@ -3180,7 +3333,7 @@
       head.className = "diff-preview-head";
       head.innerHTML =
         diffExtBadgeHtml(d.path || "") +
-        `<button type="button" class="diff-preview-name" title="${escapeAttr(i18n("diff.open_file"))}">${escapeAttr(basename(d.path || "file"))}</button>` +
+        diffNameHtml(d.path || "") +
         diffStatsHtml(stats) +
         // Per-file decisions, the same two the a/x keys make. Without them the
         // only discoverable choice is all-or-nothing on the bar below.
@@ -3195,7 +3348,7 @@
       item.appendChild(head);
       item.appendChild(body);
       pendingReviewListEl.appendChild(item);
-      await renderUnifiedDiffLines(body, d.before || "", d.after || "", d.path || "", 28);
+      await renderUnifiedDiffLines(body, d.before || "", d.after || "", d.path || "", 14);
       if (idx === diffReviewCursor) {
         item.scrollIntoView({ block: "nearest", behavior: "smooth" });
       }
@@ -3287,8 +3440,10 @@
 
   /** Myers-style line alignment for side-by-side diff panes. */
   function alignDiffLines(before, after) {
-    const a = (before || "").split("\n");
-    const b = (after || "").split("\n");
+    // An empty side has no lines, not one empty line: a new file is all "+",
+    // without a "−" for a blank line that never was.
+    const a = before ? before.split("\n") : [];
+    const b = after ? after.split("\n") : [];
     const n = a.length;
     const m = b.length;
     const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
@@ -3305,12 +3460,13 @@
         rows.push({ type: "same", left: a[i], right: b[j], leftNum: i + 1, rightNum: j + 1 });
         i++;
         j++;
-      } else if (j < m && (i >= n || dp[i][j + 1] >= dp[i + 1][j])) {
-        rows.push({ type: "add", right: b[j], rightNum: j + 1 });
-        j++;
-      } else if (i < n) {
+      } else if (i < n && (j >= m || dp[i + 1][j] >= dp[i][j + 1])) {
+        // On a tie the old line goes first: a replaced line reads − then +.
         rows.push({ type: "del", left: a[i], leftNum: i + 1 });
         i++;
+      } else if (j < m) {
+        rows.push({ type: "add", right: b[j], rightNum: j + 1 });
+        j++;
       }
     }
     return rows;
@@ -3600,7 +3756,8 @@
       toolTraceEl.appendChild(toolTraceSummary);
       toolTraceEl.appendChild(list);
       inner.appendChild(toolTraceEl);
-      toolTraceEl.open = false;
+      // Open while the turn works: the rows are what the person watches.
+      toolTraceEl.open = true;
     }
     return toolTraceEl.querySelector(".tool-trace-list");
   }
@@ -3619,76 +3776,107 @@
     updateToolTraceSummary();
   }
 
+  // A finished group stays open when it is short enough to read at a glance;
+  // a long one folds to its "N tool calls" line. Thoughts do not count.
+  const TRACE_OPEN_MAX_CALLS = 12;
+
+  function settleToolTrace() {
+    if (!toolTraceEl) return;
+    const calls = toolTraceEl.querySelectorAll(".tool-trace-list > .tool-block:not(.think-row)").length;
+    toolTraceEl.open = calls <= TRACE_OPEN_MAX_CALLS;
+  }
+
   function updateToolTraceSummary() {
     if (!toolTraceSummary) {
       return;
     }
-    const parts = [];
-    if (turnToolCount.read) {
-      const n = turnToolCount.read;
-      parts.push(`${n} ${n === 1 ? "read" : "reads"}`);
-    }
-    if (turnToolCount.search) {
-      const n = turnToolCount.search;
-      parts.push(`${n} ${n === 1 ? "search" : "searches"}`);
-    }
-    if (turnToolCount.write) {
-      const n = turnToolCount.write;
-      parts.push(`${n} ${n === 1 ? "edit" : "edits"}`);
-    }
-    if (turnToolCount.other) {
-      const n = turnToolCount.other;
-      parts.push(`${n} tool${n === 1 ? "" : "s"}`);
-    }
-    let text = parts.length ? `Explored ${parts.join(", ")}` : "Tools";
-    // Only when a live tool both started and finished: a group still running,
-    // or one replayed from history, has no honest number to show.
-    if (turnToolFirstStart && turnToolLastEnd > turnToolFirstStart) {
-      text += ` · ${formatToolDuration(turnToolLastEnd - turnToolFirstStart)}`;
-    }
-    toolTraceSummary.textContent = text;
+    // "8 tool calls": the count is the one thing the folded group has to say;
+    // the per-kind breakdown ("Explored 3 reads, 2 searches, 1 tool") is
+    // what the rows below already show. A group of thoughts and no tools is
+    // named by the thinking.
+    const n = turnToolCount.read + turnToolCount.search + turnToolCount.write + turnToolCount.other;
+    toolTraceSummary.textContent = n ? i18nCount("trace.calls", n) : i18n("reason.brief");
   }
 
-  /** @returns {HTMLElement | null} */
-  function ensureReasoning() {
-    const inner = ensureTurn();
-    if (!inner) {
-      return null;
+  /**
+   * A "Think · …" row in the turn's trace, between the tool calls it led to.
+   * The model's reasoning used to be one fold above all the tools, so what
+   * it thought before the fifth call sat four rows away from that call.
+   * One line, ellipsised; a click shows the whole of it.
+   * @param {string=} text a whole thought (restored history)
+   * @returns {HTMLElement | null}
+   */
+  function makeThinkRow(text) {
+    const list = ensureToolTraceList();
+    if (!list) return null;
+    const row = document.createElement("div");
+    row.className = "tool-block done think-row";
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "tool-head";
+    head.innerHTML =
+      `<span class="tool-icon">${orchIconMarkup("think", { size: "sm" })}</span>` +
+      `<span class="tool-label"><span class="tr-name"></span><span class="tr-detail"></span></span>`;
+    const nameEl = head.querySelector(".tr-name");
+    if (nameEl) nameEl.textContent = i18n("think.label");
+    const body = document.createElement("pre");
+    body.className = "trace-body think-body hidden";
+    head.addEventListener("click", () => {
+      body.classList.toggle("hidden");
+      head.classList.toggle("open");
+    });
+    row.appendChild(head);
+    row.appendChild(body);
+    list.appendChild(row);
+    if (text) {
+      body.textContent = text;
+      setThinkLine(row, false);
     }
+    updateToolTraceSummary();
+    return row;
+  }
+
+  /** The row's one line: the start of the thought, or its newest words while it streams. */
+  function setThinkLine(row, live) {
+    const body = row.querySelector(".think-body");
+    const detail = row.querySelector(".tr-detail");
+    if (!body || !detail) return;
+    const flat = (body.textContent || "").replace(/\s+/g, " ").trim();
+    detail.textContent = live && flat.length > 240 ? "…" + flat.slice(-240) : flat;
+  }
+
+  /** @returns {HTMLElement | null} the body of the thought being streamed. */
+  function ensureReasoning() {
     if (!reasoningDetails) {
-      reasoningDetails = document.createElement("details");
-      reasoningDetails.className = "reasoning-trace trace-details";
-      const sum = document.createElement("summary");
-      sum.className = "trace-summary";
-      sum.textContent = i18n("reason.brief");
-      reasoningBody = document.createElement("pre");
-      reasoningBody.className = "trace-body reasoning-body";
-      reasoningDetails.appendChild(sum);
-      reasoningDetails.appendChild(reasoningBody);
-      inner.insertBefore(reasoningDetails, toolTraceEl || null);
-      reasoningDetails.open = false;
-      reasoningStarted = Date.now();
+      reasoningDetails = makeThinkRow();
+      reasoningBody = reasoningDetails ? reasoningDetails.querySelector(".think-body") : null;
+      if (!reasoningStarted) reasoningStarted = Date.now();
     }
     return reasoningBody;
   }
 
+  /** Streamed reasoning: the text goes into the open thought's row. */
+  function appendReasoning(chunk) {
+    const body = ensureReasoning();
+    if (!body || !reasoningDetails) return;
+    body.textContent = (body.textContent || "") + chunk;
+    setThinkLine(reasoningDetails, true);
+  }
+
+  /** A tool call or the answer began: the thought before it is done. */
   function finalizeReasoningSummary() {
     if (!reasoningDetails || !reasoningBody) {
-      return;
-    }
-    const text = (reasoningBody.textContent || "").trim();
-    if (!text) {
-      reasoningDetails.remove();
       reasoningDetails = null;
       reasoningBody = null;
       return;
     }
-    const sum = reasoningDetails.querySelector(".trace-summary");
-    if (sum) {
-      const sec = reasoningStarted ? Math.round((Date.now() - reasoningStarted) / 1000) : 0;
-      sum.textContent = sec >= 2 ? i18n("reason.for", { n: sec }) : i18n("reason.brief");
+    if (!(reasoningBody.textContent || "").trim()) {
+      reasoningDetails.remove();
+    } else {
+      setThinkLine(reasoningDetails, false);
     }
-    reasoningDetails.open = false;
+    reasoningDetails = null;
+    reasoningBody = null;
   }
 
   function messagesHostFor(msg) {
@@ -3806,7 +3994,18 @@
   async function renderUnifiedDiffLines(container, before, after, filePath, maxLines = 32) {
     const lang = langFromPath(filePath || "");
     const allRows = alignDiffLines(before, after);
-    const changedRows = allRows.filter((r) => r.type !== "same");
+    // A changed row remembers whether unchanged lines came before it, so two
+    // hunks are drawn as two, not glued into one block.
+    const changedRows = [];
+    let gap = false;
+    for (const r of allRows) {
+      if (r.type === "same") {
+        gap = changedRows.length > 0;
+        continue;
+      }
+      changedRows.push({ ...r, afterGap: gap });
+      gap = false;
+    }
     const displayRows = changedRows.slice(0, maxLines);
     if (displayRows.length === 0) {
       const hint = document.createElement("div");
@@ -3822,6 +4021,12 @@
     );
     const htmlLines = await requestHighlight(codeLines, lang);
     displayRows.forEach((r, idx) => {
+      if (r.afterGap) {
+        const sep = document.createElement("div");
+        sep.className = "diff-u-sep";
+        sep.textContent = "⋯";
+        container.appendChild(sep);
+      }
       const row = document.createElement("div");
       row.className = "diff-u-row " + r.type;
       const ln = r.type === "del" ? r.leftNum : r.rightNum;
@@ -3861,10 +4066,7 @@
       diffWrap.className = "tool-body tool-diff-body diff-preview-card";
       const head = document.createElement("div");
       head.className = "diff-preview-head";
-      head.innerHTML =
-        diffExtBadgeHtml(filePath) +
-        `<button type="button" class="diff-preview-name" title="Open file (Shift+click: side-by-side diff)">${escapeAttr(basename(filePath))}</button>` +
-        diffStatsHtml(stats);
+      head.innerHTML = diffExtBadgeHtml(filePath) + diffNameHtml(filePath) + diffStatsHtml(stats);
       const lines = document.createElement("div");
       lines.className = "diff-preview-body";
       diffWrap.appendChild(head);
@@ -3882,10 +4084,7 @@
     } else {
       const head = diffWrap.querySelector(".diff-preview-head");
       if (head) {
-        head.innerHTML =
-          diffExtBadgeHtml(filePath) +
-          `<button type="button" class="diff-preview-name" title="Open file (Shift+click: side-by-side diff)">${escapeAttr(basename(filePath))}</button>` +
-          diffStatsHtml(stats);
+        head.innerHTML = diffExtBadgeHtml(filePath) + diffNameHtml(filePath) + diffStatsHtml(stats);
         head.querySelector(".diff-preview-name")?.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -3896,8 +4095,17 @@
     const lines = diffWrap.querySelector(".diff-preview-body");
     if (!lines) return;
     lines.classList.remove("tool-diff-pending-body");
-    lines.textContent = "";
-    await renderUnifiedDiffLines(lines, before, after, filePath, 40);
+    // A card is drawn again whenever pending data for its file arrives, and
+    // the highlighting is async: draws that overlapped all appended into the
+    // same body and each line showed up three times. Draw off-screen; only
+    // the newest draw puts its rows in.
+    const token = {};
+    lines._diffDraw = token;
+    const fresh = document.createElement("div");
+    await renderUnifiedDiffLines(fresh, before, after, filePath, 40);
+    if (lines._diffDraw !== token) return;
+    lines.replaceChildren(...fresh.childNodes);
+    applyDiffFold(block, diffWrap, lines, stats);
   }
   function hideOverlay() {
     overlay?.classList.add("hidden");
@@ -4229,21 +4437,40 @@
         '<span class="typing-dots" aria-hidden="true">' +
         '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>' +
         "</span>" +
-        '<span class="typing-label"></span>';
+        '<span class="typing-label"></span>' +
+        '<span class="typing-time"></span>';
+    }
+    // Always the last thing in the chat: made before the turn's first row,
+    // it used to stay above everything the turn then added.
+    if (messagesEl.lastElementChild !== typingIndicatorEl) {
       messagesEl.appendChild(typingIndicatorEl);
     }
     const lab = typingIndicatorEl.querySelector(".typing-label");
     if (lab) {
       lab.textContent = label || i18n("turn.working");
     }
+    tickTypingClock();
     messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  /** "Read… 1m 51s": how long the turn has been at it, in whole seconds. */
+  function tickTypingClock() {
+    const el = typingIndicatorEl?.querySelector(".typing-time");
+    if (!el) return;
+    const sec = busySince ? Math.floor((Date.now() - busySince) / 1000) : 0;
+    el.textContent = sec < 1 ? "" : sec < 60 ? sec + "s" : Math.floor(sec / 60) + "m " + String(sec % 60).padStart(2, "0") + "s";
   }
 
   function updateBusyUi() {
     const label = runStatusLabel();
+    // One status, under the turn. The same "Grep…" also sat over the composer
+    // and in the header's corner — three places saying one thing.
     if (composerStatus) {
-      composerStatus.classList.toggle("hidden", !busy);
+      composerStatus.classList.add("hidden");
       composerStatus.setAttribute("aria-busy", busy ? "true" : "false");
+    }
+    if (chromeHint) {
+      chromeHint.classList.toggle("while-busy", busy);
     }
     if (composerStatusLabel) {
       composerStatusLabel.textContent = label;
@@ -4260,7 +4487,7 @@
       sendBtn.title = stops ? "Stop" : "Send";
       sendBtn.setAttribute("aria-label", stops ? "Stop" : "Send");
     }
-    setTypingIndicator(busy && !assistantBubble?.textContent?.trim(), label);
+    setTypingIndicator(busy, label);
   }
 
   function setChromeHint(text, isError) {
@@ -4289,6 +4516,17 @@
 
   function setBusy(next) {
     busy = next;
+    if (next && !busySince) {
+      busySince = Date.now();
+      busyTicker = setInterval(tickTypingClock, 1000);
+      // Under Node (the adapter tests load this bundle) a live interval keeps
+      // the process from ever exiting; a page does not care.
+      if (busyTicker && typeof busyTicker.unref === "function") busyTicker.unref();
+    } else if (!next && busySince) {
+      busySince = 0;
+      clearInterval(busyTicker);
+      busyTicker = 0;
+    }
     if (contextBtn) {
       contextBtn.classList.toggle("busy", next);
     }
@@ -4764,28 +5002,38 @@
     return typeof path === "string" ? path.trim() : "";
   }
 
-  function toolPreviewLine(name, argsRaw, content) {
+  /**
+   * A row's words: the tool, then what it ran on — "Read · src/app.js",
+   * "Glob · *", "Shell · List files in the working directory". The detail is
+   * the path as the model gave it, the pattern, or a command's own
+   * description (the command itself when it has none, and in the tooltip).
+   * @returns {{ name: string; detail: string; title: string }}
+   */
+  function toolRowParts(name, argsRaw, content) {
     const disp = toolDisplayName(name);
+    const kind = toolKind(name);
+    // A search names what it looked for; the folder it looked in ("." more
+    // often than not) goes to the tooltip.
+    if (kind === "search" || kind === "glob") {
+      const args = parseToolArgs(argsRaw);
+      const pat = String(args.pattern || args.query || "");
+      const where = String(args.path || "");
+      if (pat) return { name: disp, detail: pat, title: where ? pat + "  in  " + where : pat };
+    }
     const path = toolPathFromArgs(name, argsRaw, content);
     if (path) {
-      return `${disp} ${basename(path)}`;
+      return { name: disp, detail: path, title: path };
     }
-    if (toolKind(name) === "search" || toolKind(name) === "glob") {
+    if (kind === "exec") {
       const args = parseToolArgs(argsRaw);
-      const pat = args.pattern || args.query || "";
-      return pat ? `${disp} "${pat}"` : disp;
-    }
-    if (toolKind(name) === "exec") {
-      const args = parseToolArgs(argsRaw);
-      const cmd = args.command || args.description || "";
-      if (cmd) {
-        return cmd.length > 56 ? cmd.slice(0, 53) + "…" : cmd;
-      }
+      const cmd = String(args.command || "");
+      const desc = String(args.description || "");
+      return { name: disp, detail: desc || cmd, title: cmd || desc };
     }
     if (content && content.length < 80) {
-      return `${disp} · ${content}`;
+      return { name: disp, detail: content, title: "" };
     }
-    return disp;
+    return { name: disp, detail: "", title: "" };
   }
 
   // formatToolDuration renders a tool's wall time the way the TUI does
@@ -5006,10 +5254,24 @@
     if (!running) {
       block.classList.toggle("tool-failed", toolResultIsError(content));
     }
-    if (label) label.textContent = toolPreviewLine(name, argsRaw, content);
-    if (sub) {
-      sub.textContent = filePath && filePath.includes("/") ? filePath : "";
+    if (label) {
+      const parts = toolRowParts(name, argsRaw, content);
+      label.textContent = "";
+      const nameEl = document.createElement("span");
+      nameEl.className = "tr-name";
+      nameEl.textContent = parts.name;
+      label.appendChild(nameEl);
+      if (parts.detail) {
+        const detailEl = document.createElement("span");
+        detailEl.className = "tr-detail" + (filePath && parts.detail === filePath ? " tr-path" : "");
+        detailEl.textContent = parts.detail;
+        label.appendChild(detailEl);
+      }
+      if (parts.title) head.title = parts.title;
     }
+    // The detail carries the whole path now; a second copy at the right edge
+    // said the same thing smaller.
+    if (sub) sub.textContent = "";
     if (statsEl && filePath && toolKind(name) === "write") {
       const diff = findDiffForPath(filePath);
       if (diff) {
@@ -5472,20 +5734,11 @@
     assistantTurn.appendChild(assistantTurnInner);
     messagesEl.appendChild(assistantTurn);
 
+    // A saved turn keeps its reasoning as one text: one Think row at the head
+    // of the trace, the way the live turn began.
     const reasoning = (opts?.reasoning || "").trim();
     if (reasoning) {
-      reasoningDetails = document.createElement("details");
-      reasoningDetails.className = "reasoning-trace trace-details";
-      const sum = document.createElement("summary");
-      sum.className = "trace-summary";
-      sum.textContent = i18n("reason.brief");
-      reasoningBody = document.createElement("pre");
-      reasoningBody.className = "trace-body reasoning-body";
-      reasoningBody.textContent = reasoning;
-      reasoningDetails.appendChild(sum);
-      reasoningDetails.appendChild(reasoningBody);
-      assistantTurnInner.appendChild(reasoningDetails);
-      reasoningDetails.open = false;
+      makeThinkRow(reasoning);
     }
 
     const tools = Array.isArray(opts?.toolBlocks) ? opts.toolBlocks : [];
@@ -5526,9 +5779,7 @@
       assistantTurnInner.appendChild(assistantBubble);
     }
 
-    if (toolTraceEl) {
-      toolTraceEl.open = false;
-    }
+    settleToolTrace();
     resetTurnState();
     void syncToolDiffPreviews();
     messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -5633,6 +5884,8 @@
     if (msg.phase === "start") {
       if (msg.scope !== "child") {
         commitPreToolText();
+        // The next thought after this call is a row of its own, below it.
+        finalizeReasoningSummary();
         bumpToolTraceCount(msg.toolName);
       } else {
         assistantBubble = null;
@@ -7400,6 +7653,7 @@
       accessId = id;
       syncAccessUi();
       closeMenus();
+      maybeAutoApplyPending();
     }
   });
 
@@ -7839,6 +8093,7 @@
         diffReviewCursor = 0;
         renderPendingBar();
         void syncToolDiffPreviews();
+        maybeAutoApplyPending();
         break;
       }
       // The host decides the language — the editor's display language, the
@@ -7866,6 +8121,7 @@
       }
       case "pendingCleared":
         pendingState = { ops: [], diff: [] };
+        pendingExpanded = false;
         diffReviewCursor = 0;
         renderPendingBar();
         syncToolDiffStats();
@@ -7884,9 +8140,15 @@
         void syncToolDiffPreviews();
         break;
       }
-      case "permissionRequest":
-        showPermissionOverlay(msg.request || {});
+      case "permissionRequest": {
+        const req = msg.request || {};
+        if (autoApprovesPermission(req)) {
+          host.postMessage({ type: "permissionReply", approved: true, always: false });
+          break;
+        }
+        showPermissionOverlay(req);
         break;
+      }
       case "questionAsk":
         showQuestionOverlay(Array.isArray(msg.questions) ? msg.questions : []);
         break;
@@ -8010,9 +8272,8 @@
         });
         break;
       case "reasoningDelta": {
-        const body = ensureReasoning();
-        if (body && typeof msg.content === "string") {
-          body.textContent = (body.textContent || "") + msg.content;
+        if (typeof msg.content === "string") {
+          appendReasoning(msg.content);
           if (messagesEl) {
             messagesEl.scrollTop = messagesEl.scrollHeight;
           }
@@ -8021,6 +8282,10 @@
       }
       case "delta":
       case "deltaSync": {
+        // The answer began: the thought before it is a finished row.
+        if (typeof msg.content === "string" && msg.content.trim()) {
+          finalizeReasoningSummary();
+        }
         if (busy) {
           busyStatusText = i18n("turn.writing");
           updateBusyUi();
@@ -8225,9 +8490,7 @@
       case "turnComplete":
         flushAssistantMarkdown();
         finalizeReasoningSummary();
-        if (toolTraceEl) {
-          toolTraceEl.open = false;
-        }
+        settleToolTrace();
         if (!msg.queuedNext) {
           setBusy(false);
         }
@@ -9075,6 +9338,13 @@
               .replace(/>/g, "&gt;")
           ),
         });
+        return;
+
+      // A diff has a viewer of its own on this page: the renderer's
+      // side-by-side panel. Pointing the click there beats a note that the
+      // page has no editor — which a click on every changed file produced.
+      case "openDiff":
+        toRenderer({ type: "diffViewer", path: msg.path || "", before: msg.before || "", after: msg.after || "" });
         return;
 
       default:
@@ -13239,7 +13509,7 @@
         return true;
 
       case "applyPending":
-        void settlePending(true, msg.paths);
+        void settlePending(true, msg.paths, msg.auto === true);
         return true;
 
       case "discardPending":
@@ -14012,8 +14282,10 @@
    * @param {boolean} apply true applies the staged changes, false discards.
    * @param {string[]=} paths when given, settle only these files and leave the
    *   rest of the turn pending — the review list's per-file Keep / Drop.
+   * @param {boolean=} quiet an apply the renderer made itself (access Auto):
+   *   no note in the chat for it.
    */
-  async function settlePending(apply, paths) {
+  async function settlePending(apply, paths, quiet) {
     const st = projectState(currentProjectId);
     const method = apply ? "session.apply_pending" : "session.discard_pending";
     const only = Array.isArray(paths) ? paths.filter((p) => String(p || "").trim()) : [];
@@ -14046,6 +14318,12 @@
       // message posted here was "pending", which that switch has no case for,
       // so the bar stayed on screen after the user had applied or discarded.
       toRenderer({ type: "pendingCleared" });
+    }
+    // "Changes applied" when nothing was applied told the person their click
+    // worked while the edits came back; and under Auto it is every edit.
+    const settled = apply ? r.applied === true : r.discarded === true;
+    if (quiet || !settled) {
+      return;
     }
     toRenderer({
       type: "systemNote",

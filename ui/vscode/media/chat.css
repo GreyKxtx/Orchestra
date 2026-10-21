@@ -621,6 +621,12 @@ body.vscode-high-contrast-light .chrome-logo {
   display: none;
 }
 
+/* While a turn runs its progress is the status line under it; the header
+   keeps only an error. */
+.chrome-hint.while-busy:not(.error) {
+  display: none;
+}
+
 #messages {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -692,7 +698,7 @@ body.vscode-high-contrast-light .chrome-logo {
   max-width: 280px;
   /* Capped in pixels as well as vh, like every other menu here: vh does not
      follow the zoom, so an uncapped one grows with it. */
-  max-height: min(420px, 45vh);
+  max-height: min(300px, 34vh);
   overflow-y: auto;
 }
 
@@ -952,6 +958,109 @@ body.vscode-high-contrast-light .chrome-logo {
 .tool-trace-list .file-change-card {
   margin: 4px 0 4px 22px;
   max-width: 100%;
+}
+
+/* ---- the turn's trace as a plain list --------------------------------------
+   "8 tool calls" over a hairline, then one quiet row per step: a grey icon,
+   the tool in the text colour, a dot, and what it ran on in grey. No cards,
+   no colour per state but failure and the running spinner, durations and
+   chevrons only under the pointer. */
+.tool-trace {
+  margin: 4px 0 10px;
+}
+
+.tool-trace > .trace-summary {
+  display: flex;
+  width: 100%;
+  gap: 6px;
+  padding: 2px 0 8px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--fg-dim, var(--fg));
+  font-size: 13px;
+}
+
+.tool-trace > .trace-summary:hover {
+  color: var(--fg);
+}
+
+.tool-trace > .tool-trace-list {
+  gap: 1px;
+  margin-top: 6px;
+  padding-left: 0;
+}
+
+.tool-trace-list .tool-head {
+  padding: 5px 0;
+  gap: 10px;
+  color: var(--fg);
+}
+
+.tool-trace-list .tool-label {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.tool-trace-list .tool-block.done .tool-icon,
+.tool-trace-list .tool-block .tool-icon {
+  color: var(--muted);
+}
+
+/* No band behind the running row: the spinner says it is running. */
+.tool-trace-list .tool-block.running {
+  background: transparent;
+}
+
+.tool-trace-list .tool-block.running .tool-icon {
+  color: var(--mode-accent);
+}
+
+.tool-trace-list .tool-block.tool-failed .tool-icon {
+  color: var(--error-fg);
+}
+
+.tr-name {
+  font-weight: 600;
+}
+
+.tr-detail {
+  color: var(--muted);
+}
+
+.tr-detail::before {
+  content: "·";
+  margin: 0 7px;
+}
+
+/* A path reads as a link: it is one (the row opens the file's result). */
+.tr-path {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--muted) 55%, transparent);
+  text-underline-offset: 3px;
+}
+
+.tool-trace-list .tool-dur,
+.tool-trace-list .tool-chev {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.tool-trace-list .tool-head:hover .tool-dur,
+.tool-trace-list .tool-head:hover .tool-chev,
+.tool-trace-list .tool-head.open .tool-chev {
+  opacity: 0.7;
+}
+
+.think-row .think-body {
+  margin: 0 0 8px 26px;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.think-body.hidden {
+  display: none;
 }
 
 .msg.tool {
@@ -1514,19 +1623,32 @@ body.vscode-high-contrast-light .chrome-logo {
   flex-shrink: 0;
 }
 
+/* The live status under the turn: "Read… 1m 51s" in the link blue, the way
+   the reference chat shows it — one quiet line, not a coloured badge. */
 .msg.typing-indicator {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 12px 8px;
-  color: var(--muted);
-  font-size: 12px;
+  gap: 8px;
+  margin-top: -10px;
+  padding: 0 12px 10px;
+  color: var(--tool-fg);
+  font-size: 13px;
   background: transparent;
   border: none;
 }
 
 .msg.typing-indicator .typing-label {
-  color: var(--mode-accent);
+  color: var(--tool-fg);
+  font-weight: 500;
+}
+
+.msg.typing-indicator .typing-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.msg.typing-indicator .typing-dot {
+  background: var(--tool-fg);
 }
 
 .typing-dots {
@@ -2249,6 +2371,52 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   display: none;
 }
 
+/* Collapsed: one line — what changed, +/−, show, apply, discard. */
+.pending-bar.collapsed {
+  padding-top: 6px;
+}
+
+.pending-bar.collapsed .pending-card {
+  padding: 6px 10px;
+  gap: 0;
+}
+
+.pending-bar.collapsed .pending-review-list {
+  display: none;
+}
+
+/* Three square buttons of one size, each an icon from the set. The head's
+   class outranks the older .pending-apply-btn rule, which was sized for a
+   text button and made ✓ wider than its neighbours. */
+.pending-head-actions .pending-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-weight: normal;
+}
+
+.pending-head-actions .pending-icon-btn .oi {
+  display: block;
+}
+
+.pending-head-actions .pending-apply-btn {
+  color: var(--ok-fg);
+  border-color: color-mix(in srgb, var(--ok-fg) 35%, var(--border));
+}
+
+.pending-label {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
 .pending-card {
   border: 1px solid color-mix(in srgb, var(--mode-accent) 28%, var(--border));
   border-radius: 12px;
@@ -2274,7 +2442,7 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .pending-icon-btn {
@@ -2399,23 +2567,46 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 .diff-preview-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 6px;
+  padding: 4px 10px;
   background: var(--surface-2);
   border-bottom: 1px solid var(--border);
-  min-height: 38px;
+  min-height: 30px;
+}
+
+.diff-preview-head .fcc-stats {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.diff-preview-head .fcc-stats + .pending-item-acts {
+  margin-left: 8px;
+}
+
+/* The folder after the file's name: quiet, and the first thing to give way. */
+.diff-preview-dir {
+  flex: 0 1000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .diff-ext-badge {
   flex: 0 0 auto;
-  min-width: 28px;
-  height: 22px;
-  padding: 0 6px;
+  min-width: 0;
+  height: 16px;
+  padding: 0 5px;
   border-radius: 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
+  font-size: 8.5px;
   font-weight: 700;
   letter-spacing: 0.04em;
   font-family: ui-monospace, monospace;
@@ -2441,7 +2632,7 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 }
 
 .diff-preview-name {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   border: none;
   background: transparent;
@@ -2503,13 +2694,82 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 .diff-preview-body {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 11px;
-  line-height: 1.5;
-  max-height: 220px;
+  line-height: 18px;
+  max-height: min(360px, 45vh);
   overflow: auto;
 }
 
+/* One line of code is one row: long lines scroll sideways instead of
+   wrapping into a paragraph per line. */
 .diff-preview-body .diff-u-row {
-  border-bottom: 1px solid var(--hairline-wash);
+  width: max-content;
+  min-width: 100%;
+  min-height: 18px;
+}
+
+.diff-preview-body .diff-u-ln,
+.diff-preview-body .diff-u-gutter,
+.diff-preview-body .diff-u-code {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.diff-preview-body .diff-u-ln {
+  flex-basis: 34px;
+  padding-right: 6px;
+  border-right: none;
+  opacity: 0.7;
+}
+
+.diff-preview-body .diff-u-gutter {
+  flex-basis: 16px;
+}
+
+.diff-preview-body .diff-u-code {
+  flex: 1 0 auto;
+  white-space: pre;
+  word-break: normal;
+}
+
+/* Between two hunks: the unchanged lines that were left out. */
+.diff-u-sep {
+  height: 16px;
+  line-height: 16px;
+  padding-left: 40px;
+  font-size: 10px;
+  color: var(--muted);
+  background: var(--hairline-wash);
+  user-select: none;
+}
+
+/* A chat card folded to its first rows; the rest fades out under them. */
+.diff-preview-card.folded .diff-preview-body {
+  /* !important: the chat card rules below set the open height more specifically. */
+  max-height: 108px !important;
+  overflow: hidden;
+  cursor: pointer;
+  -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+
+.diff-fold-btn {
+  display: block;
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--hairline-wash);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 6px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.diff-fold-btn:hover {
+  color: var(--fg);
+  background: var(--hover-wash);
 }
 
 .diff-preview-body .diff-more {
@@ -2970,7 +3230,7 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 }
 
 .tool-block.write-card-only {
-  margin: 10px 0;
+  margin: 6px 0;
   padding: 0;
   border: none;
   background: transparent;
@@ -2978,8 +3238,8 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 }
 
 .tool-block.write-card-only > .tool-diff-body.diff-preview-card {
-  border: 1px solid color-mix(in srgb, var(--ok-fg) 28%, var(--border));
-  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   overflow: hidden;
   background: var(--card-bg);
 }
@@ -3041,7 +3301,7 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 }
 
 .turn-inner > .tool-block.kind-write .tool-diff-body.diff-preview-card .diff-preview-body {
-  max-height: min(420px, 50vh);
+  max-height: min(360px, 45vh);
 }
 
 .tool-block.kind-write .tool-diff-body.hidden {
@@ -3051,7 +3311,6 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 .tool-diff-body.diff-preview-card {
   margin: 0;
   padding: 0;
-  max-height: 300px;
   overflow: hidden;
   border-top: 1px solid var(--border);
   background: var(--card-bg);
@@ -3060,7 +3319,7 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 }
 
 .tool-diff-body.diff-preview-card .diff-preview-body {
-  max-height: 240px;
+  max-height: min(360px, 45vh);
 }
 
 .tool-diff-body.hidden {
@@ -4426,69 +4685,56 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
    this chooses HOW you are looking at it. A raised group on its own ground
    rather than a hairline box — at the far edge a wireframe outline reads as
    an afterthought. */
-/* A segmented control, sunk into the strip rather than stuck onto it: the
-   track is a shade below the header and the chosen segment is the one thing
-   raised out of it, with an edge and a shadow of its own. The two labels then
-   differ by depth rather than only by the weight of their text, which is what
-   made the old pair hard to tell apart at a glance. */
-/* 2px well + 26px segment + 2px well + the 1px border on each side = the
-   32px every other control in the strip is. */
+/* Plain text tabs, the chosen one underlined in blue — the way a reader
+   expects tabs to look. The old segmented control (a sunk track, a raised
+   segment with a shadow, an icon per view) was a lot of chrome for a choice
+   between two or three words; the views' icons are not drawn. */
 .view-switch {
   display: inline-flex;
-  align-items: center;
-  gap: 2px;
+  align-items: stretch;
+  gap: 18px;
   flex: 0 0 auto;
-  align-self: center;
-  margin: 0 2px;
-  padding: 2px;
-  border: 1px solid var(--border-soft);
-  border-radius: 10px;
-  background: var(--well-bg);
+  align-self: stretch;
+  margin: 0 6px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 .view-segment {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: var(--ctl-h-sm);
-  padding: 0 12px;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
+  height: auto;
+  min-height: var(--ctl-h-sm);
+  padding: 0 1px;
+  border: none;
+  border-radius: 0;
   background: transparent;
+  box-shadow: inset 0 -2px 0 transparent;
   color: var(--muted);
   font: inherit;
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
-  transition: color 0.12s, background 0.12s, border-color 0.12s;
+  transition: color 0.12s, box-shadow 0.12s;
 }
 .view-segment svg {
-  flex: 0 0 auto;
-  opacity: 0.75;
+  display: none;
 }
 .view-segment:hover {
-  color: var(--fg-dim);
-  background: var(--hover-wash);
-}
-/* Selected by ground and colour, not by weight: bumping the label to 600
-   re-measured the text, so the whole switch changed width on every switch
-   and nudged the icon buttons beside it. */
-.view-segment[aria-selected="true"] {
   color: var(--fg);
-  border-color: var(--border);
-  background: var(--seg-active-bg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
 }
-/* The chosen view's icon simply goes to full strength in the text colour. It
-   used to take the mode accent, which put a coloured mark on the one control
-   that has nothing to do with which mode you are in. */
-.view-segment[aria-selected="true"] svg {
-  opacity: 1;
-  color: inherit;
+/* Selected by colour and the line under it, not by weight: bumping the label
+   to 600 re-measured the text and nudged everything beside the tabs. */
+.view-segment[aria-selected="true"] {
+  color: var(--tool-fg);
+  box-shadow: inset 0 -2px 0 var(--tool-fg);
 }
 .view-segment:focus-visible {
   outline: 2px solid var(--fg-dim);
-  outline-offset: -2px;
+  outline-offset: 2px;
 }
 /* ---- Trajectory view -----------------------------------------------------
    Toolbar, timeline, then a two-pane body: the row list and the detail panel.
