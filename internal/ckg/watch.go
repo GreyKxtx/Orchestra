@@ -60,6 +60,17 @@ type Watcher struct {
 	fullGen uint64
 	dirs    int
 
+	// queue holds notifications the pump took from the notifier and the
+	// worker has not handled yet. The notifier must never wait on us: it
+	// answers Add from the same goroutine that hands events over, so an event
+	// nobody takes stops every Add after it — a busy tree (a fresh clone, its
+	// new .orchestra.yml and ckg.db) hung the open forever. The pump only
+	// queues; the worker handles, and may Add.
+	qmu    sync.Mutex
+	queue  []fsnotify.Event
+	wake   chan struct{}
+	pumped chan struct{}
+
 	done chan struct{}
 }
 
@@ -82,13 +93,18 @@ func Watch(root string, ignores []string) (*Watcher, error) {
 		ignore:  NewScannerWithIgnores(nil, abs, ignores).isIgnored,
 		pending: map[string]uint64{},
 		full:    true,
+		wake:    make(chan struct{}, 1),
+		pumped:  make(chan struct{}),
 		done:    make(chan struct{}),
 	}
+	// Reading starts before the first Add: the tree may already be changing.
+	go w.pump()
+	go w.work()
 	if err := w.addTree(abs, false); err != nil {
 		_ = fsw.Close()
+		<-w.done
 		return nil, err
 	}
-	go w.loop()
 	return w, nil
 }
 
@@ -202,20 +218,60 @@ func (w *Watcher) relOf(abs string) (string, bool) {
 	return filepath.ToSlash(rel), true
 }
 
-func (w *Watcher) loop() {
-	defer close(w.done)
-	for {
+// pump takes the notifier's events as fast as it gives them and queues them
+// for work; it does nothing that could wait on the notifier. Errors are only
+// noted, so they are handled here.
+func (w *Watcher) pump() {
+	defer close(w.pumped)
+	events, errs := w.fs.Events, w.fs.Errors
+	for events != nil || errs != nil {
 		select {
-		case ev, ok := <-w.fs.Events:
+		case ev, ok := <-events:
 			if !ok {
-				return
+				events = nil
+				continue
 			}
-			w.handle(ev)
-		case err, ok := <-w.fs.Errors:
+			w.qmu.Lock()
+			w.queue = append(w.queue, ev)
+			w.qmu.Unlock()
+			select {
+			case w.wake <- struct{}{}:
+			default:
+			}
+		case err, ok := <-errs:
 			if !ok {
-				return
+				errs = nil
+				continue
 			}
 			w.noteError(err)
+		}
+	}
+}
+
+// work handles what the pump queued, until the pump has stopped and the
+// queue is empty.
+func (w *Watcher) work() {
+	defer close(w.done)
+	for {
+		w.qmu.Lock()
+		batch := w.queue
+		w.queue = nil
+		w.qmu.Unlock()
+		for _, ev := range batch {
+			w.handle(ev)
+		}
+		if len(batch) > 0 {
+			continue
+		}
+		select {
+		case <-w.wake:
+		case <-w.pumped:
+			w.qmu.Lock()
+			empty := len(w.queue) == 0
+			w.qmu.Unlock()
+			if empty {
+				return
+			}
 		}
 	}
 }

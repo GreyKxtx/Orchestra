@@ -302,3 +302,47 @@ func TestScanPaths_GonePathDropsWhatTheGraphHadUnderIt(t *testing.T) {
 	}
 	_ = store
 }
+
+// Seen live: cloning a repository from the start screen never finished. The
+// clone was done in seconds; opening it hung forever, because Watch followed
+// the tree before anything read the notifier's events, and the tree was busy
+// (the new project's .orchestra.yml, its ckg.db). The notifier blocked
+// handing over an event nobody took, and so never answered the next Add.
+func TestWatcher_ABusyTreeDoesNotHangTheWatch(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 300; i++ {
+		if err := os.MkdirAll(filepath.Join(root, "pkg", "d"+strings.Repeat("x", i%7), "n"+string(rune('a'+i%26))+string(rune('a'+i/26))), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = os.WriteFile(filepath.Join(root, "busy.txt"), []byte(strings.Repeat("x", i%100)), 0o644)
+		}
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	done := make(chan error, 1)
+	var w *Watcher
+	go func() {
+		var err error
+		w, err = Watch(root, nil)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = w.Close()
+	case <-time.After(20 * time.Second):
+		t.Fatal("Watch did not return on a tree being written to")
+	}
+}

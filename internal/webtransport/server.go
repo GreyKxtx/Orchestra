@@ -258,7 +258,7 @@ func Serve(ctx context.Context, opts Options) (baseURL string, stop func() error
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
-			handleCloneProject(r.Context(), w, r, opts)
+			handleCloneProject(ctx, w, r, opts)
 		}))
 		mux.HandleFunc("/api/projects/", api(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodDelete {
@@ -620,7 +620,10 @@ func remember(opts Options, path string) {
 //
 // The request context, not the server's, bounds the clone: a clone is the one
 // thing here that can take minutes, and the user closing the page should end
-// it rather than leave git running against a window that is gone.
+// it rather than leave git running against a window that is gone. The project
+// it opens lives on the server's ctx, as an opened folder does: on the
+// request's, its graph and language-server warmups were cancelled the moment
+// the response went out.
 func handleCloneProject(ctx context.Context, w http.ResponseWriter, r *http.Request, opts Options) {
 	if opts.CloneProject == nil {
 		writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "clone_not_enabled"})
@@ -639,7 +642,7 @@ func handleCloneProject(ctx context.Context, w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	dest, err := opts.CloneProject(ctx, req.URL, req.Parent)
+	dest, err := opts.CloneProject(r.Context(), req.URL, req.Parent)
 	if err != nil {
 		// git's own words: the useful half is "repository not found" or
 		// "authentication failed", and inventing a category loses that.
