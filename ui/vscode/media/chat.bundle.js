@@ -389,6 +389,9 @@
       "orch.role.micro": "Worker · micro",
       "orch.role.embed": "Embeddings",
       "model.no_providers": "No providers — open Settings",
+      "model.not_selected": "No model selected",
+      "model.pick_hint": "Pick a model from your providers",
+      "model.pick_first": "Pick a model to send the message",
       "model.none": "No models",
       "model.not_configured": "Not configured",
       "model.no_match": "No models match “{q}”",
@@ -1229,6 +1232,9 @@
       "orch.role.micro": "Исполнитель · мелочь",
       "orch.role.embed": "Эмбеддинги",
       "model.no_providers": "Провайдеров нет — откройте настройки",
+      "model.not_selected": "Модель не выбрана",
+      "model.pick_hint": "Выберите модель у одного из провайдеров",
+      "model.pick_first": "Выберите модель, чтобы отправить сообщение",
       "model.none": "Моделей нет",
       "model.not_configured": "Не настроено",
       "model.no_match": "Нет моделей по запросу «{q}»",
@@ -2426,12 +2432,19 @@
     return last.length > 28 ? last.slice(0, 25) + "…" : last;
   }
 
-  function setModelLabel(id) {
-    currentModel = id || currentModel;
+  /**
+   * The composer's model chip. A host that says which model the project has
+   * (explicit) may say none: the model is then not chosen, and the chip says
+   * so instead of keeping the last one or showing a placeholder.
+   * @param {string} id @param {boolean} [explicit]
+   */
+  function setModelLabel(id, explicit) {
+    currentModel = explicit ? String(id || "") : id || currentModel;
     if (modelLabelEl) {
-      modelLabelEl.textContent = shortModel(currentModel);
-      modelLabelEl.title = currentModel || "";
+      modelLabelEl.textContent = currentModel ? shortModel(currentModel) : i18n("model.not_selected");
+      modelLabelEl.title = currentModel || i18n("model.pick_hint");
     }
+    if (modelPill && modelPill.classList) modelPill.classList.toggle("no-model", !currentModel);
   }
 
   function currentMode() {
@@ -8493,6 +8506,13 @@
       host.postMessage({ type: "slashCommand", cmd, arg });
       return;
     }
+    if (!modelChosen()) {
+      // Nothing to run it on: the text stays, and the picker opens on the
+      // providers the user has — after the click that sent it, which would
+      // otherwise reach the page and close the menu again.
+      setTimeout(() => openModelPicker(i18n("model.pick_first")), 0);
+      return;
+    }
     const payload = {
       type: "send",
       text,
@@ -9017,6 +9037,29 @@
     }
   });
 
+  /** A model to run the turn on: the chat's, or in orchestra mode the planner's. */
+  function modelChosen() {
+    if (currentModel) return true;
+    if (modeId !== "orchestra") return false;
+    const roles = (orchestraRolesInfo && orchestraRolesInfo.roles) || [];
+    const planner = roles.find((r) => r.key === "planner");
+    return Boolean(planner && orchRoleModels(planner).length);
+  }
+
+  /** Open the model menu on the providers' models, titled with why. @param {string} [why] */
+  function openModelPicker(why) {
+    closeMenus();
+    if (modelMenuTitle) modelMenuTitle.textContent = why || i18n("model.menu_title");
+    if (modelMenuSearch) modelMenuSearch.style.display = "";
+    modelMenuFilter = "";
+    if (modelMenuSearch) modelMenuSearch.value = "";
+    positionModelMenu();
+    modelMenu?.classList.add("open");
+    modelPill?.classList.add("open");
+    host.postMessage({ type: "listProviderModels" });
+    setTimeout(() => modelMenuSearch?.focus(), 30);
+  }
+
   modelPill?.addEventListener("click", (e) => {
     e.stopPropagation();
     const open = !modelMenu?.classList.contains("open");
@@ -9029,19 +9072,7 @@
       host.postMessage({ type: "listOrchestraRoles" });
       return;
     }
-    if (open) {
-      if (modelMenuTitle) modelMenuTitle.textContent = i18n("model.menu_title");
-      if (modelMenuSearch) modelMenuSearch.style.display = "";
-      modelMenuFilter = "";
-      if (modelMenuSearch) {
-        modelMenuSearch.value = "";
-      }
-      positionModelMenu();
-      modelMenu?.classList.add("open");
-      modelPill.classList.add("open");
-      host.postMessage({ type: "listProviderModels" });
-      setTimeout(() => modelMenuSearch?.focus(), 30);
-    }
+    if (open) openModelPicker();
   });
 
   modelMenuSearch?.addEventListener("input", () => {
@@ -9169,7 +9200,9 @@
         }
         activeSessionId = msg.sessionId || activeSessionId;
         updateActiveTabTitle(msg.title || i18n("chrome.new_chat"));
-        setModelLabel(msg.model || "");
+        // A header that names no model at all (a new chat) keeps the chip;
+        // one that names an empty model means none is chosen.
+        setModelLabel(msg.model || "", Object.prototype.hasOwnProperty.call(msg, "model"));
         if (modelLabelEl && msg.provider) {
           modelLabelEl.title = `${msg.provider} · ${msg.model || ""}`;
         }

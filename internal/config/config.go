@@ -963,6 +963,7 @@ func Load(path string) (*ProjectConfig, error) {
 	}
 
 	cfg.applyDefaults()
+	cfg.dropInitPlaceholder()
 	cfg.resolveProjectRoot(path)
 	cfg.trust = gate.trust
 	cfg.untrustedLeaves = untrustedLeaves
@@ -1255,12 +1256,11 @@ func (c *ProjectConfig) Validate() error {
 		return fmt.Errorf("project_root is required")
 	}
 
-	if c.LLM.APIBase == "" {
+	// No model is a project whose model has not been picked yet, not a
+	// broken one: it loads, and a turn asks for the pick. A model with no
+	// endpoint to send it to is broken.
+	if c.LLM.Model != "" && c.LLM.APIBase == "" {
 		return fmt.Errorf("llm.api_base is required")
-	}
-
-	if c.LLM.Model == "" {
-		return fmt.Errorf("llm.model is required")
 	}
 	if c.LLM.TimeoutS <= 0 {
 		return fmt.Errorf("llm.timeout_s must be > 0")

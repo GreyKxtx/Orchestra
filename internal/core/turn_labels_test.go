@@ -1,10 +1,12 @@
 package core
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/orchestra/orchestra/internal/agent"
 	"github.com/orchestra/orchestra/internal/config"
+	"github.com/orchestra/orchestra/llm"
 )
 
 // A subagent with no model of its own runs on the turn's client. In an
@@ -46,5 +48,21 @@ func TestTurnChildrenAreNamedAfterThePlanner(t *testing.T) {
 	c.newTurnTaskRunner(q)
 	if got := q.childCfg.ModelLabel; got != "qwen2.5-coder-7b" {
 		t.Fatalf("children are named %q, want llm:'s qwen2.5-coder-7b", got)
+	}
+}
+
+// A project whose model was never picked starts no turn: it is refused with
+// "no model selected" before the first step, not with a provider's 400.
+func TestATurnWithNoModelIsRefusedBeforeItStarts(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.DefaultConfig(root)
+	cfg.ProjectRoot = root
+	cfg.LLM.APIBase, cfg.LLM.Model = "", ""
+	c := &Core{cfg: cfg, workspaceRoot: root, llmClient: llm.BuildClient(cfg.LLM, cfg.LLMRegistry(), nil)}
+
+	p := c.newTurnPrep(agentLaunchSpec{}, "")
+	err := c.resolveTurnAgent(p)
+	if err == nil || !strings.Contains(err.Error(), "no model selected") {
+		t.Fatalf("a turn with no model = %v, want no model selected", err)
 	}
 }

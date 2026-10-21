@@ -2506,6 +2506,31 @@ test("a subagent's own calls fill its card: what it is doing and its files", asy
   assert.match(pop.innerHTML, /Read · apps\/api\/internal\/httpapi\/routes\.go/, "the card does not say what the subagent is doing");
 });
 
+test("a project with no model says so, and a message waits for the pick", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  await tick();
+  const label = b.elementById("model-label");
+  b.post({ type: "header", sessionId: "s1", model: "claude-opus-5-5", provider: "anthropic" });
+  await tick();
+  assert.equal(label.textContent, "claude-opus-5-5");
+  // A new chat's header names no model: the chip keeps the one there is.
+  b.post({ type: "header", sessionId: "s2" });
+  await tick();
+  assert.equal(label.textContent, "claude-opus-5-5", "a header without a model cleared the chip");
+  // The core says none is chosen.
+  b.post({ type: "header", sessionId: "s2", model: "", provider: "" });
+  await tick();
+  assert.doesNotMatch(label.textContent, /qwen|^Model$/, "the chip shows a placeholder for a model nobody picked");
+  assert.match(label.textContent, /model/i, "the chip does not say that no model is selected");
+
+  const input = b.elementById("input");
+  input.value = "hello";
+  b.elementById("send").click();
+  await tick();
+  assert.equal(input.value, "hello", "a message with no model to run on was sent away");
+  assert.equal(b.elementById("model-menu").classList.contains("open"), true, "the model picker did not open");
+});
+
 test("a reopened chat rebuilds its subagents from the session's log", async () => {
   const b = loadBundle({ search: "?project=A" });
   await tick();

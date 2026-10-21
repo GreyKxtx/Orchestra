@@ -131,12 +131,19 @@
     return last.length > 28 ? last.slice(0, 25) + "…" : last;
   }
 
-  function setModelLabel(id) {
-    currentModel = id || currentModel;
+  /**
+   * The composer's model chip. A host that says which model the project has
+   * (explicit) may say none: the model is then not chosen, and the chip says
+   * so instead of keeping the last one or showing a placeholder.
+   * @param {string} id @param {boolean} [explicit]
+   */
+  function setModelLabel(id, explicit) {
+    currentModel = explicit ? String(id || "") : id || currentModel;
     if (modelLabelEl) {
-      modelLabelEl.textContent = shortModel(currentModel);
-      modelLabelEl.title = currentModel || "";
+      modelLabelEl.textContent = currentModel ? shortModel(currentModel) : i18n("model.not_selected");
+      modelLabelEl.title = currentModel || i18n("model.pick_hint");
     }
+    if (modelPill && modelPill.classList) modelPill.classList.toggle("no-model", !currentModel);
   }
 
   function currentMode() {

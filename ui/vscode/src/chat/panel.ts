@@ -520,7 +520,8 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       this.session.getLLM(),
     ]);
     const title = view.title || "New chat";
-    const model = health.model || view.model || "Model";
+    // "" is a project whose model is not chosen yet; the chip says so.
+    const model = health.model || view.model || "";
     this.post({ type: "ready", sessionId: id });
     this.post({
       type: "header",
@@ -1412,7 +1413,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           type: "header",
           sessionId: id,
           title: view.title || "New chat",
-          model: health.model || view.model || "Model",
+          model: health.model || view.model || "",
           provider: health.provider,
           sessionCost: view.costUSD,
         });

@@ -38,7 +38,9 @@
         }
         activeSessionId = msg.sessionId || activeSessionId;
         updateActiveTabTitle(msg.title || i18n("chrome.new_chat"));
-        setModelLabel(msg.model || "");
+        // A header that names no model at all (a new chat) keeps the chip;
+        // one that names an empty model means none is chosen.
+        setModelLabel(msg.model || "", Object.prototype.hasOwnProperty.call(msg, "model"));
         if (modelLabelEl && msg.provider) {
           modelLabelEl.title = `${msg.provider} · ${msg.model || ""}`;
         }

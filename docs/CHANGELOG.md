@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — vNext
 
+### Changed — no model until the user picks one (2026-10)
+
+- **A project starts with no model.** `orchestra init`, and the app opening a folder with no `.orchestra.yml`, wrote `http://localhost:1234/v1` + `qwen2.5-coder-7b` whether or not anything served it; a project then moved to Anthropic kept asking it for qwen. Now `llm.model` stays empty until the user picks a model from the providers they connected. A running local server still gives `llm.api_base` and has its models listed, but none is picked for the user.
+- **No model is a state, not an error.** A config with no model loads (a model with no `api_base` is still refused). Its client answers `llm.ErrNoModel` to every call, with no standby or router in front; a turn is refused before it starts with "no model selected" (`InvalidLLMOutput`, `data.reason: "no_model"`) — in orchestra mode a planner model is enough.
+- **The placeholder left in old projects is dropped.** `qwen2.5-coder-7b` on an endpoint that is not this machine's (Augur's `provider: anthropic`) loads as no model, in `llm:` and in `providers:`; the next save writes it out. LM Studio serving it on localhost keeps it.
+- **The chip says "No model selected"**, in the warning colour, instead of keeping the last model or showing "Model". A message sent with no model to run on stays in the composer and opens the model picker on the providers' models.
+
 ### Changed — the Orchestrator reads the request before it sizes it (2026-10)
 
 - **"What next" opens discovery with the user.** `orchestra.txt` sized every request as a job, so "what is this project and where could it go" was answered as a reference question: a menu of six directions and a prose question at the end, no discovery. The Lead now tells three requests apart before sizing: a question about what exists is answered from reads with no spawn; a request with no goal chosen (an idea, "what next", "what could we add") is discovery — a short summary of where the project stands, then 2–4 `question`s on what the user wants, with the directions found as options, and a large answer goes to `product` with the answers; a task is sized as before. Redundant clauses elsewhere in the prompt went to keep the Lead's first step under its 8k-token budget (7956).

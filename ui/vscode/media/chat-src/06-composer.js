@@ -324,6 +324,13 @@
       host.postMessage({ type: "slashCommand", cmd, arg });
       return;
     }
+    if (!modelChosen()) {
+      // Nothing to run it on: the text stays, and the picker opens on the
+      // providers the user has — after the click that sent it, which would
+      // otherwise reach the page and close the menu again.
+      setTimeout(() => openModelPicker(i18n("model.pick_first")), 0);
+      return;
+    }
     const payload = {
       type: "send",
       text,
@@ -848,6 +855,29 @@
     }
   });
 
+  /** A model to run the turn on: the chat's, or in orchestra mode the planner's. */
+  function modelChosen() {
+    if (currentModel) return true;
+    if (modeId !== "orchestra") return false;
+    const roles = (orchestraRolesInfo && orchestraRolesInfo.roles) || [];
+    const planner = roles.find((r) => r.key === "planner");
+    return Boolean(planner && orchRoleModels(planner).length);
+  }
+
+  /** Open the model menu on the providers' models, titled with why. @param {string} [why] */
+  function openModelPicker(why) {
+    closeMenus();
+    if (modelMenuTitle) modelMenuTitle.textContent = why || i18n("model.menu_title");
+    if (modelMenuSearch) modelMenuSearch.style.display = "";
+    modelMenuFilter = "";
+    if (modelMenuSearch) modelMenuSearch.value = "";
+    positionModelMenu();
+    modelMenu?.classList.add("open");
+    modelPill?.classList.add("open");
+    host.postMessage({ type: "listProviderModels" });
+    setTimeout(() => modelMenuSearch?.focus(), 30);
+  }
+
   modelPill?.addEventListener("click", (e) => {
     e.stopPropagation();
     const open = !modelMenu?.classList.contains("open");
@@ -860,19 +890,7 @@
       host.postMessage({ type: "listOrchestraRoles" });
       return;
     }
-    if (open) {
-      if (modelMenuTitle) modelMenuTitle.textContent = i18n("model.menu_title");
-      if (modelMenuSearch) modelMenuSearch.style.display = "";
-      modelMenuFilter = "";
-      if (modelMenuSearch) {
-        modelMenuSearch.value = "";
-      }
-      positionModelMenu();
-      modelMenu?.classList.add("open");
-      modelPill.classList.add("open");
-      host.postMessage({ type: "listProviderModels" });
-      setTimeout(() => modelMenuSearch?.focus(), 30);
-    }
+    if (open) openModelPicker();
   });
 
   modelMenuSearch?.addEventListener("input", () => {

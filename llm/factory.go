@@ -11,6 +11,9 @@ import (
 // fast/slow split from llm.router are wrappers, and a caller that builds a
 // client by hand has to remember both. Prefer BuildClient.
 func NewClient(cfg LLMConfig) Client {
+	if strings.TrimSpace(cfg.Model) == "" {
+		return noModelClient{}
+	}
 	switch strings.ToLower(cfg.Provider) {
 	case "anthropic":
 		return NewAnthropicClient(cfg)
@@ -38,6 +41,11 @@ func NewClient(cfg LLMConfig) Client {
 // NewClient stood before.
 func BuildClient(cfg LLMConfig, reg ProviderRegistry, logger *Logger) Client {
 	c := NewClient(cfg)
+	if HasNoModel(c) {
+		// Nothing was chosen: a standby or a router would only route a
+		// request the user never asked for to a model they never picked.
+		return c
+	}
 	attachLogger(c, logger)
 	c = MaybeWrapFallback(c, reg, cfg, logger)
 	return MaybeWrapRouter(c, reg, cfg.Router)

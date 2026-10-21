@@ -45,15 +45,17 @@ func initProject(ctx context.Context, root string, opts InitOptions) error {
 
 	// Create default config
 	cfg := config.DefaultConfig(root)
-	cfg.LLM.APIBase = "http://localhost:1234/v1"
-	cfg.LLM.Model = "qwen2.5-coder-7b"
+	// No model until the user picks one from the providers they connect: a
+	// placeholder here was asked of every provider the project moved to.
+	cfg.LLM.APIBase = ""
+	cfg.LLM.Model = ""
 	cfg.ContextLimit = 50
 	cfg.Limits.ContextKB = 50
 
-	// Replace those two guesses with the local server that is actually running,
-	// when there is one. Bounded by llm.localProbeTimeout and probed in
-	// parallel, so a machine with nothing listening pays three refused
-	// connections and moves on.
+	// Point api_base at the local server that is actually running, when there
+	// is one; the model stays the user's pick. Bounded by llm.localProbeTimeout
+	// and probed in parallel, so a machine with nothing listening pays three
+	// refused connections and moves on.
 	detectCtx := ctx
 	if detectCtx == nil {
 		detectCtx = context.Background()

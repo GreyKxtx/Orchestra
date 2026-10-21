@@ -327,10 +327,15 @@ Response `result`:
   "tools_version": 18,
   "workspace_root": "...",
   "project_id": "sha256:...",
-  "model": "qwen2.5-coder-7b",
-  "provider": "openai"
+  "model": "claude-opus-5-5",
+  "provider": "anthropic"
 }
 ```
+
+`model` is `""` while the project has no model chosen (a new project starts with none). A turn on
+such a project — `agent.run`, `session.message` — is refused before it starts with
+`InvalidLLMOutput` and `data.reason: "no_model"`; in orchestra mode a configured planner model is
+enough.
 
 ### `runtime.set_model`
 

@@ -1223,6 +1223,9 @@ body.vscode-high-contrast-light .chrome-logo {
 #model-pill {
   max-width: 160px;
 }
+#model-pill.no-model #model-label {
+  color: var(--warn-fg);
+}
 
 #model-label {
   overflow: hidden;

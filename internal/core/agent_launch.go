@@ -467,6 +467,15 @@ func (c *Core) resolveTurnAgent(p *turnPrep) error {
 		}
 	}
 	p.custom = custom
+	// A project whose model was never picked runs nothing: the turn says so
+	// before it starts, rather than failing on its first step.
+	turnClient := custom.llmClient
+	if turnClient == nil {
+		turnClient = c.llmClient
+	}
+	if turnClient != nil && llm.HasNoModel(turnClient) {
+		return protocol.NewError(protocol.InvalidLLMOutput, llm.ErrNoModel.Error(), map[string]any{"reason": "no_model"})
+	}
 	return nil
 }
 

@@ -8,13 +8,10 @@ import (
 	"github.com/orchestra/orchestra/llm"
 )
 
-// `orchestra init` used to hardcode http://localhost:1234/v1 and
-// qwen2.5-coder-7b whether or not anything was listening there, so a user on
-// Ollama got a config that could not talk to their server and no sign of it.
-func TestApplyDetectedLocalServer_PrefillsFromTheLiveServer(t *testing.T) {
+// A running local server gives the project its endpoint, never its model:
+// the model is the user's pick among what the server lists.
+func TestApplyDetectedLocalServer_TakesTheEndpointNotAModel(t *testing.T) {
 	cfg := &config.ProjectConfig{}
-	cfg.LLM.APIBase = "http://localhost:1234/v1"
-	cfg.LLM.Model = "qwen2.5-coder-7b"
 
 	report := applyDetectedLocalServer(cfg, llm.LocalServer{
 		APIBase: "http://localhost:11434/v1",
@@ -24,67 +21,53 @@ func TestApplyDetectedLocalServer_PrefillsFromTheLiveServer(t *testing.T) {
 	if cfg.LLM.APIBase != "http://localhost:11434/v1" {
 		t.Errorf("api_base = %q, want the detected server", cfg.LLM.APIBase)
 	}
-	if cfg.LLM.Model != "qwen2.5-coder:14b" {
-		t.Errorf("model = %q, want the server's first model", cfg.LLM.Model)
+	if cfg.LLM.Model != "" {
+		t.Errorf("model = %q, want none: the user picks it", cfg.LLM.Model)
 	}
 	if !strings.Contains(report, "11434") {
 		t.Errorf("report = %q, must name the endpoint it chose", report)
 	}
-	// Two models were offered and one was picked; the user has to be told the
-	// other exists or they will not know the choice was made for them.
-	if !strings.Contains(report, "llama3:8b") {
-		t.Errorf("report = %q, must list the other models so the pick is visible", report)
+	// The user picks among them, so they have to be named.
+	if !strings.Contains(report, "qwen2.5-coder:14b") || !strings.Contains(report, "llama3:8b") {
+		t.Errorf("report = %q, must list the server's models", report)
 	}
 }
 
-// Nothing detected must leave the static defaults exactly as they were: a
-// probe that finds nothing is not a reason to change the config it did not
-// look at.
-func TestApplyDetectedLocalServer_LeavesDefaultsWhenNothingFound(t *testing.T) {
+// Nothing detected touches nothing and announces nothing.
+func TestApplyDetectedLocalServer_LeavesTheConfigWhenNothingFound(t *testing.T) {
 	cfg := &config.ProjectConfig{}
-	cfg.LLM.APIBase = "http://localhost:1234/v1"
-	cfg.LLM.Model = "qwen2.5-coder-7b"
 
 	report := applyDetectedLocalServer(cfg, llm.LocalServer{}, false)
 
-	if cfg.LLM.APIBase != "http://localhost:1234/v1" || cfg.LLM.Model != "qwen2.5-coder-7b" {
-		t.Errorf("defaults were touched: api_base=%q model=%q", cfg.LLM.APIBase, cfg.LLM.Model)
+	if cfg.LLM.APIBase != "" || cfg.LLM.Model != "" {
+		t.Errorf("the config was touched: api_base=%q model=%q", cfg.LLM.APIBase, cfg.LLM.Model)
 	}
 	if report != "" {
 		t.Errorf("report = %q, want empty — init must not announce a detection that did not happen", report)
 	}
 }
 
-// A detected server with no models cannot prefill a model, and an api_base
-// without a model is worse than the default pair it would replace.
+// A server with no models has nothing to offer the picker.
 func TestApplyDetectedLocalServer_IgnoresAServerWithNoModels(t *testing.T) {
 	cfg := &config.ProjectConfig{}
-	cfg.LLM.APIBase = "http://localhost:1234/v1"
-	cfg.LLM.Model = "qwen2.5-coder-7b"
 
 	report := applyDetectedLocalServer(cfg, llm.LocalServer{APIBase: "http://localhost:8000/v1"}, true)
 
-	if cfg.LLM.APIBase != "http://localhost:1234/v1" || cfg.LLM.Model != "qwen2.5-coder-7b" {
-		t.Errorf("defaults were touched: api_base=%q model=%q", cfg.LLM.APIBase, cfg.LLM.Model)
+	if cfg.LLM.APIBase != "" || cfg.LLM.Model != "" {
+		t.Errorf("the config was touched: api_base=%q model=%q", cfg.LLM.APIBase, cfg.LLM.Model)
 	}
 	if report != "" {
 		t.Errorf("report = %q, want empty", report)
 	}
 }
 
-// One model is the common case; the report must not trail an empty "others"
-// clause.
-func TestApplyDetectedLocalServer_SingleModelReportsCleanly(t *testing.T) {
+// Past the cap the report counts the rest instead of listing them.
+func TestApplyDetectedLocalServer_CountsWhatItDoesNotList(t *testing.T) {
 	cfg := &config.ProjectConfig{}
-	report := applyDetectedLocalServer(cfg, llm.LocalServer{
-		APIBase: "http://localhost:1234/v1",
-		Models:  []llm.RemoteModel{{ID: "qwen2.5-coder-7b"}},
-	}, true)
+	models := []llm.RemoteModel{{ID: "a"}, {ID: "b"}, {ID: "c"}, {ID: "d"}, {ID: "e"}, {ID: "f"}}
+	report := applyDetectedLocalServer(cfg, llm.LocalServer{APIBase: "http://localhost:1234/v1", Models: models}, true)
 
-	if !strings.Contains(report, "qwen2.5-coder-7b") {
-		t.Errorf("report = %q, must name the model", report)
-	}
-	if strings.Contains(report, "ещё") || strings.HasSuffix(strings.TrimSpace(report), ",") {
-		t.Errorf("report = %q, has a dangling list for a single model", report)
+	if !strings.Contains(report, "и ещё 2") {
+		t.Errorf("report = %q, must count the models it did not list", report)
 	}
 }
