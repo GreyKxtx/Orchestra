@@ -106,6 +106,9 @@ func RunChild(ctx context.Context, r ChildRun) (out *ChildOutcome, err error) {
 	if r.TaskID == "" {
 		r.TaskID = fmt.Sprintf("child_%d", childSeq.Add(1))
 	}
+	// A worker on Haiku is measured against Haiku's window, not the main
+	// model's num_ctx.
+	FitWindow(&r.Options, r.Client)
 	parent := llm.TraceFrom(ctx)
 	depth := parent.Depth
 	parentTaskID := parent.ParentTaskID

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -77,5 +78,58 @@ func TestListRemoteModels_FallsBackToPlainModelsPath(t *testing.T) {
 	}
 	if len(models) != 1 || models[0].ID != "m-1" {
 		t.Fatalf("models=%+v want [m-1]", models)
+	}
+}
+
+// Seen live: a key added for Anthropic, and the settings said "GET
+// https://api.anthropic.com/models: HTTP 404". Anthropic lists models at
+// /v1/models and takes the key as x-api-key with an anthropic-version; the
+// OpenAI-style Bearer was refused, and the 404 of the fallback path was what
+// the user got to read.
+func TestListRemoteModels_AnthropicUsesItsOwnHeaders(t *testing.T) {
+	var path, key, version, bearer string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		key = r.Header.Get("x-api-key")
+		version = r.Header.Get("anthropic-version")
+		bearer = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"data":[{"id":"claude-sonnet-5-5","type":"model","display_name":"Claude Sonnet 5.5"}],"has_more":false}`))
+	}))
+	defer srv.Close()
+
+	models, err := ListRemoteModels(context.Background(), LLMConfig{Provider: "anthropic", APIBase: srv.URL, APIKey: "sk-ant-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/v1/models" {
+		t.Errorf("path = %q, want /v1/models", path)
+	}
+	if key != "sk-ant-test" || version == "" {
+		t.Errorf("x-api-key = %q, anthropic-version = %q: Anthropic's own headers must be sent", key, version)
+	}
+	if bearer != "" {
+		t.Errorf("Authorization = %q: Anthropic does not take a Bearer key", bearer)
+	}
+	if len(models) != 1 || models[0].ID != "claude-sonnet-5-5" {
+		t.Errorf("models = %+v", models)
+	}
+}
+
+// A refused key is the answer: the other path on the same host refuses it
+// too, or answers 404 and hides why.
+func TestListRemoteModels_AuthFailureIsNotHiddenByTheFallbackPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"message":"invalid x-api-key"}}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	_, err := ListRemoteModels(context.Background(), LLMConfig{APIBase: srv.URL, APIKey: "bad"})
+	if err == nil || !strings.Contains(err.Error(), "401") {
+		t.Fatalf("err = %v, want the 401", err)
 	}
 }

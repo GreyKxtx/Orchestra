@@ -468,6 +468,8 @@
       total_tokens: num(data.total_tokens),
       cost_usd: num(data.cost_usd),
       source: typeof data.source === "string" ? data.source : undefined,
+      // The window of the model that answered: the gauge's ceiling.
+      context_tokens: num(data.context_tokens),
     };
     const breakdown = Array.isArray(data.breakdown)
       ? data.breakdown

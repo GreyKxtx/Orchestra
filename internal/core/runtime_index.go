@@ -301,7 +301,7 @@ func (c *Core) IndexConfigure(params IndexConfigureParams) (*IndexConfigureResul
 	persisted := false
 	cfgPath := c.configFilePath()
 	if persist && strings.TrimSpace(cfgPath) != "" {
-		if err := config.Save(cfgPath, c.cfg); err != nil {
+		if err := saveConfigKeysOut(cfgPath, c.cfg); err != nil {
 			return nil, protocol.NewError(protocol.ExecFailed, "failed to persist index config: "+err.Error(), nil)
 		}
 		persisted = true

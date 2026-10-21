@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -65,11 +66,18 @@ func (c *Core) RuntimeSetModel(ctx context.Context, params RuntimeSetModelParams
 		if strings.TrimSpace(llmCfg.APIKey) != "" {
 			c.cfg.LLM.APIKey = llmCfg.APIKey
 		}
+		// A hosted provider without values of its own gets none: the ones
+		// llm: holds are the local model's it is replacing.
+		hosted := llm.IsHostedEndpoint(llmCfg.Provider, llmCfg.APIBase)
 		if llmCfg.MaxTokens > 0 {
 			c.cfg.LLM.MaxTokens = llmCfg.MaxTokens
+		} else if hosted {
+			c.cfg.LLM.MaxTokens = 0
 		}
 		if llmCfg.Temperature != 0 {
 			c.cfg.LLM.Temperature = llmCfg.Temperature
+		} else if hosted {
+			c.cfg.LLM.Temperature = 0
 		}
 		if llmCfg.TimeoutS > 0 {
 			c.cfg.LLM.TimeoutS = llmCfg.TimeoutS
@@ -101,7 +109,7 @@ func (c *Core) RuntimeSetModel(ctx context.Context, params RuntimeSetModelParams
 	persisted := false
 	cfgPath := c.configFilePath()
 	if persist && strings.TrimSpace(cfgPath) != "" {
-		if err := config.Save(cfgPath, c.cfg); err != nil {
+		if err := saveConfigKeysOut(cfgPath, c.cfg); err != nil {
 			return nil, protocol.NewError(protocol.ExecFailed, "failed to persist model: "+err.Error(), nil)
 		}
 		persisted = true
@@ -365,7 +373,7 @@ func (c *Core) RuntimeConfigureLLM(ctx context.Context, params RuntimeConfigureL
 	persisted := false
 	cfgPath := c.configFilePath()
 	if persist && strings.TrimSpace(cfgPath) != "" {
-		if err := config.Save(cfgPath, c.cfg); err != nil {
+		if err := saveConfigKeysOut(cfgPath, c.cfg); err != nil {
 			return nil, protocol.NewError(protocol.ExecFailed, "failed to persist llm config: "+err.Error(), nil)
 		}
 		persisted = true
@@ -453,3 +461,13 @@ type (
 	RuntimeSetModelParams     = wire.RuntimeSetModelParams
 	RuntimeSetModelResult     = wire.RuntimeSetModelResult
 )
+
+// saveConfigKeysOut writes the config the panel changed, its API keys moved
+// to the gitignored .orchestra.env first (MoveKeysToEnvFile): the panel saved
+// a key it was given straight into the committed .orchestra.yml.
+func saveConfigKeysOut(path string, cfg *config.ProjectConfig) error {
+	if err := cfg.MoveKeysToEnvFile(); err != nil {
+		return fmt.Errorf("store the API key in %s: %w", config.EnvFileName, err)
+	}
+	return config.Save(path, cfg)
+}

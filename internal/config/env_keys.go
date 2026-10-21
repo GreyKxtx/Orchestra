@@ -221,3 +221,68 @@ func unquoteEnvValue(v string) string {
 	}
 	return v
 }
+
+// MoveKeysToEnvFile takes every literal API key out of what Save will write:
+// each goes into the project's gitignored .orchestra.env, and the config
+// file gets ${NAME} in its place. The running config keeps the key itself.
+//
+// A key typed into the settings panel was saved straight into .orchestra.yml
+// — a file that is committed — next to a comment promising keys are never
+// written there. A field already read from ${NAME} keeps that name; a key the
+// user changed since goes into the same variable.
+func (c *ProjectConfig) MoveKeysToEnvFile() error {
+	if c == nil || strings.TrimSpace(c.ProjectRoot) == "" {
+		return nil
+	}
+	move := func(field, value, defaultName string) error {
+		key := strings.TrimSpace(value)
+		if key == "" || strings.Contains(key, "${") {
+			return nil
+		}
+		if ref, ok := c.envRefs[field]; ok && ref.resolved == value && EnvRefName(ref.literal) != "" {
+			return nil // already a reference, untouched
+		}
+		name := c.EnvVarFor(field)
+		if name == "" {
+			name = defaultName
+		}
+		if err := UpsertEnvVar(c.ProjectRoot, name, key); err != nil {
+			return err
+		}
+		if c.envRefs == nil {
+			c.envRefs = map[string]envRef{}
+		}
+		c.envRefs[field] = envRef{literal: "${" + name + "}", resolved: value}
+		return nil
+	}
+	if err := move("llm.api_key", c.LLM.APIKey, "ORCHESTRA_API_KEY"); err != nil {
+		return err
+	}
+	if err := move("embed.api_key", c.Embed.APIKey, "ORCHESTRA_EMBED_API_KEY"); err != nil {
+		return err
+	}
+	for name, p := range c.Providers {
+		if err := move("providers."+name+".api_key", p.APIKey, KeyEnvName(name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// KeyEnvName is the variable a provider's key goes into when the config does
+// not already name one: "anthropic" → ANTHROPIC_API_KEY.
+func KeyEnvName(provider string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(strings.TrimSpace(provider)) {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "ORCHESTRA_API_KEY"
+	}
+	return b.String() + "_API_KEY"
+}

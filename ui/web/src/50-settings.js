@@ -395,7 +395,7 @@
       }
     } catch (err) {
       if (current()) {
-        settingsNote("Could not load models: " + String((err && err.message) || err));
+        settingsNote(i18n("set.note.models_failed", { detail: String((err && err.message) || err) }), "error");
       }
     } finally {
       if (current()) {
@@ -404,10 +404,14 @@
     }
   }
 
-  /** The panel has no toast of its own; its error strip doubles as one. */
-  function settingsNote(message) {
-    postToSettings({ type: "error", message });
-    setTimeout(() => postToSettings({ type: "error", message: "" }), 4000);
+  /**
+   * A toast in the settings panel. Every note went out as an "error" — the
+   * panel had only an error strip — so "Orchestra settings saved" arrived as
+   * "Something went wrong". Toasts leave on their own; nothing to clear.
+   * @param {string} message @param {"ok" | "info" | "error"=} kind
+   */
+  function settingsNote(message, kind) {
+    postToSettings({ type: "toast", kind: kind || "ok", message });
   }
 
   /** @param {any} msg */
@@ -501,7 +505,8 @@
       case "openGraphViewer":
         settingsNote(
           "The graph viewer runs as its own local server — start it with `orchestra ckg-ui`. " +
-            "The web UI cannot launch processes."
+            "The web UI cannot launch processes.",
+          "info"
         );
         return;
 
@@ -527,7 +532,7 @@
         // counterpart; the tab's other half, Orchestra routing, still saves.
         if (Array.isArray(msg.roles)) {
           await saveOrchestraFrom(msg);
-          settingsNote("Orchestra settings saved");
+          settingsNote(i18n("set.note.orchestra_saved"));
         }
         await pushSettingsState();
         return;
@@ -570,7 +575,7 @@
         settingsNote(
           apiKey && !model
             ? "Provider credentials saved — pick a model and save again to activate"
-            : "Model settings saved"
+            : i18n("set.note.model_saved")
         );
         // The chat's own pill and context gauge show the model too; a change
         // made here has to reach them, or they name the model that was.
@@ -592,7 +597,7 @@
           throw new Error("roles required");
         }
         await saveOrchestraFrom(msg);
-        settingsNote("Orchestra settings saved");
+        settingsNote(i18n("set.note.orchestra_saved"));
         await pushSettingsState();
         return;
 
@@ -609,7 +614,7 @@
           params.semantic_auto_explore = Boolean(msg.semanticAutoExplore);
         }
         await settingsRpc("index.configure", params);
-        settingsNote("Index settings saved");
+        settingsNote(i18n("set.note.index_saved"));
         await pushSettingsState();
         return;
       }
@@ -661,40 +666,43 @@
         if (msg.content !== undefined) params.content = String(msg.content);
         if (msg.promptFamily !== undefined) params.prompt_family = String(msg.promptFamily);
         await settingsRpc("runtime.set_system_prompt", params);
-        settingsNote("System prompt saved");
+        settingsNote(i18n("set.note.prompt_saved"));
         await pushSettingsState();
         return;
       }
 
       case "clearPrompt":
         await settingsRpc("runtime.set_system_prompt", { persist: true, clear: true });
-        settingsNote("System prompt cleared");
+        settingsNote(i18n("set.note.prompt_cleared"));
         await pushSettingsState();
         return;
 
       case "upsertAgent":
         await settingsRpc("agents.upsert", { agent: msg.agent, persist: true });
-        settingsNote("Agent saved");
+        settingsNote(i18n("set.note.agent_saved"));
         await pushSettingsState();
         return;
 
       case "deleteAgent":
         await settingsRpc("agents.delete", { name: String(msg.name || ""), persist: true });
-        settingsNote("Agent deleted");
+        settingsNote(i18n("set.note.agent_deleted"));
         await pushSettingsState();
         return;
 
       case "upsertMCP": {
         const r = (await settingsRpc("mcp.upsert", { server: msg.server, persist: true })) || {};
         const warnings = Array.isArray(r.warnings) ? r.warnings : [];
-        settingsNote(warnings.length ? "Saved with warnings: " + warnings.join("; ") : "MCP server saved");
+        settingsNote(
+          warnings.length ? "Saved with warnings: " + warnings.join("; ") : i18n("set.note.mcp_saved"),
+          warnings.length ? "info" : "ok"
+        );
         await pushSettingsState();
         return;
       }
 
       case "deleteMCP":
         await settingsRpc("mcp.delete", { name: String(msg.name || ""), persist: true });
-        settingsNote("MCP server removed");
+        settingsNote(i18n("set.note.mcp_removed"));
         await pushSettingsState();
         return;
 

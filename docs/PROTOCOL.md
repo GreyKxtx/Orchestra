@@ -1211,8 +1211,8 @@ The params are `wire.AgentEvent` (protocol/wire/events.go; `AgentEvent` in the g
 | `tool_call_completed` | Agent loop finished `tools.Call` | `tool_call_name`, `tool_call_id`, `content` (truncated preview, 256 bytes) |
 | `step_done` | End of one agent loop iteration | `content` ∈ {tool_call, final, invalid, final_retry} |
 | `pending_ops` | Agent finalized patches (dry-run or pre-apply) | `data` = `{ops: [...], diff: [{path, before, after}], applied: bool}` |
-| `step_usage` | Provider reported token usage for a completed LLM call | `data` = `{prompt_tokens, completion_tokens, total_tokens, cached_prompt_tokens, cache_write_tokens, cost_usd}` — measured, provider-reported numbers only |
-| `context_estimate` | Agent refreshed its byte-derived guess at the current prompt size (every step; not a provider measurement) | `data` = `{prompt_tokens, source: "estimate", breakdown: [...]}` — must never be summed with, or substituted for, `step_usage` |
+| `step_usage` | Provider reported token usage for a completed LLM call | `data` = `{prompt_tokens, completion_tokens, total_tokens, cached_prompt_tokens, cache_write_tokens, cost_usd, context_tokens?}` — measured, provider-reported numbers only; `context_tokens` is the window of the model the agent ran on (the gauge's ceiling), absent when unknown |
+| `context_estimate` | Agent refreshed its byte-derived guess at the current prompt size (every step; not a provider measurement) | `data` = `{prompt_tokens, source: "estimate", breakdown: [...], context_tokens?}` — must never be summed with, or substituted for, `step_usage` |
 | `recoverable_error` | StaleContent / AmbiguousMatch / schema invalid; loop will retry | `content` (short message) |
 | `done` | LLM stream ended | (full assembled response in agent state) |
 | `error` | LLM-stream-level error (different from `recoverable_error`) | `content`, `error` |

@@ -2453,6 +2453,10 @@
         "completion_tokens": {
           "type": "integer"
         },
+        "context_tokens": {
+          "description": "ContextTokens is the window of the model the agent ran on — what the\ngauge measures against. The project's llm: may name another model\nentirely (an orchestra Lead on Claude, a local model in llm:).",
+          "type": "integer"
+        },
         "cost_usd": {
           "type": "number"
         },

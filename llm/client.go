@@ -39,9 +39,14 @@ type OpenAIClient struct {
 	// deployment-scoped URL and the api-key header instead of a bearer.
 	azure *AzureConfig
 	// reasoning is the configured thinking dial, nil when unset.
-	reasoning     *ReasoningConfig
-	model         string
-	provider      string
+	reasoning *ReasoningConfig
+	model     string
+	provider  string
+	// spec is what this endpoint's provider accepts (provider_spec.go).
+	spec providerSpec
+	// maxTokensSet: max_tokens came from the config. A hosted provider
+	// without one gets none on the wire (providerSpec.cloud).
+	maxTokensSet  bool
 	wantMaxTokens int // user-configured; may exceed safe cap until context is known
 	maxTokens     int // effective value sent on the wire
 	contextTokens int // server / num_ctx window; 0 = unknown
@@ -107,7 +112,13 @@ func NewOpenAIClient(cfg LLMConfig) *OpenAIClient {
 	if want <= 0 {
 		want = defaultMaxTokens
 	}
+	spec := specFor(cfg.Provider, cfg.APIBase)
 	ctxLen := contextLenFromExtra(cfg.ExtraBody)
+	if spec.cloud {
+		// num_ctx left over from a local model says nothing about a hosted
+		// one: its window is the model's (ContextTokens).
+		ctxLen = 0
+	}
 	transport := newLLMTransport(timeout)
 	var supportsJSON *bool
 	if cfg.SupportsJSONSchema != nil {
@@ -122,6 +133,8 @@ func NewOpenAIClient(cfg LLMConfig) *OpenAIClient {
 		reasoning:      cfg.Reasoning,
 		model:          cfg.Model,
 		provider:       cfg.Provider,
+		spec:           spec,
+		maxTokensSet:   cfg.MaxTokens > 0,
 		wantMaxTokens:  want,
 		maxTokens:      effectiveMaxTokens(want, ctxLen),
 		contextTokens:  ctxLen,
@@ -154,6 +167,13 @@ func (c *OpenAIClient) SetContextTokens(n int) {
 func (c *OpenAIClient) ContextTokens() int {
 	if c == nil {
 		return 0
+	}
+	// A hosted model's window is the model's: num_ctx is a local server's
+	// setting and never reaches a hosted API. A local server keeps only what
+	// it was told or reported — its real window may be far below the model's
+	// (LM Studio loads at 4096 unless asked).
+	if c.contextTokens <= 0 && c.spec.cloud {
+		return ModelContextWindow(c.model)
 	}
 	return c.contextTokens
 }
@@ -306,8 +326,21 @@ func clampMaxTokensForPrompt(want, contextLen, promptTok int) int {
 }
 
 // maxTokensForRequest returns the wire max_tokens for this completion, or an
-// error when the prompt alone cannot fit in the context window.
+// error when the prompt alone cannot fit in the context window. Zero leaves
+// the field off: a hosted provider with no max_tokens configured answers up
+// to its model's own ceiling.
 func (c *OpenAIClient) maxTokensForRequest(req CompleteRequest) (int, error) {
+	if c.spec.cloud && !c.maxTokensSet {
+		if c.contextTokens > 0 {
+			if promptTok := c.estimatePromptTokens(req); promptTok >= c.contextTokens-256 {
+				return 0, fmt.Errorf(
+					"prompt too large (~%d tokens) for model context %d — compact history or start a new session",
+					promptTok, c.contextTokens,
+				)
+			}
+		}
+		return 0, nil
+	}
 	want := c.wantMaxTokens
 	if want <= 0 {
 		want = c.maxTokens
@@ -379,7 +412,7 @@ func ensureEnableThinking(extra map[string]any, defaultVal bool) {
 // or accidental max_tokens: N in extra_body would blow the context window).
 var reservedRequestKeys = map[string]bool{
 	"model": true, "messages": true, "tools": true, "tool_choice": true,
-	"max_tokens": true, "temperature": true, "stream": true, "stream_options": true,
+	"max_tokens": true, "max_completion_tokens": true, "temperature": true, "stream": true, "stream_options": true,
 	"response_format": true,
 }
 
@@ -640,15 +673,18 @@ func mergeExtraBody(req chatCompletionRequest, extraBody map[string]any) ([]byte
 
 // chatCompletionRequest represents OpenAI chat completion request
 type chatCompletionRequest struct {
-	Model          string              `json:"model"`
-	Messages       []Message           `json:"messages"`
-	Tools          []ToolDef           `json:"tools,omitempty"`
-	ToolChoice     string              `json:"tool_choice,omitempty"`
-	MaxTokens      int                 `json:"max_tokens,omitempty"`
-	Temperature    *float32            `json:"temperature,omitempty"`
-	ResponseFormat *responseFormatWire `json:"response_format,omitempty"`
-	Stream         bool                `json:"stream,omitempty"`
-	StreamOptions  *streamOptions      `json:"stream_options,omitempty"`
+	Model      string    `json:"model"`
+	Messages   []Message `json:"messages"`
+	Tools      []ToolDef `json:"tools,omitempty"`
+	ToolChoice string    `json:"tool_choice,omitempty"`
+	MaxTokens  int       `json:"max_tokens,omitempty"`
+	// MaxCompletionTokens is the same budget where the provider wants this
+	// name (OpenAI; Azure's reasoning models). Never both.
+	MaxCompletionTokens int                 `json:"max_completion_tokens,omitempty"`
+	Temperature         *float32            `json:"temperature,omitempty"`
+	ResponseFormat      *responseFormatWire `json:"response_format,omitempty"`
+	Stream              bool                `json:"stream,omitempty"`
+	StreamOptions       *streamOptions      `json:"stream_options,omitempty"`
 	// Usage is OpenRouter's usage accounting toggle: {"include": true} makes
 	// the response usage object carry the real cost in credits (USD).
 	Usage *usageInclude `json:"usage,omitempty"`
@@ -707,7 +743,10 @@ func (c *OpenAIClient) buildChatBody(req CompleteRequest, maxTok int, stream boo
 	if c.reportsCost() {
 		reqBody.Usage = &usageInclude{Include: true}
 	}
-	if c.temperature != 0 {
+	if c.spec.maxTokensField(c.model) == "max_completion_tokens" {
+		reqBody.MaxCompletionTokens, reqBody.MaxTokens = reqBody.MaxTokens, 0
+	}
+	if c.temperature != 0 && c.spec.sendsTemperature(c.model) {
 		temp := c.temperature
 		reqBody.Temperature = &temp
 	}

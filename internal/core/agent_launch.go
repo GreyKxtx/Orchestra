@@ -514,7 +514,7 @@ func (c *Core) turnOptions(p *turnPrep) (agent.Options, error) {
 	providerLabel, modelLabel := c.turnLabels(p.effectiveMode)
 	respFmt := agent.ResolveResponseFormat(c.cfg.LLM, providerLabelOf(c.cfg), agent.ResponseFormatToolAgent)
 	requester := convertPermissionRequester(p.spec.PermissionRequester)
-	return app.TurnOptions(p.settings, p.profile, func(o *agent.Options) {
+	o, err := app.TurnOptions(p.settings, p.profile, func(o *agent.Options) {
 		o.MaxSteps = p.maxSteps
 		o.MaxInvalidRetries = p.maxRetries
 		o.MaxPromptBytes = p.maxPromptBytes
@@ -559,6 +559,12 @@ func (c *Core) turnOptions(p *turnPrep) (agent.Options, error) {
 			o.MultimodalLLM = c.cfg.LLM.Multimodal
 		}
 	})
+	if err != nil {
+		return o, err
+	}
+	// The turn's window is its client's — the orchestra planner's for a Lead.
+	app.FitWindow(&o, p.custom.llmClient)
+	return o, nil
 }
 
 // turnLabels names the provider and the model the turn's prompt is written

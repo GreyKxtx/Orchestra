@@ -523,19 +523,6 @@ footer,
   border-top: 1px solid var(--border-soft);
 }
 
-/* #main carries no padding of its own — each panel does — so the error bar,
-   which sits above them all, brings its own gutters and lines up with the
-   reading column. */
-.error {
-  width: calc(100% - 56px);
-  max-width: var(--content-max);
-  margin: 22px auto 0;
-  border-radius: 9px;
-  border-color: color-mix(in srgb, var(--err) 45%, transparent);
-  background: color-mix(in srgb, var(--err) 12%, transparent);
-  font-size: 12.5px;
-}
-
 /* ---- rows, cards and lists --------------------------------------------- */
 /* One shape for everything that is a row of something: a hairline box on the
    page's own ground, filled only on hover. The old sheet gave each family a

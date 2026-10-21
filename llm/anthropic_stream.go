@@ -17,7 +17,10 @@ type anthropicStreamRequest struct {
 	Tools     []anthropicTool        `json:"tools,omitempty"`
 	Thinking  *anthropicThinking     `json:"thinking,omitempty"`
 	Output    *anthropicOutputConfig `json:"output_config,omitempty"`
-	Stream    bool                   `json:"stream"`
+	// Temperature was never sent: the setting did nothing for Anthropic.
+	// Thinking does not combine with it, so it goes only without thinking.
+	Temperature *float32 `json:"temperature,omitempty"`
+	Stream      bool     `json:"stream"`
 }
 
 type anthropicStreamEvent struct {

@@ -457,6 +457,7 @@ func (a *Agent) emitStepUsage(step int, resp *llm.CompleteResponse) {
 		"completion_tokens":    u.CompletionTokens,
 		"total_tokens":         u.TotalTokens,
 		"cost_usd":             u.CostUSD,
+		"context_tokens":       a.opts.ModelContextTokens,
 	})
 	a.opts.OnEvent(AgentEvent{Step: step, Stream: llm.StreamEvent{
 		Kind:    llm.StreamEventStepUsage,

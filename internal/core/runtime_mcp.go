@@ -138,7 +138,7 @@ func (c *Core) saveConfigLocked() (bool, error) {
 	if strings.TrimSpace(cfgPath) == "" {
 		return false, nil
 	}
-	if err := config.Save(cfgPath, c.cfg); err != nil {
+	if err := saveConfigKeysOut(cfgPath, c.cfg); err != nil {
 		return false, err
 	}
 	c.noteConfigMTime()

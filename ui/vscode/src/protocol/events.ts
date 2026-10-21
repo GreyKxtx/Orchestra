@@ -39,6 +39,8 @@ export interface StepUsagePayload {
   source?: string;
   /** Per-category context split (system / tools / rules / skills / conversation). */
   breakdown?: ContextBreakdownItem[];
+  /** Window of the model the agent ran on: what the context gauge measures against. */
+  context_tokens?: number;
 }
 
 /** One recorded (or live) notification, as session.trajectory returns it.

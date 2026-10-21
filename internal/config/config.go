@@ -661,10 +661,14 @@ func (c *ProjectConfig) FindProvider(name string) (LLMConfig, bool) {
 	}
 	// Inherit tuning when the named slot left them at zero/empty — otherwise
 	// NewClient omits max_tokens and vLLM may default to ~50k completion tokens.
-	if cfg.MaxTokens <= 0 && c.LLM.MaxTokens > 0 {
+	// Not into a hosted provider: llm:'s values are a local model's, and a
+	// Claude or GPT entry left at 4096 and 0.7 by inheritance cut long answers
+	// short and sent a temperature its reasoning models refuse.
+	hosted := llmpkg.IsHostedEndpoint(cfg.Provider, cfg.APIBase)
+	if cfg.MaxTokens <= 0 && c.LLM.MaxTokens > 0 && !hosted {
 		cfg.MaxTokens = c.LLM.MaxTokens
 	}
-	if cfg.Temperature == 0 && c.LLM.Temperature != 0 {
+	if cfg.Temperature == 0 && c.LLM.Temperature != 0 && !hosted {
 		cfg.Temperature = c.LLM.Temperature
 	}
 	if cfg.TimeoutS <= 0 && c.LLM.TimeoutS > 0 {
@@ -755,8 +759,16 @@ func NormalizeAPIBase(u string) string {
 
 // EffectiveNumCtx returns the user-configured LLM context window for the
 // active model: per-model preset num_ctx, else llm.extra_body.num_ctx.
+//
+// num_ctx is a local server's setting (Ollama, LM Studio). For a hosted
+// endpoint it is none: it never reaches the API, and one left over from the
+// local model a project started on made a Claude project measure itself
+// against 32K. The window there is the model's (llm.ContextTokensOf).
 func (c *ProjectConfig) EffectiveNumCtx() int64 {
 	if c == nil {
+		return 0
+	}
+	if llmpkg.IsHostedEndpoint(c.LLM.Provider, c.LLM.APIBase) {
 		return 0
 	}
 	model := strings.TrimSpace(c.LLM.Model)
@@ -869,8 +881,9 @@ func DefaultConfig(projectRoot string) *ProjectConfig {
 			APIBase:     "http://localhost:1234/v1",
 			Model:       "qwen2.5-coder-7b",
 			Temperature: 0.7,
-			MaxTokens:   4096,
-			TimeoutS:    600,
+			// No max_tokens: a local server gets llm's own default (4096)
+			// and a hosted model answers up to its limit (providerSpec).
+			TimeoutS: 600,
 			// response_format_type: json_schema — явно; omit на local → auto json_schema
 			// supports_json_schema: false — отключить auto/явный json_schema
 		},

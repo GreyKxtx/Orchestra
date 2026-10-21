@@ -481,6 +481,20 @@
 
       // ---- the settings panel -------------------------------------------
       "set.error": "error",
+      "set.toast.error": "Something went wrong",
+      "set.toast.ok": "Done",
+      "set.toast.info": "Note",
+      "set.toast.close": "Close",
+      "set.note.orchestra_saved": "Orchestra settings saved",
+      "set.note.index_saved": "Index settings saved",
+      "set.note.prompt_saved": "System prompt saved",
+      "set.note.prompt_cleared": "System prompt cleared",
+      "set.note.agent_saved": "Agent saved",
+      "set.note.agent_deleted": "Agent deleted",
+      "set.note.mcp_saved": "MCP server saved",
+      "set.note.mcp_removed": "MCP server removed",
+      "set.note.model_saved": "Model settings saved",
+      "set.note.models_failed": "Could not load models: {detail}",
       "set.nav.general": "General",
       "set.nav.providers": "Providers",
       "set.nav.index": "Index & Graph",
@@ -577,6 +591,7 @@
       "set.prov.prompt_family": "Prompt family",
       "set.prov.temperature": "Temperature",
       "set.prov.max_tokens": "Max tokens",
+      "set.prov.max_tokens_hint": "Empty: a hosted model answers up to its own limit; a local server gets 4096.",
       "set.prov.timeout": "Timeout (s)",
       "set.prov.multimodal": "Vision / multimodal (image attachments)",
       "set.prov.loading": "Loading providers…",
@@ -1220,6 +1235,20 @@
 
       // ---- the settings panel -------------------------------------------
       "set.error": "ошибка",
+      "set.toast.error": "Что-то пошло не так",
+      "set.toast.ok": "Готово",
+      "set.toast.info": "Заметка",
+      "set.toast.close": "Закрыть",
+      "set.note.orchestra_saved": "Настройки маршрутизации сохранены",
+      "set.note.index_saved": "Настройки индекса сохранены",
+      "set.note.prompt_saved": "Системный промпт сохранён",
+      "set.note.prompt_cleared": "Системный промпт очищен",
+      "set.note.agent_saved": "Агент сохранён",
+      "set.note.agent_deleted": "Агент удалён",
+      "set.note.mcp_saved": "MCP-сервер сохранён",
+      "set.note.mcp_removed": "MCP-сервер удалён",
+      "set.note.model_saved": "Настройки модели сохранены",
+      "set.note.models_failed": "Не удалось загрузить модели: {detail}",
       "set.nav.general": "Общие",
       "set.nav.providers": "Провайдеры",
       "set.nav.index": "Индекс и граф",
@@ -1317,6 +1346,7 @@
       "set.prov.prompt_family": "Семейство промптов",
       "set.prov.temperature": "Температура",
       "set.prov.max_tokens": "Максимум токенов",
+      "set.prov.max_tokens_hint": "Пусто — облачная модель отвечает до своего предела, локальный сервер получает 4096.",
       "set.prov.timeout": "Таймаут (с)",
       "set.prov.multimodal": "Зрение / мультимодальность (вложенные картинки)",
       "set.prov.loading": "Загружаю провайдеров…",
@@ -8370,6 +8400,11 @@
           ctxState.prompt = typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0;
           ctxState.completion = typeof u.completion_tokens === "number" ? u.completion_tokens : 0;
           ctxState.estimated = u.source === "estimate";
+          // Measured against the model the turn ran on: the project's llm:
+          // can name another one (a Lead on Claude over a local llm: model).
+          if (typeof u.context_tokens === "number" && u.context_tokens > 0) {
+            ctxState.limit = u.context_tokens;
+          }
           if (Array.isArray(u.breakdown) && u.breakdown.length > 0) {
             ctxState.breakdown = u.breakdown;
           }
@@ -10085,6 +10120,8 @@
       total_tokens: num(data.total_tokens),
       cost_usd: num(data.cost_usd),
       source: typeof data.source === "string" ? data.source : undefined,
+      // The window of the model that answered: the gauge's ceiling.
+      context_tokens: num(data.context_tokens),
     };
     const breakdown = Array.isArray(data.breakdown)
       ? data.breakdown
@@ -13077,7 +13114,7 @@
       }
     } catch (err) {
       if (current()) {
-        settingsNote("Could not load models: " + String((err && err.message) || err));
+        settingsNote(i18n("set.note.models_failed", { detail: String((err && err.message) || err) }), "error");
       }
     } finally {
       if (current()) {
@@ -13086,10 +13123,14 @@
     }
   }
 
-  /** The panel has no toast of its own; its error strip doubles as one. */
-  function settingsNote(message) {
-    postToSettings({ type: "error", message });
-    setTimeout(() => postToSettings({ type: "error", message: "" }), 4000);
+  /**
+   * A toast in the settings panel. Every note went out as an "error" — the
+   * panel had only an error strip — so "Orchestra settings saved" arrived as
+   * "Something went wrong". Toasts leave on their own; nothing to clear.
+   * @param {string} message @param {"ok" | "info" | "error"=} kind
+   */
+  function settingsNote(message, kind) {
+    postToSettings({ type: "toast", kind: kind || "ok", message });
   }
 
   /** @param {any} msg */
@@ -13183,7 +13224,8 @@
       case "openGraphViewer":
         settingsNote(
           "The graph viewer runs as its own local server — start it with `orchestra ckg-ui`. " +
-            "The web UI cannot launch processes."
+            "The web UI cannot launch processes.",
+          "info"
         );
         return;
 
@@ -13209,7 +13251,7 @@
         // counterpart; the tab's other half, Orchestra routing, still saves.
         if (Array.isArray(msg.roles)) {
           await saveOrchestraFrom(msg);
-          settingsNote("Orchestra settings saved");
+          settingsNote(i18n("set.note.orchestra_saved"));
         }
         await pushSettingsState();
         return;
@@ -13252,7 +13294,7 @@
         settingsNote(
           apiKey && !model
             ? "Provider credentials saved — pick a model and save again to activate"
-            : "Model settings saved"
+            : i18n("set.note.model_saved")
         );
         // The chat's own pill and context gauge show the model too; a change
         // made here has to reach them, or they name the model that was.
@@ -13274,7 +13316,7 @@
           throw new Error("roles required");
         }
         await saveOrchestraFrom(msg);
-        settingsNote("Orchestra settings saved");
+        settingsNote(i18n("set.note.orchestra_saved"));
         await pushSettingsState();
         return;
 
@@ -13291,7 +13333,7 @@
           params.semantic_auto_explore = Boolean(msg.semanticAutoExplore);
         }
         await settingsRpc("index.configure", params);
-        settingsNote("Index settings saved");
+        settingsNote(i18n("set.note.index_saved"));
         await pushSettingsState();
         return;
       }
@@ -13343,40 +13385,43 @@
         if (msg.content !== undefined) params.content = String(msg.content);
         if (msg.promptFamily !== undefined) params.prompt_family = String(msg.promptFamily);
         await settingsRpc("runtime.set_system_prompt", params);
-        settingsNote("System prompt saved");
+        settingsNote(i18n("set.note.prompt_saved"));
         await pushSettingsState();
         return;
       }
 
       case "clearPrompt":
         await settingsRpc("runtime.set_system_prompt", { persist: true, clear: true });
-        settingsNote("System prompt cleared");
+        settingsNote(i18n("set.note.prompt_cleared"));
         await pushSettingsState();
         return;
 
       case "upsertAgent":
         await settingsRpc("agents.upsert", { agent: msg.agent, persist: true });
-        settingsNote("Agent saved");
+        settingsNote(i18n("set.note.agent_saved"));
         await pushSettingsState();
         return;
 
       case "deleteAgent":
         await settingsRpc("agents.delete", { name: String(msg.name || ""), persist: true });
-        settingsNote("Agent deleted");
+        settingsNote(i18n("set.note.agent_deleted"));
         await pushSettingsState();
         return;
 
       case "upsertMCP": {
         const r = (await settingsRpc("mcp.upsert", { server: msg.server, persist: true })) || {};
         const warnings = Array.isArray(r.warnings) ? r.warnings : [];
-        settingsNote(warnings.length ? "Saved with warnings: " + warnings.join("; ") : "MCP server saved");
+        settingsNote(
+          warnings.length ? "Saved with warnings: " + warnings.join("; ") : i18n("set.note.mcp_saved"),
+          warnings.length ? "info" : "ok"
+        );
         await pushSettingsState();
         return;
       }
 
       case "deleteMCP":
         await settingsRpc("mcp.delete", { name: String(msg.name || ""), persist: true });
-        settingsNote("MCP server removed");
+        settingsNote(i18n("set.note.mcp_removed"));
         await pushSettingsState();
         return;
 

@@ -30,6 +30,17 @@ var modelWindows = []struct {
 	{"claude-haiku-4", 200000},
 	{"claude-sonnet-4", 200000},
 	{"claude-opus-4", 200000},
+	// The current lineup takes 1M by default, no beta header
+	// (platform.claude.com, models overview). Before the families below,
+	// which match them too.
+	{"claude-opus-5-5", 1000000},
+	{"claude-opus-5.5", 1000000},
+	{"claude-sonnet-5-5", 1000000},
+	{"claude-sonnet-5.5", 1000000},
+	{"claude-haiku-5-5", 1000000},
+	{"claude-haiku-5.5", 1000000},
+	{"claude-fable-5-1", 1000000},
+	{"claude-fable-5.1", 1000000},
 	{"claude-sonnet-5", 200000},
 	{"claude-opus-5", 200000},
 	{"claude-haiku-5", 200000},

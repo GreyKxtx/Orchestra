@@ -44,11 +44,14 @@ type RemoteModel struct {
 	MaxModelLen      int64  `json:"max_model_len,omitempty"`
 	MaxContextLength int64  `json:"max_context_length,omitempty"`
 	ContextLength    int64  `json:"context_length,omitempty"`
+	// MaxInputTokens is Anthropic's: its Models API states every model's
+	// window.
+	MaxInputTokens int64 `json:"max_input_tokens,omitempty"`
 }
 
 // ContextTokens returns the server-advertised context window when present.
 func (m RemoteModel) ContextTokens() int {
-	for _, n := range []int64{m.MaxModelLen, m.MaxContextLength, m.ContextLength} {
+	for _, n := range []int64{m.MaxModelLen, m.MaxContextLength, m.ContextLength, m.MaxInputTokens} {
 		if n > 0 {
 			return int(n)
 		}
@@ -56,22 +59,34 @@ func (m RemoteModel) ContextTokens() int {
 	return 0
 }
 
-// ListRemoteModels fetches models from cfg.APIBase (/v1/models or /models).
+// ListRemoteModels fetches the models an endpoint serves, the way that
+// provider lists them (providerSpec): its path, and its key header.
 func ListRemoteModels(ctx context.Context, cfg LLMConfig) ([]RemoteModel, error) {
 	base := strings.TrimRight(strings.TrimSpace(cfg.APIBase), "/")
+	spec := specFor(cfg.Provider, cfg.APIBase)
+	if base == "" && spec.key == "anthropic" {
+		base = anthropicAPIBase
+	}
 	if base == "" {
 		return nil, fmt.Errorf("api_base is empty")
 	}
-	candidates := []string{base + "/models"}
-	if !strings.HasSuffix(base, "/v1") {
-		candidates = append([]string{base + "/v1/models"}, candidates...)
+	azureVersion := ""
+	if cfg.Azure != nil {
+		azureVersion = cfg.Azure.APIVersion
 	}
+	candidates := spec.modelsURLs(base, azureVersion)
 
 	var lastErr error
 	for _, endpoint := range candidates {
-		models, err := fetchModelsURL(ctx, endpoint, cfg.APIKey)
+		models, err := fetchModelsURL(ctx, endpoint, cfg.APIKey, spec.modelsAuth)
 		if err == nil {
 			return models, nil
+		}
+		// A refused key is the answer: another path on the same host refuses
+		// it too, or answers 404 and hides why.
+		var status *modelsStatusError
+		if errors.As(err, &status) && (status.code == 401 || status.code == 403) {
+			return nil, err
 		}
 		lastErr = err
 		// The candidates are two paths on one host. Not reaching the host at
@@ -92,13 +107,31 @@ func ListRemoteModels(ctx context.Context, cfg LLMConfig) ([]RemoteModel, error)
 	return nil, lastErr
 }
 
-func fetchModelsURL(ctx context.Context, endpoint, apiKey string) ([]RemoteModel, error) {
+// modelsStatusError is a listing the server answered with an error status.
+type modelsStatusError struct {
+	code int
+	msg  string
+}
+
+func (e *modelsStatusError) Error() string { return e.msg }
+
+func fetchModelsURL(ctx context.Context, endpoint, apiKey, auth string) ([]RemoteModel, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(apiKey) != "" {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+	if key := strings.TrimSpace(apiKey); key != "" {
+		switch auth {
+		case "x-api-key":
+			req.Header.Set("x-api-key", key)
+		case "api-key":
+			req.Header.Set("api-key", key)
+		default:
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+	}
+	if auth == "x-api-key" {
+		req.Header.Set("anthropic-version", anthropicVersion)
 	}
 	client := &http.Client{Timeout: 15 * time.Second, Transport: modelsTransport}
 	resp, err := client.Do(req)
@@ -111,7 +144,10 @@ func fetchModelsURL(ctx context.Context, endpoint, apiKey string) ([]RemoteModel
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("GET %s: HTTP %d: %s", endpoint, resp.StatusCode, truncateForErr(string(body), 200))
+		return nil, &modelsStatusError{
+			code: resp.StatusCode,
+			msg:  fmt.Sprintf("GET %s: HTTP %d: %s", endpoint, resp.StatusCode, truncateForErr(string(body), 200)),
+		}
 	}
 	var payload struct {
 		Data []RemoteModel `json:"data"`

@@ -88,9 +88,10 @@ func (a *Agent) emitPromptContextEstimate(step int, history []llm.Message) {
 		return
 	}
 	payload, _ := json.Marshal(map[string]any{
-		"prompt_tokens": est,
-		"source":        "estimate",
-		"breakdown":     breakdown,
+		"prompt_tokens":  est,
+		"source":         "estimate",
+		"breakdown":      breakdown,
+		"context_tokens": a.opts.ModelContextTokens,
 	})
 	a.opts.OnEvent(AgentEvent{Step: step, Stream: llm.StreamEvent{
 		Kind:    llm.StreamEventContextEstimate,

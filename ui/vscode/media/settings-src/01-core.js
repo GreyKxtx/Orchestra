@@ -73,17 +73,67 @@
   const CATEGORY_ORDER = ["Local", "Cloud", "Gateway", "Other", "Named"];
   const MCP_CAT_ORDER = ["All", "Installable", "Featured", "Remote"];
 
-  const errorEl = document.getElementById("error");
+  // What went wrong is a toast in the bottom-right corner, with the whole
+  // message, until it times out or is closed. It was a strip over the page,
+  // and the host clears a note by sending an empty one: the strip turned that
+  // into the bare word "error", and kept it there for good.
+  const TOAST_MS = 9000;
+  const TOAST_MAX = 4;
 
-  function showError(text) {
-    if (!errorEl) return;
-    if (!text) {
-      errorEl.classList.add("hidden");
-      errorEl.textContent = "";
-      return;
+  function toastHost() {
+    let host = document.getElementById("toasts");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "toasts";
+      host.className = "toasts";
+      host.setAttribute("role", "status");
+      host.setAttribute("aria-live", "polite");
+      document.body.appendChild(host);
     }
-    errorEl.textContent = text;
-    errorEl.classList.remove("hidden");
+    return host;
+  }
+
+  /**
+   * @param {string} text the message; empty does nothing (a host "clearing")
+   * @param {"error" | "ok" | "info"=} kind
+   */
+  function toast(text, kind) {
+    const msg = String(text || "").trim();
+    if (!msg) return;
+    const host = toastHost();
+    // The same message twice in a row is one toast, shown again.
+    for (const t of Array.from(host.children)) {
+      if (t.getAttribute("data-msg") === msg) t.remove();
+    }
+    while (host.children.length >= TOAST_MAX) host.firstElementChild?.remove();
+    const t = document.createElement("div");
+    t.className = "toast toast-" + (kind || "error");
+    t.setAttribute("data-msg", msg);
+    const title = document.createElement("div");
+    title.className = "toast-title";
+    title.textContent = i18n(kind === "ok" ? "set.toast.ok" : kind === "info" ? "set.toast.info" : "set.toast.error");
+    const body = document.createElement("div");
+    body.className = "toast-body";
+    body.textContent = msg;
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "toast-close";
+    close.setAttribute("aria-label", i18n("set.toast.close"));
+    close.textContent = "×";
+    close.addEventListener("click", () => t.remove());
+    t.append(title, body, close);
+    host.appendChild(t);
+    let timer = setTimeout(() => t.remove(), TOAST_MS);
+    // Reading it holds it: the pointer over a toast stops its clock.
+    t.addEventListener("mouseenter", () => clearTimeout(timer));
+    t.addEventListener("mouseleave", () => {
+      timer = setTimeout(() => t.remove(), TOAST_MS / 2);
+    });
+  }
+
+  /** An error the page or its host reports. Empty is a no-op: toasts leave on their own. */
+  function showError(text) {
+    toast(text, "error");
   }
 
   function el(id) {

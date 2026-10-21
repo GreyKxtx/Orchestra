@@ -481,6 +481,20 @@
 
       // ---- the settings panel -------------------------------------------
       "set.error": "error",
+      "set.toast.error": "Something went wrong",
+      "set.toast.ok": "Done",
+      "set.toast.info": "Note",
+      "set.toast.close": "Close",
+      "set.note.orchestra_saved": "Orchestra settings saved",
+      "set.note.index_saved": "Index settings saved",
+      "set.note.prompt_saved": "System prompt saved",
+      "set.note.prompt_cleared": "System prompt cleared",
+      "set.note.agent_saved": "Agent saved",
+      "set.note.agent_deleted": "Agent deleted",
+      "set.note.mcp_saved": "MCP server saved",
+      "set.note.mcp_removed": "MCP server removed",
+      "set.note.model_saved": "Model settings saved",
+      "set.note.models_failed": "Could not load models: {detail}",
       "set.nav.general": "General",
       "set.nav.providers": "Providers",
       "set.nav.index": "Index & Graph",
@@ -577,6 +591,7 @@
       "set.prov.prompt_family": "Prompt family",
       "set.prov.temperature": "Temperature",
       "set.prov.max_tokens": "Max tokens",
+      "set.prov.max_tokens_hint": "Empty: a hosted model answers up to its own limit; a local server gets 4096.",
       "set.prov.timeout": "Timeout (s)",
       "set.prov.multimodal": "Vision / multimodal (image attachments)",
       "set.prov.loading": "Loading providers…",
@@ -1220,6 +1235,20 @@
 
       // ---- the settings panel -------------------------------------------
       "set.error": "ошибка",
+      "set.toast.error": "Что-то пошло не так",
+      "set.toast.ok": "Готово",
+      "set.toast.info": "Заметка",
+      "set.toast.close": "Закрыть",
+      "set.note.orchestra_saved": "Настройки маршрутизации сохранены",
+      "set.note.index_saved": "Настройки индекса сохранены",
+      "set.note.prompt_saved": "Системный промпт сохранён",
+      "set.note.prompt_cleared": "Системный промпт очищен",
+      "set.note.agent_saved": "Агент сохранён",
+      "set.note.agent_deleted": "Агент удалён",
+      "set.note.mcp_saved": "MCP-сервер сохранён",
+      "set.note.mcp_removed": "MCP-сервер удалён",
+      "set.note.model_saved": "Настройки модели сохранены",
+      "set.note.models_failed": "Не удалось загрузить модели: {detail}",
       "set.nav.general": "Общие",
       "set.nav.providers": "Провайдеры",
       "set.nav.index": "Индекс и граф",
@@ -1317,6 +1346,7 @@
       "set.prov.prompt_family": "Семейство промптов",
       "set.prov.temperature": "Температура",
       "set.prov.max_tokens": "Максимум токенов",
+      "set.prov.max_tokens_hint": "Пусто — облачная модель отвечает до своего предела, локальный сервер получает 4096.",
       "set.prov.timeout": "Таймаут (с)",
       "set.prov.multimodal": "Зрение / мультимодальность (вложенные картинки)",
       "set.prov.loading": "Загружаю провайдеров…",
@@ -2048,17 +2078,67 @@
   const CATEGORY_ORDER = ["Local", "Cloud", "Gateway", "Other", "Named"];
   const MCP_CAT_ORDER = ["All", "Installable", "Featured", "Remote"];
 
-  const errorEl = document.getElementById("error");
+  // What went wrong is a toast in the bottom-right corner, with the whole
+  // message, until it times out or is closed. It was a strip over the page,
+  // and the host clears a note by sending an empty one: the strip turned that
+  // into the bare word "error", and kept it there for good.
+  const TOAST_MS = 9000;
+  const TOAST_MAX = 4;
 
-  function showError(text) {
-    if (!errorEl) return;
-    if (!text) {
-      errorEl.classList.add("hidden");
-      errorEl.textContent = "";
-      return;
+  function toastHost() {
+    let host = document.getElementById("toasts");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "toasts";
+      host.className = "toasts";
+      host.setAttribute("role", "status");
+      host.setAttribute("aria-live", "polite");
+      document.body.appendChild(host);
     }
-    errorEl.textContent = text;
-    errorEl.classList.remove("hidden");
+    return host;
+  }
+
+  /**
+   * @param {string} text the message; empty does nothing (a host "clearing")
+   * @param {"error" | "ok" | "info"=} kind
+   */
+  function toast(text, kind) {
+    const msg = String(text || "").trim();
+    if (!msg) return;
+    const host = toastHost();
+    // The same message twice in a row is one toast, shown again.
+    for (const t of Array.from(host.children)) {
+      if (t.getAttribute("data-msg") === msg) t.remove();
+    }
+    while (host.children.length >= TOAST_MAX) host.firstElementChild?.remove();
+    const t = document.createElement("div");
+    t.className = "toast toast-" + (kind || "error");
+    t.setAttribute("data-msg", msg);
+    const title = document.createElement("div");
+    title.className = "toast-title";
+    title.textContent = i18n(kind === "ok" ? "set.toast.ok" : kind === "info" ? "set.toast.info" : "set.toast.error");
+    const body = document.createElement("div");
+    body.className = "toast-body";
+    body.textContent = msg;
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "toast-close";
+    close.setAttribute("aria-label", i18n("set.toast.close"));
+    close.textContent = "×";
+    close.addEventListener("click", () => t.remove());
+    t.append(title, body, close);
+    host.appendChild(t);
+    let timer = setTimeout(() => t.remove(), TOAST_MS);
+    // Reading it holds it: the pointer over a toast stops its clock.
+    t.addEventListener("mouseenter", () => clearTimeout(timer));
+    t.addEventListener("mouseleave", () => {
+      timer = setTimeout(() => t.remove(), TOAST_MS / 2);
+    });
+  }
+
+  /** An error the page or its host reports. Empty is a no-op: toasts leave on their own. */
+  function showError(text) {
+    toast(text, "error");
   }
 
   function el(id) {
@@ -2527,6 +2607,7 @@
       if (status) status.textContent = i18n("set.models.select_provider");
       return;
     }
+    if (status) status.classList.toggle("status-error", Boolean(p.models_error));
     if (p.models_error) {
       if (status) status.textContent = i18n("set.models.failed", { detail: p.models_error });
     } else if (!p.ready) {
@@ -4276,7 +4357,13 @@
     const msg = event.data;
     if (!msg || typeof msg !== "object") return;
     if (msg.type === "error") {
-      showError(msg.message || i18n("set.error"));
+      // An empty message is the host taking its note back, not an error.
+      showError(msg.message || "");
+      return;
+    }
+    if (msg.type === "toast") {
+      const kind = msg.kind === "error" || msg.kind === "info" ? msg.kind : "ok";
+      toast(msg.message || "", kind);
       return;
     }
     if (msg.type === "modelPicked" && input("model") && msg.model) {

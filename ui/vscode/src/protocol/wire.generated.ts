@@ -296,6 +296,12 @@ export interface Usage {
   entries?: UsageEntry[];
   /** Breakdown is the per-category split of an estimate. */
   breakdown?: ContextBreakdown[];
+  /**
+   * ContextTokens is the window of the model the agent ran on — what the
+   * gauge measures against. The project's llm: may name another model
+   * entirely (an orchestra Lead on Claude, a local model in llm:).
+   */
+  context_tokens?: number;
 }
 
 /** UsageEntry is one (provider, model) row of a turn's spend. */

@@ -199,6 +199,10 @@ type Usage struct {
 	Entries []UsageEntry `json:"entries,omitempty"`
 	// Breakdown is the per-category split of an estimate.
 	Breakdown []ContextBreakdown `json:"breakdown,omitempty"`
+	// ContextTokens is the window of the model the agent ran on — what the
+	// gauge measures against. The project's llm: may name another model
+	// entirely (an orchestra Lead on Claude, a local model in llm:).
+	ContextTokens int `json:"context_tokens,omitempty"`
 }
 
 // UsageEntry is one (provider, model) row of a turn's spend.

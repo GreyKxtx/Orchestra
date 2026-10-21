@@ -487,14 +487,80 @@ button.danger:hover {
   border-color: var(--err);
 }
 
-.error {
-  background: color-mix(in srgb, var(--err) 15%, transparent);
-  border: 1px solid var(--err);
-  color: var(--err);
-  padding: 10px 12px;
-  border-radius: 8px;
-  margin-bottom: 14px;
+
+/* Toasts: what went wrong, in the bottom-right corner, newest at the bottom. */
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  position: relative;
+  pointer-events: auto;
+  padding: 10px 34px 11px 14px;
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--err);
+  border-radius: var(--r-md);
+  background: var(--menu);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  animation: toast-in 0.18s ease-out;
+}
+
+.toast-ok { border-left-color: var(--ok); }
+.toast-info { border-left-color: var(--accent); }
+
+.toast-title {
   font-size: 12px;
+  font-weight: 600;
+  color: var(--err);
+  margin-bottom: 3px;
+}
+
+.toast-ok .toast-title { color: var(--ok); }
+.toast-info .toast-title { color: var(--fg); }
+
+.toast-body {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow: auto;
+  user-select: text;
+}
+
+.toast-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.toast-close:hover {
+  color: var(--fg);
+  background: var(--hover);
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
 }
 
 .hidden { display: none; }
@@ -540,7 +606,46 @@ button.danger:hover {
 }
 
 .model-list {
-  max-height: 280px;
+  max-height: min(440px, 52vh);
+}
+
+/* Providers as a grid of cards, every one in sight: they were rows in a
+   220px box with a scrollbar of its own, five visible out of eighteen. */
+#providerList.pick-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+#providerList .pick-group-label {
+  grid-column: 1 / -1;
+  padding: 10px 2px 0;
+}
+
+#providerList .pick-group-label:first-child {
+  padding-top: 0;
+}
+
+#providerList .pick-item {
+  min-height: 48px;
+  padding: 10px 12px;
+  gap: 10px;
+}
+
+#providerList .pick-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A failed listing reads as one: the reason in the error colour. */
+.hint.status-error {
+  color: var(--err);
 }
 
 .pick-group-label {
@@ -1672,6 +1777,14 @@ button.danger:hover {
   z-index: 20;
 }
 
+/* Each row is its own layer (z-index: 1), so a role's tip — however high its
+   own z-index — was drawn under the buttons of every row below it. The row
+   showing a tip rises above the rest, as one with an open dropdown does. */
+.orch-row:has(.orch-info:hover),
+.orch-row:has(.orch-info:focus-visible) {
+  z-index: 30;
+}
+
 .orch-row-title {
   font-weight: 600;
   font-size: 12px;
@@ -1740,8 +1853,8 @@ button.danger:hover {
   left: -8px;
   top: calc(100% + 8px);
   z-index: 60;
-  width: 280px;
-  padding: 10px 12px;
+  width: 320px;
+  padding: 12px 14px;
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   background: var(--menu);
@@ -1760,7 +1873,7 @@ button.danger:hover {
 
 .orch-tip strong {
   display: block;
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--fg);
   margin-bottom: 4px;
@@ -1768,8 +1881,8 @@ button.danger:hover {
 
 .orch-tip-desc {
   display: block;
-  font-size: 11px;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--muted);
   white-space: normal;
 }
@@ -1779,7 +1892,7 @@ button.danger:hover {
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--border);
-  font-size: 10.5px;
+  font-size: 11.5px;
   color: #8fb573;
   white-space: normal;
 }

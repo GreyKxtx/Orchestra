@@ -17,10 +17,12 @@ const anthropicVersion = "2023-06-01"
 
 // AnthropicClient implements llm.Client for the Anthropic Messages API.
 type AnthropicClient struct {
-	apiKey       string
-	tokenSource  func() (string, error)
-	model        string
-	maxTokens    int
+	apiKey      string
+	tokenSource func() (string, error)
+	model       string
+	maxTokens   int
+	// temperature is sent only without thinking (anthropicStreamRequest).
+	temperature  float32
 	baseURL      string
 	client       *http.Client
 	streamClient *http.Client
@@ -91,6 +93,7 @@ func NewAnthropicClient(cfg LLMConfig) *AnthropicClient {
 		tokenSource:    cfg.TokenSource,
 		model:          cfg.Model,
 		maxTokens:      maxTokens,
+		temperature:    cfg.Temperature,
 		thinking:       thinking,
 		output:         output,
 		baseURL:        base,
@@ -207,6 +210,10 @@ func (c *AnthropicClient) CompleteStream(ctx context.Context, req CompleteReques
 		Thinking:  c.thinking,
 		Output:    c.output,
 		Stream:    true,
+	}
+	if c.temperature != 0 && c.thinking == nil && !anthropicAdaptiveThinking(c.model) {
+		t := c.temperature
+		body.Temperature = &t
 	}
 
 	jsonData, err := json.Marshal(body)
@@ -503,4 +510,14 @@ func anthropicImage(p ContentPart) *anthropicImageSource {
 		return nil
 	}
 	return &anthropicImageSource{Type: "url", URL: u}
+}
+
+// ContextTokens is the model's window from the catalogue. Without it the core
+// knew no window for a Claude turn and fell back to the local llm:'s num_ctx,
+// or to a 50 KB history budget.
+func (c *AnthropicClient) ContextTokens() int {
+	if c == nil {
+		return 0
+	}
+	return ModelContextWindow(c.model)
 }

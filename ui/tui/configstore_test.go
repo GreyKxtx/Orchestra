@@ -13,6 +13,12 @@ import (
 
 func testStore(t *testing.T) (*configStore, string) {
 	t.Helper()
+	// Saving a new config records it as trusted in ~/.orchestra: without a
+	// home of its own every run of these tests added its temp dirs to the
+	// developer's real trusted-workspaces.json.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".orchestra.yml")
 	return newConfigStore(path, dir), path

@@ -439,6 +439,11 @@
           ctxState.prompt = typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0;
           ctxState.completion = typeof u.completion_tokens === "number" ? u.completion_tokens : 0;
           ctxState.estimated = u.source === "estimate";
+          // Measured against the model the turn ran on: the project's llm:
+          // can name another one (a Lead on Claude over a local llm: model).
+          if (typeof u.context_tokens === "number" && u.context_tokens > 0) {
+            ctxState.limit = u.context_tokens;
+          }
           if (Array.isArray(u.breakdown) && u.breakdown.length > 0) {
             ctxState.breakdown = u.breakdown;
           }

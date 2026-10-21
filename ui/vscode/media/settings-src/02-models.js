@@ -159,6 +159,7 @@
       if (status) status.textContent = i18n("set.models.select_provider");
       return;
     }
+    if (status) status.classList.toggle("status-error", Boolean(p.models_error));
     if (p.models_error) {
       if (status) status.textContent = i18n("set.models.failed", { detail: p.models_error });
     } else if (!p.ready) {

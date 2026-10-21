@@ -2,7 +2,13 @@
     const msg = event.data;
     if (!msg || typeof msg !== "object") return;
     if (msg.type === "error") {
-      showError(msg.message || i18n("set.error"));
+      // An empty message is the host taking its note back, not an error.
+      showError(msg.message || "");
+      return;
+    }
+    if (msg.type === "toast") {
+      const kind = msg.kind === "error" || msg.kind === "info" ? msg.kind : "ok";
+      toast(msg.message || "", kind);
       return;
     }
     if (msg.type === "modelPicked" && input("model") && msg.model) {

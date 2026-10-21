@@ -267,7 +267,7 @@ func (c *Core) RuntimeConfigureOrchestra(params RuntimeConfigureOrchestraParams)
 	}
 
 	if persist {
-		if err := config.Save(c.configFilePath(), cfg); err != nil {
+		if err := saveConfigKeysOut(c.configFilePath(), cfg); err != nil {
 			return nil, protocol.NewError(protocol.ExecFailed, "save orchestra config: "+err.Error(), nil)
 		}
 		c.noteConfigMTime()

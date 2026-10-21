@@ -2952,5 +2952,6 @@ function parseStepUsage(data: unknown): StepUsagePayload | undefined {
     cost_usd: typeof d.cost_usd === "number" ? d.cost_usd : undefined,
     source: typeof d.source === "string" ? d.source : undefined,
     breakdown: breakdown && breakdown.length > 0 ? breakdown : undefined,
+    context_tokens: typeof d.context_tokens === "number" && d.context_tokens > 0 ? d.context_tokens : undefined,
   };
 }
