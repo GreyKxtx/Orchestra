@@ -125,6 +125,9 @@
   const workflowStagesEl = document.getElementById("workflow-stages");
   const subagentsBar = document.getElementById("subagents-bar");
   const subagentsTree = document.getElementById("subagents-tree");
+  const subagentsHead = document.getElementById("subagents-head");
+  const viewSubagentsBtn = document.getElementById("view-subagents-btn");
+  const subagentsCountEl = document.getElementById("subagents-count");
   const diffViewer = document.getElementById("diff-viewer");
   const diffViewerTitle = document.getElementById("diff-viewer-title");
   const diffPaneBefore = document.getElementById("diff-pane-before");

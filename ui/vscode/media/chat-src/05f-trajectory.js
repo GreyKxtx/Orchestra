@@ -358,35 +358,59 @@
   /** Inline diffs run an O(n·m) alignment, so a big file gets its stats and the full viewer instead. */
   const TRAJ_DIFF_LINE_BUDGET = 1200;
 
+  /** The views of the shared switch, in the order of their segments. */
+  const BASE_VIEWS = ["chat", "subagents", "trajectory"];
+
+  /** @param {string} v */
+  function viewButton(v) {
+    return v === "subagents" ? viewSubagentsBtn : v === "trajectory" ? viewTrajectoryBtn : viewChatBtn;
+  }
+
+  /** A segment hidden for want of anything to show (Subagents) is skipped. @param {string} v */
+  function viewShown(v) {
+    const b = viewButton(v);
+    return Boolean(b) && !(b.classList && b.classList.contains("hidden"));
+  }
+
   function currentView() {
-    return appViewEl && appViewEl.dataset.view === "trajectory" ? "trajectory" : "chat";
+    const v = appViewEl && appViewEl.dataset.view;
+    return BASE_VIEWS.includes(v) ? v : "chat";
   }
 
   /** @param {string} view */
   function setView(view) {
-    const v = view === "trajectory" ? "trajectory" : "chat";
+    const v = BASE_VIEWS.includes(view) ? view : "chat";
     if (appViewEl) appViewEl.dataset.view = v;
-    if (viewChatBtn) viewChatBtn.setAttribute("aria-selected", v === "chat" ? "true" : "false");
-    if (viewTrajectoryBtn) viewTrajectoryBtn.setAttribute("aria-selected", v === "trajectory" ? "true" : "false");
+    for (const name of BASE_VIEWS) {
+      const b = viewButton(name);
+      if (b) b.setAttribute("aria-selected", name === v ? "true" : "false");
+    }
   }
 
   function bindViewSwitch() {
-    if (viewChatBtn) viewChatBtn.addEventListener("click", () => setView("chat"));
-    if (viewTrajectoryBtn) viewTrajectoryBtn.addEventListener("click", () => setView("trajectory"));
-    // Arrow keys move between the two segments, as a tablist does. The
+    for (const name of BASE_VIEWS) {
+      const b = viewButton(name);
+      if (b) b.addEventListener("click", () => setView(name));
+    }
+    // Arrow keys move between the segments shown, as a tablist does. The
     // listeners sit on each button rather than on a shared ancestor found via
     // closest(): the test harness's stub closest() returns null, which is what
     // left C1's rail keyboard path with no automated coverage.
     const onKey = (e) => {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
       e.preventDefault();
-      const next = currentView() === "chat" ? "trajectory" : "chat";
+      const shown = BASE_VIEWS.filter(viewShown);
+      if (!shown.length) return;
+      const at = Math.max(0, shown.indexOf(currentView()));
+      const next = shown[(at + (e.key === "ArrowRight" ? 1 : shown.length - 1)) % shown.length];
       setView(next);
-      const btn = next === "chat" ? viewChatBtn : viewTrajectoryBtn;
+      const btn = viewButton(next);
       if (btn) btn.focus();
     };
-    if (viewChatBtn) viewChatBtn.addEventListener("keydown", onKey);
-    if (viewTrajectoryBtn) viewTrajectoryBtn.addEventListener("keydown", onKey);
+    for (const name of BASE_VIEWS) {
+      const b = viewButton(name);
+      if (b) b.addEventListener("keydown", onKey);
+    }
   }
 
   function scheduleTrajectoryRender() {
@@ -863,4 +887,5 @@
   bindTrajectoryChrome();
   bindViewSwitch();
   setView("chat");
+  renderSubagents();
   scheduleTrajectoryRender();

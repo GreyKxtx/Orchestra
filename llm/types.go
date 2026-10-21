@@ -51,6 +51,11 @@ type ThinkingBlock struct {
 	Text      string `json:"text,omitempty"`
 	Signature string `json:"signature,omitempty"`
 	Redacted  string `json:"redacted,omitempty"`
+	// Where the block stood in the answer: after how many of its tool
+	// calls, and whether after its text. Claude thinks between tool calls,
+	// and the API refuses a tool step whose thinking was moved.
+	CallsBefore int  `json:"calls_before,omitempty"`
+	AfterText   bool `json:"after_text,omitempty"`
 }
 
 // WithoutThinking returns msgs with no Thinking blocks, copying only when

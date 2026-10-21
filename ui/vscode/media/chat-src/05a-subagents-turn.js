@@ -52,8 +52,19 @@
       label: prev.label,
       tier: prev.tier,
       model: prev.model,
+      agent: prev.agent,
+      waitingFor: prev.waitingFor,
+      waitReason: prev.waitReason,
       status: prev.status,
       error: prev.error,
+      goal: prev.goal,
+      result: prev.result,
+      parentTaskId: prev.parentTaskId,
+      depth: prev.depth,
+      startedAt: prev.startedAt,
+      endedAt: prev.endedAt,
+      lessonPromote: prev.lessonPromote,
+      playbookPromote: prev.playbookPromote,
       parentToolCallId: prev.parentToolCallId,
       toolsEl: prev.toolsEl,
       toolCount: prev.toolCount,
@@ -107,14 +118,32 @@
       const label = humanizeTaskLabel(msg.content || "");
       upsertSubagentTask(taskId, {
         parentToolCallId: msg.parentToolCallId,
+        parentTaskId: msg.parentTaskId || "",
+        depth: Number(msg.depth) || 0,
         type: msg.subagentType || "agent",
         tier: msg.tier || "",
         model: msg.model || "",
+        agent: msg.agent || "",
+        waitingFor: [],
+        waitReason: "",
         label: label.length > 48 ? label.slice(0, 45) + "…" : label || taskId,
+        goal: label,
+        startedAt: msg.at || Date.now(),
+        endedAt: 0,
         status: "running",
         toolCount: 0,
       });
-      ensureSubagentToolsHost(taskId, msg.parentToolCallId);
+      // A chat rebuilt from its log already has its blocks; no panel of its own.
+      if (!msg.quiet) ensureSubagentToolsHost(taskId, msg.parentToolCallId);
+    } else if (msg.phase === "queued") {
+      // Held back until the tasks whose files it overlaps are through.
+      const patch = {
+        status: "waiting",
+        waitingFor: Array.isArray(msg.waitingFor) ? msg.waitingFor.map(String) : [],
+        waitReason: String(msg.reason || ""),
+      };
+      if (msg.parentToolCallId) patch.parentToolCallId = msg.parentToolCallId;
+      upsertSubagentTask(taskId, patch);
     } else if (msg.phase === "done") {
       const st =
         msg.status === "done"
@@ -122,7 +151,8 @@
           : msg.status === "error" || msg.status === "timeout"
             ? "error"
             : "done";
-      const patch = { status: st };
+      const patch = { status: st, endedAt: msg.at || Date.now(), waitingFor: [], waitReason: "" };
+      if (msg.result) patch.result = String(msg.result);
       if (st === "error" && msg.error) {
         patch.error = String(msg.error);
       }
@@ -134,7 +164,7 @@
       const hints = [];
       if (lessonHint) hints.push("lesson_promote");
       if (playbookHint) hints.push("playbook_promote");
-      if (hints.length) {
+      if (hints.length && !msg.quiet) {
         appendMsg(
           "system",
           `Learning: worker finished with ${hints.join(" + ")} suggestion — Lead should review task_result / call promote tool.`

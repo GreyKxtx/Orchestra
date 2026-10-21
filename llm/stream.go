@@ -96,6 +96,10 @@ const (
 	// provider field (reasoning_content / thinking). Distinct from message_delta
 	// so the TUI can append to Reasoning without think-tag parsing.
 	StreamEventReasoningDelta StreamEventKind = "reasoning_delta"
+	// StreamEventKeepAlive says the server is alive with nothing to show —
+	// Anthropic's ping while a model thinks, a thinking block's signature.
+	// It resets the stall watchdog and goes no further (relayStream).
+	StreamEventKeepAlive StreamEventKind = "keepalive"
 )
 
 // StreamEvent is one event emitted during a streaming completion.

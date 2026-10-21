@@ -104,10 +104,12 @@
     graph: '<circle cx="12" cy="5.5" r="2.5"/><circle cx="5.5" cy="18" r="2.5"/><circle cx="18.5" cy="18" r="2.5"/><path d="M10.2 7.3L7.3 15.8"/><path d="M13.8 7.3l2.9 8.5"/>',
     gear: '<circle cx="12" cy="12" r="3.2"/><path d="M19.4 13a7.8 7.8 0 0 0 0-2l2-1.2-2-3.5-2.3 1a7.9 7.9 0 0 0-1.7-1L15 3h-4l-.4 2.3a7.9 7.9 0 0 0-1.7 1l-2.3-1-2 3.5 2 1.2a7.8 7.8 0 0 0 0 2l-2 1.2 2 3.5 2.3-1a7.9 7.9 0 0 0 1.7 1L11 21h4l.4-2.3a7.9 7.9 0 0 0 1.7-1l2.3 1 2-3.5z"/>',
     plus: '<path d="M12 5.5v13"/><path d="M5.5 12h13"/>',
+    minus: '<path d="M5.5 12h13"/>',
     history: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5.2l3.4 2"/>',
     attach: '<path d="M14.5 6.5l-6.4 6.4a2.6 2.6 0 0 0 3.7 3.7l6.7-6.7a4.3 4.3 0 0 0-6.1-6.1l-6.7 6.7a6 6 0 0 0 8.5 8.5l4.3-4.3"/>',
     send: '<path d="M12 19.5V5"/><path d="M6 11l6-6 6 6"/>',
     stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>',
+    play: '<path d="M7.5 5.5v13l11-6.5z"/>',
     bolt: '<path d="M13.5 3L5.5 13.5H11L10.5 21l8-10.5H13z"/>',
     "arrow-left": '<path d="M19 12H5"/><path d="M11 6l-6 6 6 6"/>',
     "arrow-right": '<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>',
@@ -123,6 +125,14 @@
     copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/>',
     expand: '<path d="M8.5 4.5H4.5v4"/><path d="M15.5 19.5h4v-4"/><path d="M19.5 8.5v-4h-4"/><path d="M4.5 15.5v4h4"/>',
     collapse: '<path d="M4.5 8.5h4v-4"/><path d="M19.5 15.5h-4v4"/><path d="M15.5 4.5v4h4"/><path d="M8.5 19.5v-4h-4"/>',
+    // The roles of the Subagents tab; the rest reuse task, explore, search,
+    // question and tool above.
+    "role-lead": '<circle cx="12" cy="12" r="3"/><path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="M5.6 5.6l2.1 2.1"/><path d="M16.3 16.3l2.1 2.1"/><path d="M5.6 18.4l2.1-2.1"/><path d="M16.3 7.7l2.1-2.1"/>',
+    "role-product": '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/>',
+    "role-docs": '<path d="M4.5 5.5a2 2 0 0 1 2-2H19v15H6.5a2 2 0 0 0-2 2z"/><path d="M4.5 20.5v-15"/><path d="M8.5 8h6.5"/><path d="M8.5 11.5h4.5"/>',
+    "role-worker": '<path d="M14.5 6.5a4 4 0 0 0 5 5L13 18a2.1 2.1 0 0 1-3-3l6.5-6.5"/><path d="M14.5 6.5L17 4l3 3-2.5 2.5"/><path d="M10 15l-5 5"/>',
+    "role-verifier": '<path d="M12 3.5L19 6v5.5c0 4.2-3 7.6-7 9-4-1.4-7-4.8-7-9V6z"/><path d="M8.8 12l2.2 2.2 4.3-4.4"/>',
+    "role-debug": '<rect x="7" y="8" width="10" height="12" rx="5"/><path d="M9.5 8V6.5a2.5 2.5 0 0 1 5 0V8"/><path d="M3.5 13H7"/><path d="M17 13h3.5"/><path d="M5 7.5l2.5 2"/><path d="M19 7.5l-2.5 2"/><path d="M5 19l2.5-2"/><path d="M19 19l-2.5-2"/>',
   };
 
   /**

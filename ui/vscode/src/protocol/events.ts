@@ -265,15 +265,24 @@ export type HostToWebview =
     }
   | {
       type: "childLifecycle";
-      phase: "started" | "done";
+      phase: "started" | "queued" | "done";
       taskId: string;
       parentToolCallId?: string;
+      parentTaskId?: string;
+      depth?: number;
       subagentType?: string;
       tier?: string;
       model?: string;
+      /** The agency address the child runs under ("backend", "frontend@web"). */
+      agent?: string;
+      parentAgent?: string;
+      /** child_queued: the tasks it waits for and why. */
+      waitingFor?: string[];
+      reason?: string;
       status?: string;
       content?: string;
       error?: string;
+      result?: string;
       lessonPromoteSuggestion?: string;
       playbookPromoteSuggestion?: string;
     }
@@ -293,7 +302,17 @@ export type HostToWebview =
   | { type: "todosUpdate"; todos: TodoItemPayload[] }
   /** The user approved switching the turn to another mode (mode_route, from ≠ agent). */
   | { type: "modeSwitched"; from: string; to: string }
-  | { type: "stepUsage"; usage: StepUsagePayload; scope?: string }
+  | { type: "stepUsage"; usage: StepUsagePayload; scope?: string; taskId?: string }
+  /** A message between agents of the agency (send | reply | post). */
+  | {
+      type: "agentMessage";
+      channel?: string;
+      from?: string;
+      to?: string;
+      kind?: string;
+      content?: string;
+      taskId?: string;
+    }
   /** A turn is still running — re-arm the busy UI after a webview reload. */
   | { type: "turnInFlight" }
   | { type: "turnUsage"; usage: TurnUsagePayload; sessionCost?: number }

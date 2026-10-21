@@ -133,10 +133,17 @@
           selectedProviderKey = p.key;
           apiKeyVisible = false;
           populateProviderCreds(p, { force: true });
-          if (p.active && p.current_model) {
-            selectedModelId = p.current_model;
-          } else if (p.models && p.models.length) {
-            selectedModelId = p.models[0].id || "";
+          // A model belongs to its provider: the one picked for the provider
+          // being left must not ride along and be saved as this one's (a
+          // project's "anthropic + qwen2.5-coder-7b"). With no model listed
+          // yet, none is picked; Save then stores the provider's key without
+          // switching to it, and its models come with the key.
+          const listed = (p.models || []).map((m) => m.id).filter(Boolean);
+          const saved = p.current_model && (p.active || p.current_model !== activeModelId) ? p.current_model : "";
+          if (listed.length) {
+            selectedModelId = saved && (p.active || listed.includes(saved)) ? saved : listed[0];
+          } else {
+            selectedModelId = saved;
           }
           syncHiddenFields();
           renderProviders();

@@ -243,10 +243,13 @@ type turnPrep struct {
 	routeReason                  string
 	routeConfidence              float64
 
-	custom     customAgentOpts
-	usage      *usage.Tracker
-	childCfg   tasks.ChildAgentConfig
-	taskRunner *tasks.TaskRunner
+	custom customAgentOpts
+	// providerLabel and modelLabel name the client the turn runs on when it
+	// is not the project's llm: (the orchestra planner); empty otherwise.
+	providerLabel, modelLabel string
+	usage                     *usage.Tracker
+	childCfg                  tasks.ChildAgentConfig
+	taskRunner                *tasks.TaskRunner
 }
 
 func (c *Core) prepareAgentLaunch(ctx context.Context, spec agentLaunchSpec) (launch *agentLaunch, retErr error) {
@@ -458,8 +461,9 @@ func (c *Core) resolveTurnAgent(p *turnPrep) error {
 		return protocol.NewError(protocol.InvalidLLMOutput, err.Error(), nil)
 	}
 	if strings.EqualFold(p.effectiveMode, string(agent.ModeOrchestra)) {
-		if client, _, _, ok := c.resolveOrchestraPlanner(p.agentLogger); ok {
+		if client, pl, ml, ok := c.resolveOrchestraPlanner(p.agentLogger); ok {
 			custom.llmClient = client
+			p.providerLabel, p.modelLabel = pl, ml
 		}
 	}
 	p.custom = custom
@@ -479,6 +483,10 @@ func (c *Core) newTurnTaskRunner(p *turnPrep) {
 	}
 	p.usage = newAgentUsageTracker(c.cfg, usageLabel)
 	cfg := c.buildChildAgentConfig(p.maxPromptBytes, p.usage, p.allowExec, p.agentLogger)
+	// A child with no model of its own runs on the turn's client: it is
+	// named after that client, not after the project's llm: — an architect
+	// on the planner's Claude was announced as the local qwen of llm:.
+	cfg.ProviderLabel, cfg.ModelLabel = c.turnLabelsFor(p)
 	cfg.Settings = &p.settings
 	cfg.Agency, cfg.Agents = tasks.AgencyFromConfig(c.cfg, p.effectiveMode)
 	cfg.RunID = p.env.TurnID
@@ -511,7 +519,7 @@ func (c *Core) turnOptions(p *turnPrep) (agent.Options, error) {
 	if planPath == "" {
 		planPath = resolvePlanPath(p.effectiveMode, "", "")
 	}
-	providerLabel, modelLabel := c.turnLabels(p.effectiveMode)
+	providerLabel, modelLabel := c.turnLabelsFor(p)
 	respFmt := agent.ResolveResponseFormat(c.cfg.LLM, providerLabelOf(c.cfg), agent.ResponseFormatToolAgent)
 	requester := convertPermissionRequester(p.spec.PermissionRequester)
 	o, err := app.TurnOptions(p.settings, p.profile, func(o *agent.Options) {
@@ -569,6 +577,19 @@ func (c *Core) turnOptions(p *turnPrep) (agent.Options, error) {
 
 // turnLabels names the provider and the model the turn's prompt is written
 // for: the orchestra planner's for a Lead, when configured.
+// turnLabelsFor names the client a prepared turn runs on: the planner it
+// resolved, or what the config says.
+func (c *Core) turnLabelsFor(p *turnPrep) (provider, model string) {
+	provider, model = c.turnLabels(p.effectiveMode)
+	if strings.TrimSpace(p.modelLabel) != "" {
+		model = p.modelLabel
+		if strings.TrimSpace(p.providerLabel) != "" {
+			provider = p.providerLabel
+		}
+	}
+	return provider, model
+}
+
 func (c *Core) turnLabels(mode string) (provider, model string) {
 	provider, model = providerLabelOf(c.cfg), c.cfg.LLM.Model
 	if strings.EqualFold(mode, string(agent.ModeOrchestra)) {

@@ -1680,9 +1680,34 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           taskId: event.task_id || "",
           parentToolCallId: event.parent_tool_call_id,
           subagentType: event.subagent_type,
+          parentTaskId: event.parent_task_id,
+          depth: event.depth,
           tier: event.tier,
           model: event.model,
+          agent: event.agent,
+          parentAgent: event.parent_agent,
           content: event.content,
+        });
+        break;
+      case "child_queued":
+        post({
+          type: "childLifecycle",
+          phase: "queued",
+          taskId: event.task_id || "",
+          parentToolCallId: event.parent_tool_call_id,
+          waitingFor: event.waiting_for,
+          reason: event.reason,
+        });
+        break;
+      case "agent_message":
+        post({
+          type: "agentMessage",
+          channel: event.channel,
+          from: event.from,
+          to: event.to,
+          kind: event.kind,
+          content: event.content,
+          taskId: event.task_id,
         });
         break;
       case "child_done":
@@ -1692,8 +1717,11 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
           taskId: event.task_id || "",
           parentToolCallId: event.parent_tool_call_id,
           subagentType: event.subagent_type,
+          parentTaskId: event.parent_task_id,
+          depth: event.depth,
           status: event.status,
           error: event.error,
+          result: event.content,
           lessonPromoteSuggestion: event.lesson_promote_suggestion,
           playbookPromoteSuggestion: event.playbook_promote_suggestion,
         });
@@ -1829,7 +1857,7 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
               this.turnTokensIn = usage.prompt_tokens;
             }
           }
-          post({ type: "stepUsage", usage, scope: event.scope });
+          post({ type: "stepUsage", usage, scope: event.scope, taskId: event.task_id });
         }
         break;
       }
@@ -2510,6 +2538,10 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
             <svg class="oi" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 11.5a8.5 8.5 0 0 1-8.5 8.5H3.5l2.6-2.6a8.5 8.5 0 1 1 14.4-5.9z"/><path d="M8.5 10.5h7"/><path d="M8.5 14h4.5"/></svg>
             <span data-i18n="chrome.view_chat">Chat</span>
           </button>
+          <button type="button" id="view-subagents-btn" class="view-segment hidden" role="tab" aria-selected="false" aria-controls="subagents-bar">
+            <span data-i18n="chrome.subagents">Subagents</span>
+            <span id="subagents-count" class="view-count"></span>
+          </button>
           <button type="button" id="view-trajectory-btn" class="view-segment" role="tab" aria-selected="false" aria-controls="trajectory">
             <svg class="oi" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8.5 16v-4"/><path d="M12.5 16V8"/><path d="M16.5 16v-2.5"/></svg>
             <span data-i18n="chrome.view_trajectory">Trajectory</span>
@@ -2533,8 +2565,8 @@ export class ChatPanel implements vscode.Disposable, vscode.WebviewViewProvider 
       <button type="button" class="menu-item menu-item-action" data-session-action="new" data-i18n="chrome.new_chat">New chat</button>
       <div id="session-menu-list"></div>
     </div>
-    <div id="subagents-bar" class="subagents-bar hidden">
-      <div class="subagents-head" data-i18n="chrome.subagents">Subagents</div>
+    <div id="subagents-bar" class="subagents-bar" role="tabpanel" aria-labelledby="view-subagents-btn">
+      <div id="subagents-head" class="subagents-head"></div>
       <div id="subagents-tree" class="subagents-tree"></div>
     </div>
     <div id="workflow-bar" class="workflow-bar hidden">

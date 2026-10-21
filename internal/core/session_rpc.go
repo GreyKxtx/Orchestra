@@ -193,7 +193,7 @@ func (c *Core) SessionGet(params SessionGetParams) (*SessionGetResult, error) {
 
 	sess.Lock()
 	defer sess.Unlock()
-	ui := sess.UIMessages()
+	ui := withToolArgs(sess.UIMessages(), sess.History)
 	return &SessionGetResult{
 		SessionID:    sess.ID,
 		Title:        sess.Title(),
@@ -209,6 +209,54 @@ func (c *Core) SessionGet(params SessionGetParams) (*SessionGetResult, error) {
 		ExternalPID:  externalPID,
 		Interrupted:  interrupted,
 	}, nil
+}
+
+// withToolArgs fills a tool block saved without its arguments from the
+// call of the same id in the history. A Claude turn's argument deltas named
+// no call until 2026-10 and both hosts dropped them, so its blocks were saved
+// bare: a reopened chat showed every subagent as "agent · Task". ui is a copy
+// of the session's messages; the blocks it changes are copied too.
+func withToolArgs(ui []sessionfile.UIMessage, history []llm.Message) []sessionfile.UIMessage {
+	args := map[string]string{}
+	for _, m := range history {
+		for _, tc := range m.ToolCalls {
+			if raw := tc.Function.Arguments.Raw(); tc.ID != "" && len(raw) > 0 {
+				args[tc.ID] = string(raw)
+			}
+		}
+	}
+	if len(args) == 0 {
+		return ui
+	}
+	fill := func(blocks []sessionfile.UIToolBlock) []sessionfile.UIToolBlock {
+		var out []sessionfile.UIToolBlock
+		for i, b := range blocks {
+			a, ok := args[b.ID]
+			if !ok || b.ID == "" || b.ArgsRaw != "" || b.ArgsPreview != "" {
+				continue
+			}
+			if out == nil {
+				out = append([]sessionfile.UIToolBlock(nil), blocks...)
+			}
+			out[i].ArgsRaw = a
+		}
+		if out == nil {
+			return blocks
+		}
+		return out
+	}
+	for i := range ui {
+		ui[i].ToolBlocks = fill(ui[i].ToolBlocks)
+		if len(ui[i].Segments) == 0 {
+			continue
+		}
+		segs := append([]sessionfile.UISegment(nil), ui[i].Segments...)
+		for j := range segs {
+			segs[j].Tools = fill(segs[j].Tools)
+		}
+		ui[i].Segments = segs
+	}
+	return ui
 }
 
 type SessionListResult struct {

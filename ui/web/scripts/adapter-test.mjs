@@ -131,6 +131,10 @@ export function loadBundle(opts = {}) {
       append(...nodes) {
         for (const n of nodes) insert(this, n, null);
       },
+      replaceChildren(...nodes) {
+        for (const c of this.childNodes.slice()) this.removeChild(c);
+        for (const n of nodes) insert(this, n, null);
+      },
       keydown(key) {
         for (const fn of this._listeners.keydown || []) fn({ key, preventDefault() {} });
       },
@@ -2419,6 +2423,181 @@ test("the segmented control switches #app[data-view], by click and by arrow key"
   assert.equal(app.dataset.view, "trajectory");
   trajBtn.keydown("ArrowLeft");
   assert.equal(app.dataset.view, "chat");
+});
+
+test("subagents are a tab of their own: shown once there is one, never over the chat", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  await tick();
+  const app = b.elementById("app");
+  const chatBtn = b.elementById("view-chat-btn");
+  const subBtn = b.elementById("view-subagents-btn");
+  const trajBtn = b.elementById("view-trajectory-btn");
+  const count = b.elementById("subagents-count");
+  const tree = b.elementById("subagents-tree");
+  assert.ok(subBtn && count && tree, "the fragment must look up the Subagents segment, its count and its pane");
+  assert.equal(subBtn.classList.contains("hidden"), true, "a chat with no subagents shows the segment");
+  chatBtn.keydown("ArrowRight");
+  assert.equal(app.dataset.view, "trajectory", "the arrow keys stopped on a hidden segment");
+  chatBtn.click();
+
+  const goal = "Brownfield product Augur: read the repository, then draft the PRD with the user's answers";
+  b.post({ type: "childLifecycle", phase: "started", taskId: "task_1", subagentType: "product", content: goal });
+  await tick();
+  assert.equal(subBtn.classList.contains("hidden"), false, "a subagent did not bring the segment up");
+  assert.equal(subBtn.classList.contains("has-running"), true, "a running subagent is not marked on its segment");
+  assert.equal(count.textContent, "1");
+  assert.equal(app.dataset.view, "chat", "a subagent switched the view by itself");
+  subBtn.click();
+  assert.equal(app.dataset.view, "subagents");
+
+  b.post({ type: "childLifecycle", phase: "done", taskId: "task_1", status: "error", error: "anthropic API error (status 400)" });
+  await tick();
+  assert.equal(subBtn.classList.contains("has-running"), false, "a finished subagent is still marked as running");
+  // The tree: every node is a block under the stage; the agent's carries its
+  // whole task.
+  const nodesIn = (el, out = []) => {
+    for (const c of el.childNodes || []) {
+      if (/(^| )sa-node( |$)/.test(c.className || "")) out.push(c);
+      nodesIn(c, out);
+    }
+    return out;
+  };
+  const blocks = nodesIn(tree);
+  assert.equal(blocks.length, 2, "the tree is not the Lead and its one subagent");
+  assert.ok(
+    blocks.some((n) => /draft the PRD with the user/.test(n.innerHTML) && /status-error/.test(n.className)),
+    "the subagent's block lost its task or its failure"
+  );
+
+  b.post({ type: "clearMessages" });
+  await tick();
+  assert.equal(subBtn.classList.contains("hidden"), true, "a cleared chat kept the Subagents segment");
+  assert.equal(app.dataset.view, "chat", "a cleared chat left the view on an empty Subagents pane");
+});
+
+test("a subagent's own calls fill its card: what it is doing and its files", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  await tick();
+  b.post({ type: "childLifecycle", phase: "started", taskId: "task_9", subagentType: "explore", content: "Where are the HTTP routes registered?" });
+  b.post({ type: "childActivity", phase: "start", taskId: "task_9", toolName: "read", argsRaw: "" });
+  b.post({ type: "childActivity", phase: "complete", taskId: "task_9", toolName: "read", argsRaw: '{"path":"apps/api/internal/httpapi/routes.go"}' });
+  await tick();
+  const nodesIn = (el, out = []) => {
+    for (const c of el.childNodes || []) {
+      if (/(^| )sa-node( |$)/.test(c.className || "")) out.push(c);
+      nodesIn(c, out);
+    }
+    return out;
+  };
+  const node = nodesIn(b.elementById("subagents-tree")).find((n) => /HTTP routes/.test(n.innerHTML));
+  assert.ok(node, "the subagent has no block in the tree");
+  node.click();
+  const popOf = (el) => {
+    for (const c of el.childNodes || []) {
+      if (/(^| )sa-pop( |$)/.test(c.className || "")) return c;
+      const f = popOf(c);
+      if (f) return f;
+    }
+    return null;
+  };
+  const pop = popOf(b.elementById("subagents-tree"));
+  assert.ok(pop, "a click opened no card");
+  assert.match(pop.innerHTML, /routes\.go/, "the card does not name the file the subagent read");
+  assert.match(pop.innerHTML, /Read · apps\/api\/internal\/httpapi\/routes\.go/, "the card does not say what the subagent is doing");
+});
+
+test("a reopened chat rebuilds its subagents from the session's log", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  await tick();
+  const ev = (time_ms, data) => ({ seq: time_ms, time_ms, type: "agent/event", data: { turn_id: "t1", ...data } });
+  const child = { scope: "child", task_id: "task_1" };
+  b.post({
+    type: "trajectory",
+    recorded: true,
+    events: [
+      ev(1000, { type: "tool_call_start", tool_call_id: "root_1", tool_call_name: "task_spawn" }),
+      ev(1100, { type: "child_started", ...child, subagent_type: "architecture", model: "claude-opus-5-5", agent: "backend", depth: 1, content: "Backend contract" }),
+      // A log from before Claude's deltas named their call: the arguments
+      // still find it by the task and the call's index.
+      ev(1200, { type: "tool_call_start", ...child, tool_call_id: "c_1", tool_call_name: "read", tool_call_index: 0 }),
+      ev(1210, { type: "tool_call_delta", ...child, tool_call_index: 0, args_delta: '{"path": "apps/api/' }),
+      ev(1220, { type: "tool_call_delta", ...child, tool_call_index: 0, args_delta: 'internal/httpapi/server.go"}' }),
+      ev(1300, { type: "tool_call_completed", ...child, tool_call_id: "c_1", tool_call_name: "read", content: "…" }),
+      ev(1400, { type: "step_usage", ...child, data: { prompt_tokens: 9000, completion_tokens: 600, cost_usd: 0.04 } }),
+      ev(91100, { type: "child_done", ...child, status: "done", content: "Domain_Model.md written" }),
+      ev(92000, { type: "done" }),
+    ],
+  });
+  await tick();
+  const nodesIn = (el, out = []) => {
+    for (const c of el.childNodes || []) {
+      if (/(^| )sa-node( |$)/.test(c.className || "")) out.push(c);
+      nodesIn(c, out);
+    }
+    return out;
+  };
+  const popOf = (el) => {
+    for (const c of el.childNodes || []) {
+      if (/(^| )sa-pop( |$)/.test(c.className || "")) return c;
+      const f = popOf(c);
+      if (f) return f;
+    }
+    return null;
+  };
+  const tree = b.elementById("subagents-tree");
+  const node = nodesIn(tree).find((n) => /Backend contract/.test(n.innerHTML));
+  assert.ok(node, "the log's subagent has no block");
+  assert.match(node.innerHTML, /claude-opus-5-5/, "the block lost the model the log recorded");
+  assert.match(node.innerHTML, /1:30/, "the block lost the time the log measured");
+  node.click();
+  const pop = popOf(tree).innerHTML;
+  assert.match(pop, /apps\/api\/internal\/httpapi\/server\.go/, "the card lost the file the subagent read");
+  assert.match(pop, /\$0\.040/, "the card lost the subagent's spend");
+  assert.match(pop, /Domain_Model\.md written/, "the card lost the subagent's result");
+});
+
+test("a subagent's card names its model, its spend, what it waits for and its department's mail", async () => {
+  const b = loadBundle({ search: "?project=A" });
+  await tick();
+  const started = (taskId, type, extra) => b.post({ type: "childLifecycle", phase: "started", taskId, subagentType: type, ...extra });
+  started("lead_b", "architecture", { tier: "lead", model: "anthropic/claude-opus-5-5", agent: "backend", depth: 1, content: "Backend brief" });
+  started("w_1", "worker", { tier: "focused", model: "qwen/qwen3.8-27b", agent: "backend", depth: 2, parentTaskId: "lead_b", content: "GET /api/feed" });
+  started("w_2", "worker", { tier: "micro", model: "qwen/qwen3.8-27b", agent: "backend", depth: 2, parentTaskId: "lead_b", content: "Feed formatter" });
+  b.post({ type: "childLifecycle", phase: "queued", taskId: "w_2", waitingFor: ["w_1"], reason: "overlapping target_files" });
+  b.post({ type: "stepUsage", scope: "child", taskId: "lead_b", usage: { prompt_tokens: 12000, completion_tokens: 800, cost_usd: 0.05 } });
+  b.post({ type: "agentMessage", channel: "send", from: "frontend", to: "backend", kind: "question", content: "Which pagination does /api/feed use?" });
+  await tick();
+  const nodesIn = (el, out = []) => {
+    for (const c of el.childNodes || []) {
+      if (/(^| )sa-node( |$)/.test(c.className || "")) out.push(c);
+      nodesIn(c, out);
+    }
+    return out;
+  };
+  const popOf = (el) => {
+    for (const c of el.childNodes || []) {
+      if (/(^| )sa-pop( |$)/.test(c.className || "")) return c;
+      const f = popOf(c);
+      if (f) return f;
+    }
+    return null;
+  };
+  const tree = b.elementById("subagents-tree");
+  const nodeOf = (re) => nodesIn(tree).find((n) => re.test(n.innerHTML));
+  const lead = nodeOf(/Backend brief/);
+  assert.match(lead.innerHTML, /L4/, "the block does not carry its tier");
+  assert.match(lead.innerHTML, /claude-opus-5-5/, "the block does not carry its model");
+  assert.match(lead.innerHTML, /12\.8K/, "the block does not carry the tokens spent");
+  lead.click();
+  const pop = popOf(tree);
+  assert.match(pop.innerHTML, /anthropic\/claude-opus-5-5/);
+  assert.match(pop.innerHTML, /\$0\.050/, "the card does not show the cost");
+  assert.match(pop.innerHTML, /Which pagination/, "the Lead's card lost its department's mail");
+  nodeOf(/GET \/api\/feed/).click();
+  assert.doesNotMatch(popOf(tree).innerHTML, /Which pagination/, "a worker under the address got its Lead's mail");
+  nodeOf(/Feed formatter/).click();
+  assert.match(popOf(tree).innerHTML, /overlapping target_files/, "a queued agent's card does not say why it waits");
+  assert.match(popOf(tree).innerHTML, /data-go="w_1"/, "a queued agent's card does not link what it waits for");
 });
 
 test("the header's tab strip is the open project's session list, and closing a tab hides it", async () => {

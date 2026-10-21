@@ -185,3 +185,24 @@ data: {"type":"message_stop"}
 		t.Errorf("text = %q, want only the answer — thinking must not leak into content", text)
 	}
 }
+
+// A model that thinks by default spends max_tokens on thinking and answer
+// together: the 4096 a local model left in the config cut an Opus turn off
+// mid-answer three times running. A smaller cap is raised to the floor; a
+// larger one is kept.
+func TestReasoning_AnthropicAdaptiveModelKeepsRoomToAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		model            string
+		configured, want int
+	}{
+		{"claude-opus-5-5", 4096, anthropicAdaptiveMaxTokens},
+		{"claude-opus-5-5", 0, anthropicAdaptiveMaxTokens},
+		{"claude-opus-5-5", 64000, 64000},
+		{"claude-sonnet-4-5", 4096, 4096}, // thinks only when asked to
+	} {
+		c := NewAnthropicClient(LLMConfig{APIKey: "k", Model: tc.model, MaxTokens: tc.configured})
+		if c.maxTokens != tc.want {
+			t.Errorf("%s with max_tokens %d: sent %d, want %d", tc.model, tc.configured, c.maxTokens, tc.want)
+		}
+	}
+}

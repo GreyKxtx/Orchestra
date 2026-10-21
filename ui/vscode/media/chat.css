@@ -3490,8 +3490,7 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   justify-content: flex-end;
 }
 
-#workflow-bar,
-#subagents-bar {
+#workflow-bar {
   width: 100%;
   max-width: var(--content-max);
   flex: 0 0 auto;
@@ -3499,8 +3498,31 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   padding: 6px 14px 0;
 }
 
-#workflow-bar.hidden,
-#subagents-bar.hidden {
+#workflow-bar.hidden {
+  display: none;
+}
+
+/* The Subagents tab's pane: in place of the messages, never over them,
+   the whole width — a tree needs it more than a column of text does. */
+#subagents-bar {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#app:not([data-view="subagents"]) #subagents-bar {
+  display: none;
+}
+#app[data-view="subagents"] #messages {
+  display: none;
+}
+/* The composer belongs to the chat. Off it only a question or a permission
+   the agent is waiting on stays, without the input under it. */
+#app:is([data-view="subagents"], [data-view="trajectory"]) #composer-wrap:not(:has(> #overlay:not(.hidden))) {
+  display: none;
+}
+#app:is([data-view="subagents"], [data-view="trajectory"]) #composer-wrap > :is(#composer, #todos-bar) {
   display: none;
 }
 
@@ -3514,57 +3536,754 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   display: none;
 }
 
-.subagents-bar {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 10px;
-  background: var(--surface);
-}
-
+/* ---- the Subagents tab: the delegation as a tree, top down ---------------
+   A role has a colour of its own (--sa-role); text in it is mixed toward the
+   foreground so it reads on both themes. */
 .subagents-head {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 44px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
   color: var(--muted);
-  margin-bottom: 4px;
+  overflow: hidden;
+}
+.sa-counts {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.sa-phases {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+}
+.sa-phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.sa-phase.done {
+  color: color-mix(in srgb, var(--ok-fg) 80%, var(--fg));
+}
+.sa-phase.now {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--mode-accent) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mode-accent) 42%, transparent);
+}
+.sa-phase-sep {
+  flex: 0 0 12px;
+  height: 1px;
+  background: var(--border);
 }
 
 .subagents-tree {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.sa-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  background-image: radial-gradient(color-mix(in srgb, var(--fg) 7%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+.sa-stage.panning {
+  cursor: grabbing;
+}
+.sa-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+.sa-world.gliding {
+  transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.sa-head-gap {
+  flex: 1 1 auto;
+}
+.sa-seg {
+  flex: 0 0 auto;
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.sa-seg button {
+  height: 26px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sa-seg button:hover {
+  color: var(--fg);
+}
+.sa-seg button[aria-pressed="true"] {
+  color: var(--fg);
+  background: var(--bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+.sa-replay {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--mode-accent);
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sa-replay:hover {
+  filter: brightness(1.08);
+}
+.sa-replay.on {
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.sa-seg button:focus-visible,
+.sa-replay:focus-visible {
+  outline: 2px solid var(--mode-accent);
+  outline-offset: 1px;
+}
+.sa-edges-svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.sa-edge {
+  fill: none;
+  stroke: color-mix(in srgb, var(--fg) 22%, transparent);
+  stroke-width: 1.5;
+  transition: opacity 0.2s;
+}
+.sa-edge.status-running,
+.sa-edge.status-waiting {
+  stroke: color-mix(in srgb, var(--mode-accent) 70%, transparent);
+  stroke-dasharray: 6 7;
+  animation: sa-flow 1s linear infinite;
+}
+.sa-edge.status-waiting {
+  stroke: color-mix(in srgb, var(--warn-fg) 55%, transparent);
+  animation-duration: 2.4s;
+}
+.sa-edge.status-error {
+  stroke: color-mix(in srgb, var(--error-fg) 55%, transparent);
+  stroke-dasharray: 2 5;
+}
+.sa-edge.dim {
+  opacity: 0.25;
+}
+.sa-edge.hot {
+  stroke-width: 2.25;
+}
+@keyframes sa-flow {
+  to {
+    stroke-dashoffset: -13;
+  }
 }
 
-.subagent-row {
+.sa-node,
+.sa-pop-head,
+.sa-chip {
+  --sa-role: #9aa0ac;
+}
+.role-lead { --sa-role: var(--mode-accent); }
+.role-product { --sa-role: #b98af5; }
+.role-architecture { --sa-role: #5b9cf5; }
+.role-documentation { --sa-role: #2fb8a6; }
+.role-scout { --sa-role: #e0a33a; }
+.role-explore { --sa-role: #3fb978; }
+.role-worker { --sa-role: #e8709e; }
+.role-verifier { --sa-role: #34b5d6; }
+.role-debug { --sa-role: #e56b5d; }
+.role-ask,
+.role-general { --sa-role: #8f97a6; }
+
+.sa-node {
+  position: absolute;
+  width: 244px;
+  min-height: 64px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 30px 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: center;
+  text-align: left;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid color-mix(in srgb, var(--sa-role) 26%, var(--border));
+  border-radius: 12px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.16);
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+  transition: border-color 0.2s, box-shadow 0.2s, opacity 0.3s, transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1),
+    left 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), top 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.sa-node:hover {
+  border-color: color-mix(in srgb, var(--sa-role) 60%, var(--border));
+}
+.sa-node.selected {
+  border-color: var(--sa-role);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.16), 0 0 0 3px color-mix(in srgb, var(--sa-role) 22%, transparent);
+}
+.sa-node.dim {
+  opacity: 0.38;
+}
+.sa-node.spawning {
+  transform: translate(-50%, -50%) scale(0.7);
+  opacity: 0;
+}
+.sa-node.status-running {
+  border-color: color-mix(in srgb, var(--sa-role) 55%, var(--border));
+}
+.sa-node.status-error {
+  border-color: color-mix(in srgb, var(--error-fg) 55%, var(--border));
+}
+.sa-node.lead {
+  width: 256px;
+  background: color-mix(in srgb, var(--mode-accent) 9%, var(--bg));
+  border-color: color-mix(in srgb, var(--mode-accent) 45%, var(--border));
+}
+.sa-glyph {
+  grid-row: 1 / span 2;
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--sa-role);
+  background: color-mix(in srgb, var(--sa-role) 14%, transparent);
+}
+.sa-st {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  background: var(--muted);
+}
+.status-running .sa-st {
+  background: var(--mode-accent);
+}
+.status-running .sa-st::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 1.5px solid var(--mode-accent);
+  animation: sa-ping 1.5s ease-out infinite;
+}
+.status-done .sa-st {
+  background: var(--ok-fg);
+}
+.status-error .sa-st {
+  background: var(--error-fg);
+}
+.status-waiting .sa-st {
+  background: var(--warn-fg);
+}
+@keyframes sa-ping {
+  from {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+.sa-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--sa-role) 78%, var(--fg));
+}
+.sa-node.lead .sa-name {
+  font-size: 13.5px;
+}
+.sa-time {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.status-running .sa-time {
+  color: color-mix(in srgb, var(--mode-accent) 85%, var(--fg));
+}
+.status-error .sa-time {
+  color: var(--error-fg);
+}
+.sa-task {
+  grid-column: 2 / span 2;
+  font-size: 12px;
+  line-height: 1.35;
+  color: color-mix(in srgb, var(--fg) 82%, var(--muted));
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.sa-dept {
+  font-weight: 500;
+  color: var(--muted);
+}
+/* Tier, model and spend: what the agent runs on, under its task. */
+.sa-meta {
+  grid-column: 2 / span 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.sa-tier {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--sa-role) 80%, var(--fg));
+  background: color-mix(in srgb, var(--sa-role) 14%, transparent);
+}
+.sa-model {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+.sa-tok {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.sa-kids {
+  position: absolute;
+  top: -9px;
+  right: 12px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+/* The card beside a node: not a modal, the tree stays in reach. */
+.sa-pop {
+  position: absolute;
+  z-index: 3;
+  width: 360px;
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 72px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  transform: translateY(6px) scale(0.98);
+  pointer-events: none;
+  transition: opacity 0.18s ease-out, transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.sa-pop.open {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+.sa-pop-head {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 16px 16px 10px;
+}
+.sa-pop-head .sa-glyph {
+  grid-row: auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+.sa-pop-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--sa-role) 75%, var(--fg));
+}
+.sa-pop-desc {
+  margin-top: 1px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sa-close {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.sa-close:hover {
+  background: var(--surface);
+  color: var(--fg);
+}
+.sa-pop-status {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+.sa-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.sa-pill i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.sa-pill.running {
+  color: color-mix(in srgb, var(--mode-accent) 85%, var(--fg));
+  background: color-mix(in srgb, var(--mode-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mode-accent) 35%, transparent);
+}
+.sa-pill.done {
+  color: var(--ok-fg);
+}
+.sa-pill.error {
+  color: var(--error-fg);
+  background: color-mix(in srgb, var(--error-fg) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--error-fg) 32%, transparent);
+}
+.sa-pill.waiting {
+  color: var(--warn-fg);
+}
+.sa-sec {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+.sa-sec h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.sa-sec p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.sa-now {
+  display: flex;
+  gap: 9px;
+}
+.sa-now span {
+  flex: 0 0 2px;
+  border-radius: 2px;
+  background: var(--mode-accent);
+  opacity: 0.7;
+}
+.sa-err {
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  color: color-mix(in srgb, var(--error-fg) 85%, var(--fg));
+  background: color-mix(in srgb, var(--error-fg) 9%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--error-fg) 25%, transparent);
+}
+.sa-mono {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+.sa-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.sa-files li {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
-  padding: 3px 4px;
-  border-radius: 4px;
+  min-width: 0;
 }
-
-.subagent-row.status-running {
-  background: color-mix(in srgb, var(--mode-accent) 8%, transparent);
+.sa-files li .sa-mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
-.subagent-row.status-waiting {
+.sa-op {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--surface);
+}
+.sa-op.w {
+  color: var(--ok-fg);
+  background: color-mix(in srgb, var(--ok-fg) 12%, transparent);
+}
+.sa-steps {
+  margin: 0;
+  padding: 0 0 0 24px;
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
   color: var(--muted);
 }
-
-.subagent-row.status-done .subagent-icon {
-  color: var(--ok-fg);
+.sa-steps li {
+  min-width: 0;
+}
+.sa-steps li > span {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sa-step-name {
+  margin-right: 7px;
+  color: var(--fg);
+  font-weight: 500;
+}
+.sa-btn.on {
+  border-color: color-mix(in srgb, var(--mode-accent) 55%, var(--border));
+  color: color-mix(in srgb, var(--mode-accent) 80%, var(--fg));
+}
+.sa-long.clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 7;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sa-more {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: color-mix(in srgb, var(--mode-accent) 85%, var(--fg));
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.sa-more:hover {
+  text-decoration: underline;
+}
+.sa-note {
+  margin-top: 6px !important;
+  font-size: 12px !important;
+  color: var(--muted);
+}
+.sa-msgs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.sa-msg-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--fg) 80%, var(--muted));
+}
+.sa-msg-head > span:not(.sa-msg-kind):not(.sa-msg-arrow) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sa-msg-arrow {
+  color: var(--muted);
+}
+.sa-msg-kind {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-weight: 500;
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.sa-msgs p {
+  margin: 2px 0 0 !important;
+  font-size: 12px !important;
+  color: color-mix(in srgb, var(--fg) 78%, var(--muted));
+}
+.sa-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 14px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.sa-facts dt {
+  color: var(--muted);
+}
+.sa-facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.sa-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sa-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px 0 8px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--sa-role) 30%, var(--border));
+  background: var(--surface);
+  color: color-mix(in srgb, var(--sa-role) 75%, var(--fg));
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sa-chip:hover {
+  border-color: var(--sa-role);
+}
+.sa-pop-actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--border);
+}
+.sa-btn,
+.sa-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sa-btn:hover,
+.sa-zoom-btn:hover {
+  border-color: color-mix(in srgb, var(--fg) 25%, var(--border));
+}
+.sa-zoom {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+}
+.sa-zoom-btn {
+  width: 32px;
+  padding: 0;
+}
+.sa-zoom-btn.wide {
+  width: auto;
+  padding: 0 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sa-edge.status-running,
+  .sa-edge.status-waiting,
+  .status-running .sa-st::after {
+    animation: none;
+  }
+  .sa-node,
+  .sa-pop {
+    transition: none;
+  }
 }
 
-.subagent-row.status-error .subagent-icon {
-  color: var(--error-fg);
-}
-
-.subagent-icon {
-  flex: 0 0 14px;
-  text-align: center;
-  color: var(--mode-accent);
+/* The editor's blocks of a subagent's calls, under its spawn in the chat. */
+.subagent-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .subagent-type {
@@ -3577,7 +4296,6 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   border-radius: 4px;
 }
 
-/* Canonical Orchestra tier badge (L1–L5); palette mirrors spec §1.2. */
 .subagent-tier {
   flex: 0 0 auto;
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
@@ -3595,20 +4313,6 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 .subagent-tier-l3 { color: var(--warn-fg); border-color: color-mix(in srgb, var(--warn-fg) 35%, transparent); }
 .subagent-tier-l2 { color: var(--ok-fg); border-color: color-mix(in srgb, var(--ok-fg) 35%, transparent); }
 .subagent-tier-l1 { color: var(--tool-fg); border-color: color-mix(in srgb, var(--tool-fg) 35%, transparent); }
-
-.subagent-label {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.subagent-more {
-  font-size: 10px;
-  color: var(--muted);
-  padding-left: 22px;
-}
 
 .workflow-bar {
   display: flex;
@@ -4360,32 +5064,6 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
   color: var(--mode-accent);
 }
 
-.subagent-nested-hint {
-  font-size: 10px;
-  color: var(--muted);
-  padding: 0 4px 4px 22px;
-}
-
-.subagent-error-hint {
-  color: color-mix(in srgb, var(--error-fg) 70%, var(--muted));
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.subagent-promote-badge {
-  margin-left: auto;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: color-mix(in srgb, var(--mode-accent) 85%, var(--fg));
-  background: color-mix(in srgb, var(--mode-accent) 18%, transparent);
-  border: 1px solid color-mix(in srgb, var(--mode-accent) 35%, var(--border));
-  border-radius: 4px;
-  padding: 1px 5px;
-  white-space: nowrap;
-}
-
 .subagent-tools {
   margin: 4px 0 8px 12px;
   padding-left: 10px;
@@ -4731,6 +5409,18 @@ body.vscode-high-contrast-light #send:hover:not(:disabled) {
 .view-segment[aria-selected="true"] {
   color: var(--tool-fg);
   box-shadow: inset 0 -2px 0 var(--tool-fg);
+}
+.view-segment.hidden {
+  display: none;
+}
+/* How many subagents the chat has; in the accent while any of them runs. */
+.view-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.view-segment.has-running .view-count {
+  color: var(--mode-accent);
 }
 .view-segment:focus-visible {
   outline: 2px solid var(--fg-dim);

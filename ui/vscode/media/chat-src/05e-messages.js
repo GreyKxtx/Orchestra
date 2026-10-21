@@ -195,6 +195,7 @@
           }
         } else {
           trackSubagent(msg, "start", "");
+          noteLeadActivity(msg.toolName || "", "", "start");
         }
         // A restored turn is a replay, not work in progress: narrating it
         // leaves "Ls…" in the chrome strip of a session that is sitting idle.
@@ -279,6 +280,7 @@
         }
       } else {
         trackSubagent(msg, "start", "");
+        noteLeadActivity(msg.toolName || "", "", "start");
       }
       // A restored turn is a replay, not work in progress: narrating it
         // leaves "Ls…" in the chrome strip of a session that is sitting idle.
@@ -354,6 +356,10 @@
 
       if (msg.scope !== "child") {
         trackSubagent(msg, "complete", argsRaw);
+        noteLeadActivity(msg.toolName || "", argsRaw, "complete");
+        if (msg.toolName === "update_working_state") noteOrchestraPhase(argsRaw);
+      } else if (msg.taskId) {
+        noteChildActivity(msg.taskId, msg.toolName, argsRaw, "complete", false);
       }
       syncToolDiffStats();
       toolArgs.delete(id);

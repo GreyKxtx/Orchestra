@@ -58,9 +58,11 @@ func NewAnthropicClient(cfg LLMConfig) *AnthropicClient {
 		maxTokens = 4096
 	}
 	adaptive := anthropicAdaptiveThinking(cfg.Model)
-	if cfg.MaxTokens <= 0 && adaptive {
+	if adaptive && maxTokens < anthropicAdaptiveMaxTokens {
 		// These models think by default, and max_tokens caps thinking and
-		// answer together: 4096 cut them off mid-answer.
+		// answer together: 4096 cut them off mid-answer — unset, or left in
+		// the config by a local model. It is a ceiling, not a spend; a
+		// larger one is kept.
 		maxTokens = anthropicAdaptiveMaxTokens
 	}
 	var thinking *anthropicThinking
@@ -365,14 +367,23 @@ func convertToAnthropic(messages []Message) (system string, out []anthropicMessa
 			}
 			out = append(out, anthropicMessage{Role: "user", Content: content})
 		case RoleAssistant:
-			// Thinking first, as the model produced it: within a tool-use
-			// turn the API wants the blocks back unmodified, in order,
-			// before the tool_use they led to (LLM-6).
-			blocks := thinkingToAnthropic(msg.Thinking)
+			// The thinking goes back as the model produced it: within a
+			// tool-use turn the API wants the blocks unmodified, in order,
+			// where they stood among the text and the tool_use (LLM-6).
+			var blocks []anthropicBlock
+			thinkingAt := func(calls int, afterText bool) {
+				for _, t := range msg.Thinking {
+					if min(t.CallsBefore, len(msg.ToolCalls)) == calls && (calls > 0 || t.AfterText == afterText) {
+						blocks = append(blocks, thinkingToAnthropic([]ThinkingBlock{t})...)
+					}
+				}
+			}
+			thinkingAt(0, false)
 			if msg.Content != "" {
 				blocks = append(blocks, anthropicBlock{Type: "text", Text: msg.Content})
 			}
-			for _, tc := range msg.ToolCalls {
+			thinkingAt(0, true)
+			for i, tc := range msg.ToolCalls {
 				input := tc.Function.Arguments.Raw()
 				if len(input) == 0 {
 					input = json.RawMessage("{}")
@@ -383,6 +394,7 @@ func convertToAnthropic(messages []Message) (system string, out []anthropicMessa
 					Name:  tc.Function.Name,
 					Input: input,
 				})
+				thinkingAt(i+1, false)
 			}
 			if len(blocks) == 0 {
 				blocks = []anthropicBlock{{Type: "text", Text: ""}}

@@ -1674,7 +1674,7 @@
       browserBtn.setAttribute("aria-selected", active ? "true" : "false");
     }
     if (active) {
-      for (const b of [browserChatBtn, browserTrajectoryBtn]) {
+      for (const b of [browserChatBtn, browserTrajectoryBtn, document.getElementById("view-subagents-btn")]) {
         if (b && b.setAttribute) b.setAttribute("aria-selected", "false");
       }
       placeBrowser();

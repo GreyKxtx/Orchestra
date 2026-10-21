@@ -241,12 +241,18 @@
         todosHadOpen = false;
         subagents = [];
         subagentByTask.clear();
+        saUsage.clear();
+        saMessages.length = 0;
+        saTurnGoal = "";
+        Object.assign(saLead, { startedAt: 0, endedAt: 0, calls: 0, now: "" });
+        orchestraPhase = "";
         renderSubagents();
         renderTodos();
         setWorkflow("", false);
         break;
       case "trajectory":
         replaceTrajectory(msg.recorded, msg.events, msg.error);
+        if (!msg.error) saRebuildFromLog(msg.events);
         break;
       case "trajectoryEvent":
         appendTrajectoryEvent(msg.event);
@@ -307,6 +313,7 @@
         break;
       case "turnStart":
         beginTurn();
+        noteLeadTurn("start");
         break;
       case "userInterjection":
         // A message the user sent during the turn reached the model. It goes
@@ -335,6 +342,7 @@
         }
         break;
       case "userEcho":
+        saTurnGoal = String(msg.text || "");
         appendMsg("user", msg.text, {
           uiIndex: typeof msg.uiIndex === "number" ? msg.uiIndex : undefined,
           files: Array.isArray(msg.files) ? msg.files : undefined,
@@ -394,6 +402,14 @@
         break;
       case "childLifecycle":
         handleChildLifecycle(msg);
+        break;
+      case "agentMessage":
+        noteAgentMessage(msg);
+        break;
+      case "childActivity":
+        // A subagent's own tool call, from the web host, which keeps them
+        // out of the chat: the Subagents tab shows what it is doing.
+        noteChildActivity(msg.taskId || "", msg.toolName || "", msg.argsRaw || "", msg.phase === "complete" ? "complete" : "start", msg.phase === "start");
         break;
       case "modeSwitched": {
         // The user approved a switch (mode_switch, plan_exit). A pinned mode
@@ -456,6 +472,7 @@
           turnCostAccum += u.cost_usd;
           renderCostChip();
         }
+        if (msg.scope === "child" && msg.taskId && u.source !== "estimate") noteChildUsage(msg.taskId, u);
         break;
       }
       case "turnUsage": {
@@ -562,6 +579,7 @@
         appendMsg("error", msg.message || "error");
         break;
       case "turnComplete":
+        noteLeadTurn("end");
         flushAssistantMarkdown();
         finalizeReasoningSummary();
         settleToolTrace();

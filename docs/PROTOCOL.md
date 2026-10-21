@@ -681,6 +681,8 @@ Response `result`:
 
 Возвращает unified v2 view (для reopen TUI).
 
+Блок инструмента в `ui_messages`, сохранённый без `args_raw` / `args_preview`, получает `args_raw` из вызова с тем же id в истории сессии (сам файл сессии не меняется): так сессии, где аргументы потерялись при сохранении, открываются с ними.
+
 `params`: `{ "session_id": "..." }`
 
 Response `result`:

@@ -35,7 +35,10 @@ func (a *toolCallAccumulator) StartThinking(blockIndex int, text, signature, red
 		a.thinkingIndex = map[int]int{}
 	}
 	a.thinkingIndex[blockIndex] = len(a.thinking)
-	a.thinking = append(a.thinking, ThinkingBlock{Text: text, Signature: signature, Redacted: redacted})
+	a.thinking = append(a.thinking, ThinkingBlock{
+		Text: text, Signature: signature, Redacted: redacted,
+		CallsBefore: len(a.calls), AfterText: a.content.Len() > 0,
+	})
 }
 
 // AppendThinking adds a thinking_delta or signature_delta to the block at

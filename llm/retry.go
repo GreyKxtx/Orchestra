@@ -167,6 +167,9 @@ func relayStream(raw <-chan StreamEvent, stall time.Duration, abort, done func()
 					}
 				}
 				timer.Reset(stall)
+				if ev.Kind == StreamEventKeepAlive {
+					continue
+				}
 				if each != nil {
 					each(&ev)
 				}

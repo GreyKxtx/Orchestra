@@ -108,6 +108,38 @@
   // duplicate declaration and fail to parse. That file may not change, so this
   // one avoids the name instead.
   /** @param {string} projectId */
+  /**
+   * A subagent's tool calls stay out of the chat; the Subagents tab still
+   * shows what each one is doing, so they go to the renderer as
+   * childActivity — the call, then its arguments when it completes.
+   * @type {Map<string, {name: string, args: string, taskId: string}>}
+   */
+  const childToolCalls = new Map();
+
+  /** @param {any} ev @param {"start"|"delta"|"complete"} phase */
+  function forwardChildTool(ev, phase) {
+    const id = ev.tool_call_id;
+    if (!id || !ev.task_id) return;
+    if (phase === "start") {
+      childToolCalls.set(id, { name: ev.tool_call_name || "tool", args: "", taskId: ev.task_id });
+      toRenderer({ type: "childActivity", phase: "start", taskId: ev.task_id, toolName: ev.tool_call_name || "tool", argsRaw: "" });
+      return;
+    }
+    const call = childToolCalls.get(id);
+    if (phase === "delta") {
+      if (call && ev.args_delta) call.args += ev.args_delta;
+      return;
+    }
+    childToolCalls.delete(id);
+    toRenderer({
+      type: "childActivity",
+      phase: "complete",
+      taskId: ev.task_id,
+      toolName: (call && call.name) || ev.tool_call_name || "tool",
+      argsRaw: (call && call.args) || "",
+    });
+  }
+
   function blocksForProject(projectId) {
     let m = liveToolBlocksByProject.get(projectId);
     if (!m) {
@@ -250,7 +282,11 @@
       // content. It does nothing at all with any other shape, which is why
       // these must stay in step with ui/vscode/src/chat/panel.ts.
       case "tool_call_start": {
-        if (isChild || !ev.tool_call_id) {
+        if (isChild) {
+          forwardChildTool(ev, "start");
+          break;
+        }
+        if (!ev.tool_call_id) {
           break;
         }
         const block = {
@@ -273,7 +309,11 @@
       }
 
       case "tool_call_delta": {
-        if (isChild || !ev.tool_call_id || !ev.args_delta) {
+        if (isChild) {
+          forwardChildTool(ev, "delta");
+          break;
+        }
+        if (!ev.tool_call_id || !ev.args_delta) {
           break;
         }
         const block = blocks.get(ev.tool_call_id);
@@ -292,7 +332,11 @@
       }
 
       case "tool_call_completed": {
-        if (isChild || !ev.tool_call_id) {
+        if (isChild) {
+          forwardChildTool(ev, "complete");
+          break;
+        }
+        if (!ev.tool_call_id) {
           break;
         }
         const block = blocks.get(ev.tool_call_id) || {
@@ -373,8 +417,37 @@
           phase: "started",
           taskId: ev.task_id || "",
           parentToolCallId: ev.parent_tool_call_id,
+          parentTaskId: ev.parent_task_id,
+          depth: ev.depth,
           subagentType: ev.subagent_type,
+          tier: ev.tier,
+          model: ev.model,
+          agent: ev.agent,
+          parentAgent: ev.parent_agent,
           content: ev.content,
+        });
+        break;
+
+      case "child_queued":
+        toRenderer({
+          type: "childLifecycle",
+          phase: "queued",
+          taskId: ev.task_id || "",
+          parentToolCallId: ev.parent_tool_call_id,
+          waitingFor: ev.waiting_for,
+          reason: ev.reason,
+        });
+        break;
+
+      case "agent_message":
+        toRenderer({
+          type: "agentMessage",
+          channel: ev.channel,
+          from: ev.from,
+          to: ev.to,
+          kind: ev.kind,
+          content: ev.content,
+          taskId: ev.task_id,
         });
         break;
 
@@ -384,9 +457,14 @@
           phase: "done",
           taskId: ev.task_id || "",
           parentToolCallId: ev.parent_tool_call_id,
+          parentTaskId: ev.parent_task_id,
+          depth: ev.depth,
           subagentType: ev.subagent_type,
           status: ev.status,
           error: ev.error,
+          result: ev.content,
+          lessonPromoteSuggestion: ev.lesson_promote_suggestion,
+          playbookPromoteSuggestion: ev.playbook_promote_suggestion,
         });
         break;
 
@@ -423,7 +501,7 @@
           if (usage.total_tokens > 0) acc.tokensIn = usage.total_tokens;
           turnUsageByProject.set(projectId, acc);
         }
-        toRenderer({ type: "stepUsage", usage, scope: ev.scope });
+        toRenderer({ type: "stepUsage", usage, scope: ev.scope, taskId: ev.task_id });
         break;
       }
 

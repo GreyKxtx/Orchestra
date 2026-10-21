@@ -107,6 +107,7 @@ func ParseAnthropicSSEStream(ctx context.Context, body io.Reader) <-chan StreamE
 				switch block.Type {
 				case "thinking":
 					acc.StartThinking(ev.Index, block.Thinking, block.Signature, "")
+					ch <- StreamEvent{Kind: StreamEventKeepAlive}
 				case "redacted_thinking":
 					acc.StartThinking(ev.Index, "", "", block.Data)
 				case "tool_use":
@@ -137,19 +138,25 @@ func ParseAnthropicSSEStream(ctx context.Context, body io.Reader) <-chan StreamE
 					acc.AppendThinking(ev.Index, ev.Delta.Thinking, "")
 					if ev.Delta.Thinking != "" {
 						ch <- StreamEvent{Kind: StreamEventReasoningDelta, Content: ev.Delta.Thinking}
+					} else {
+						ch <- StreamEvent{Kind: StreamEventKeepAlive}
 					}
 				case "signature_delta":
 					acc.AppendThinking(ev.Index, "", ev.Delta.Signature)
+					ch <- StreamEvent{Kind: StreamEventKeepAlive}
 				case "input_json_delta":
 					idx, ok := toolIndices[ev.Index]
 					if !ok {
 						idx = ev.Index
 					}
 					if ev.Delta.PartialJSON != "" {
-						acc.FeedToolCall(idx, "", "", ev.Delta.PartialJSON)
+						// The delta names its call, as the OpenAI parser's do:
+						// the hosts drop a delta without one.
+						_, _, id := acc.FeedToolCall(idx, "", "", ev.Delta.PartialJSON)
 						ch <- StreamEvent{
 							Kind:          StreamEventToolCallDelta,
 							ToolCallIndex: idx,
+							ToolCallID:    id,
 							ArgsDelta:     ev.Delta.PartialJSON,
 						}
 					}
@@ -166,6 +173,9 @@ func ParseAnthropicSSEStream(ctx context.Context, body io.Reader) <-chan StreamE
 			case "message_stop":
 				emitDone()
 				return
+			case "ping":
+				// Sent while the model thinks with nothing to show.
+				ch <- StreamEvent{Kind: StreamEventKeepAlive}
 			case "error":
 				if ev.Error.Message != "" {
 					ch <- StreamEvent{Kind: StreamEventError, Err: fmt.Errorf("anthropic stream: %s", ev.Error.Message)}

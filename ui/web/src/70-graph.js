@@ -254,7 +254,7 @@
       graphBtn.setAttribute("aria-selected", active ? "true" : "false");
     }
     if (active) {
-      for (const b of [graphChatBtn, graphTrajectoryBtn]) {
+      for (const b of [graphChatBtn, graphTrajectoryBtn, document.getElementById("view-subagents-btn")]) {
         if (b && b.setAttribute) b.setAttribute("aria-selected", "false");
       }
       void loadGraph(false);

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A thinking-plus-tool_use answer as the API streams it: a thinking block
@@ -253,5 +254,141 @@ func TestConvertToAnthropic_Parts(t *testing.T) {
 	parts, _ := result["content"].([]any)
 	if result["type"] != "tool_result" || len(parts) != 2 {
 		t.Fatalf("a tool result's image is sent with it: %v", result)
+	}
+}
+
+// Claude 4.6 and later think between tool calls: one answer can be
+// thinking, tool_use, thinking, tool_use. Sent back with every thinking block
+// moved to the front, the next step was refused — "messages.1.content.1:
+// thinking blocks in the latest assistant message cannot be modified" — and
+// an architecture child died on its second step. The blocks go back where the
+// model put them.
+func TestAnthropic_InterleavedThinkingGoesBackInPlace(t *testing.T) {
+	const sse = `event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"SIG-A"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"read","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"a.go\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"signature_delta","signature":"SIG-B"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":2}
+
+event: content_block_start
+data: {"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"toolu_2","name":"read","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"b.go\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":3}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+	var done *CompleteResponse
+	for ev := range ParseAnthropicSSEStream(context.Background(), strings.NewReader(sse)) {
+		if ev.Kind == StreamEventDone {
+			done = ev.Response
+		}
+	}
+	if done == nil {
+		t.Fatal("no answer")
+	}
+	// As the agent puts a tool step in its history: no text, the calls and
+	// the thinking (agent_run.go, tool_parallel.go).
+	msgs := []Message{
+		{Role: RoleUser, Content: "read both"},
+		{Role: RoleAssistant, ToolCalls: done.Message.ToolCalls, Thinking: done.Message.Thinking},
+		{Role: RoleTool, ToolCallID: "toolu_1", Content: "package a"},
+		{Role: RoleTool, ToolCallID: "toolu_2", Content: "package b"},
+	}
+	_, out := convertToAnthropic(msgs)
+	raw, _ := json.Marshal(out[1].Content)
+	var blocks []struct {
+		Type      string `json:"type"`
+		Signature string `json:"signature"`
+		ID        string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, len(blocks))
+	for i, b := range blocks {
+		got[i] = b.Type + ":" + b.Signature + b.ID
+	}
+	want := "thinking:SIG-A tool_use:toolu_1 thinking:SIG-B tool_use:toolu_2"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("assistant blocks = %s\nwant %s", strings.Join(got, " "), want)
+	}
+}
+
+// Opus thinks for minutes with nothing to show but Anthropic's pings: the
+// watchdog counted only the events it forwarded, so a live stream was cut
+// as "stalled: no data from server for 2m0s" and the step was retried. A
+// ping keeps the stream alive and is not passed on.
+func TestAnthropic_PingKeepsAThinkingStreamAlive(t *testing.T) {
+	pr, pw := io.Pipe()
+	stall := 150 * time.Millisecond
+	out := relayStream(ParseAnthropicSSEStream(context.Background(), pr), stall, func() { _ = pr.Close() }, func() {}, nil)
+	go func() {
+		for i := 0; i < 6; i++ {
+			_, _ = io.WriteString(pw, "event: ping\ndata: {\"type\":\"ping\"}\n\n")
+			time.Sleep(stall / 2)
+		}
+		_, _ = io.WriteString(pw, anthropicThinkingToolSSE)
+		_ = pw.Close()
+	}()
+	var kinds []StreamEventKind
+	for ev := range out {
+		if ev.Kind == StreamEventError {
+			t.Fatalf("a pinged stream was cut: %v", ev.Err)
+		}
+		kinds = append(kinds, ev.Kind)
+	}
+	for _, k := range kinds {
+		if k == StreamEventKeepAlive {
+			t.Fatal("a keepalive was passed on to the consumer")
+		}
+	}
+	if len(kinds) == 0 || kinds[len(kinds)-1] != StreamEventDone {
+		t.Fatalf("events = %v, want the answer", kinds)
+	}
+}
+
+// A tool call's argument deltas name their call, as the OpenAI parser's do:
+// both hosts drop a delta without tool_call_id, so a Claude turn's tool
+// blocks were saved without their arguments — a reopened chat showed every
+// subagent as "agent · Task".
+func TestAnthropic_ToolCallDeltaNamesItsCall(t *testing.T) {
+	var ids []string
+	for ev := range ParseAnthropicSSEStream(context.Background(), strings.NewReader(anthropicThinkingToolSSE)) {
+		if ev.Kind == StreamEventToolCallDelta {
+			ids = append(ids, ev.ToolCallID)
+		}
+	}
+	if len(ids) != 1 || ids[0] != "toolu_1" {
+		t.Fatalf("delta ids = %q, want [toolu_1]", ids)
 	}
 }
